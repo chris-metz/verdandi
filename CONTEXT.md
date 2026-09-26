@@ -7,12 +7,18 @@ A desktop client for reading GitHub issues across many repositories at once, foc
 ### Repositories
 
 **Tracked repository**:
-A GitHub repository the user has explicitly added to Verdandi; together, the tracked repositories are the set Verdandi reads issues from.
+A GitHub repository the user has explicitly added for direct browsing in Verdandi. Tracked repositories define the scope of All, independently of views.
 _Avoid_: watched repository, subscribed repository, starred repository
 
 **External issue**:
-An issue from a repository that is not a tracked repository, reached by following a sub-issue or blocking relationship.
+An issue from a repository that is not a tracked repository, found through a view or reached by following a sub-issue or blocking relationship.
 _Avoid_: foreign issue, remote issue
+
+### Views
+
+**View**:
+A named, saved GitHub issue search whose scope is defined by its search text, independently of tracked repositories.
+_Avoid_: dashboard, workspace, smart folder
 
 ### Issue relationships
 
