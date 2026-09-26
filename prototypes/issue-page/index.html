@@ -1,0 +1,1290 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Do not build on this code.
+
+  Question ("Prototype the issue page with its cross-repo blocking chains", issue #4 under
+  "Map: Verdandi MVP spec"): how should the issue page show an issue, its parent issue, its
+  sub-issues and its blocking chains across repositories, and how does one move along a chain?
+
+  Plan: three structurally different issue pages inside the app shell and issue list that won the
+  earlier prototypes, switchable via ?variant=A|B|C (floating bar at the bottom, or Shift+Left/Right).
+  The prototype opens on a hub issue with deep chains in both directions; the bar's issue menu jumps
+  to the other showcases (epic, long sequence, external issue, cycle, closed issue, nothing related).
+  Every variant takes a different stance on every open question:
+
+                        A  Rail                      B  Map                        C  Path
+    layout              GitHub's: content left,      relationships first: a map    split: a relationship spine
+                          relationships in a rail      on top, content below         left, content right
+    blocking chains     indented trees               left-to-right graph, one      one ordered timeline through
+                                                       column per step               this issue, "ready now" marked
+    depth shown         direct only; expand a        two steps each way, then      everything
+                          tree to go further           "+N more"
+    closed blockers     shown, not followed          shown, not followed           shown and followed (history)
+    diamonds / cycles   issue repeats per route;     drawn once, two arrows;       listed once, "unblocks" names
+                          cycle row marks the loop     cycle as a red loop           both; cycle noted on the item
+    external issues     "external" tag               dashed card, outlined chip    outlined owner/repo chip
+    parent issue        rail, with the ancestry      breadcrumb above the title    "Part of" at the top of the
+                          path                                                       spine
+    sub-issues          panel under the body         the list's outline, above     spine section, fully expanded
+                          (as GitHub does)             the body
+    labels              rail section; dots in rows   by the state; dots on cards   under the title; pills in rows
+    keys                j/k through links, ←/→ fold  arrows move across the map    j/k walk the spine
+
+  Synthetic data only; nothing is persisted. The issue list is the decided one (variant A of the
+  issue-list prototype) and is not up for review here.
+
+  Run: open this file in a browser.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdandi issue page prototype</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2; --fg: #1f2328; --fg2: #59636e; --fg3: #818b98;
+  --line: #d1d9e0; --accent: #0969da; --accent-bg: #ddf4ff; --sel: #e6eefb; --open: #1a7f37;
+  --closed: #8250df; --np: #59636e; --blocked: #cf222e; --blocked-bg: #ffebe9; --warn: #9a6700; --warn-bg: #fff8c5;
+  --ready: #1a7f37; --ready-bg: #dafbe1;
+  --scrim: rgba(31, 35, 40, .28); --shadow: 0 8px 28px rgba(66, 74, 83, .28);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --bg2: #151b23; --bg3: #212830; --fg: #e6edf3; --fg2: #9198a1; --fg3: #6e7681;
+    --line: #30363d; --accent: #4493f8; --accent-bg: #132a47; --sel: #1a2638; --open: #3fb950;
+    --closed: #ab7df8; --np: #9198a1; --blocked: #f85149; --blocked-bg: rgba(248, 81, 73, .13); --warn: #d29922; --warn-bg: rgba(187, 128, 9, .15);
+    --ready: #3fb950; --ready-bg: rgba(46, 160, 67, .15);
+    --scrim: rgba(1, 4, 9, .55); --shadow: 0 8px 28px rgba(1, 4, 9, .85);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, sans-serif;
+  background: var(--bg); color: var(--fg); overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+button, select { font: inherit; color: inherit; }
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg2); white-space: nowrap;
+}
+.muted { color: var(--fg3); font-weight: 400; }
+.sp { flex: 1; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- shell (kept from the app-shell prototype, variant A) ---------- */
+#app { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 100vh; }
+.sidebar { width: 256px; background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidebar.focused { box-shadow: inset 0 2px 0 var(--accent); }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.main.focused > .mainbar { box-shadow: inset 0 2px 0 var(--accent); }
+.brand { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; font-weight: 600; white-space: nowrap; }
+.logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #8250df, #0969da); flex: none; }
+.sb-scroll { flex: 1; overflow: auto; padding: 2px 8px 16px; }
+.sb-foot { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg3); font-size: 11px; line-height: 1.8; }
+.iconbtn { border: 0; background: none; color: var(--fg2); width: 22px; height: 22px; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.iconbtn:hover { background: var(--bg3); color: var(--fg); }
+.iconbtn:disabled { opacity: .35; cursor: not-allowed; }
+.sec { display: flex; align-items: center; justify-content: space-between; padding: 16px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); }
+.entry { display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 30px; border-radius: 6px; cursor: default; user-select: none; white-space: nowrap; }
+.entry.tall { min-height: 40px; }
+.entry:hover { background: var(--bg3); }
+.entry.active { background: var(--sel); font-weight: 600; }
+.sidebar.focused .entry.active { background: var(--accent-bg); outline: 1px solid var(--accent); outline-offset: -1px; }
+.entry .ic { color: var(--fg2); }
+.entry.active .ic { color: var(--accent); }
+.entry .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.entry .count { color: var(--fg3); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.name2 { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.name2 .n1, .name2 .n2 { overflow: hidden; text-overflow: ellipsis; }
+.name2 .n2 { font-size: 11px; color: var(--fg3); font-weight: 400; }
+.owner { color: var(--fg3); font-weight: 400; }
+.mainbar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); flex: none; min-width: 0; white-space: nowrap; }
+.mainbar h2 { font-size: 14px; margin: 0; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+.mainbar .sub { color: var(--fg3); }
+.hint { color: var(--fg3); font-size: 12px; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; overflow: hidden; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.scroll.split { overflow: hidden; display: flex; }
+.btn { border: 1px solid var(--line); background: var(--bg2); border-radius: 6px; padding: 3px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 28px; }
+.btn:hover { background: var(--bg3); }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--bg2); }
+.sep { color: var(--line); }
+
+/* ---------- issue list (decided: variant A of the issue-list prototype) ---------- */
+.chev { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg3); border-radius: 4px; flex: none; }
+.chev[data-act]:hover { background: var(--bg3); color: var(--fg); }
+.chev .ic { width: 12px; height: 12px; stroke-width: 1.8; }
+.num { color: var(--fg3); font-variant-numeric: tabular-nums; flex: none; }
+.st { display: inline-flex; flex: none; }
+.st-open { color: var(--open); } .st-closed { color: var(--closed); } .st-np { color: var(--np); } .st-blocked { color: var(--blocked); }
+.title { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; white-space: nowrap; }
+.closed > .title { color: var(--fg2); }
+.ext { font-size: 10px; border: 1px dashed var(--fg3); border-radius: 10px; padding: 0 6px; color: var(--fg2); flex: none; line-height: 16px; font-weight: 400; }
+.empty { padding: 40px; color: var(--fg3); text-align: center; }
+.list-foot { padding: 14px 16px; color: var(--fg3); font-size: 12px; }
+.row-sel { background: var(--sel) !important; box-shadow: inset 2px 0 0 var(--accent); }
+.main:not(.focused) .row-sel { background: var(--bg3) !important; box-shadow: none; }
+.arow { scroll-margin: 44px 0 90px; }
+.alist { padding-bottom: 90px; }
+.colhead { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 16px 0 12px; background: var(--bg); border-bottom: 1px solid var(--line); color: var(--fg3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.colhead .c-title { flex: 1; }
+.arow { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 16px 0 12px; cursor: pointer; white-space: nowrap; }
+.arow:hover { background: var(--bg2); }
+.arow.closed .title { color: var(--fg2); }
+.arow.closed > :not(.guides) { opacity: .8; }
+.guides { flex: none; align-self: stretch; width: calc(var(--d) * 20px); margin-right: -6px; background-image: repeating-linear-gradient(to right, transparent 0 8px, var(--line) 8px 9px, transparent 9px 20px); }
+.col-prog { width: 92px; flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.col-bb, .col-bl { width: 76px; flex: none; display: inline-flex; }
+.bar { width: 44px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; flex: none; }
+.bar i { display: block; height: 100%; background: var(--closed); }
+.frac { font-size: 12px; color: var(--fg2); font-variant-numeric: tabular-nums; font-weight: 400; }
+.cnt { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px 0 5px; border-radius: 10px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cnt .ic { width: 13px; height: 13px; }
+.cnt.red { background: var(--blocked-bg); color: var(--blocked); }
+.cnt.amber { color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.cnt.mute { color: var(--fg3); font-weight: 400; }
+.rchip { font-size: 11px; padding: 0 6px; border-radius: 4px; color: #fff; background: hsl(var(--h) 42% 44%); flex: none; line-height: 17px; white-space: nowrap; font-weight: 400; }
+.rchip.x { background: none; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--fg3); }
+.lbl { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 7px; border-radius: 2em; flex: none; white-space: nowrap; }
+.lbl.more { background: var(--bg3); color: var(--fg2); }
+.pchip { font-size: 11px; color: var(--fg2); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 4px; flex: none; line-height: 17px; display: inline-flex; gap: 2px; align-items: center; }
+.pchip .ic { width: 12px; height: 12px; }
+.pchip:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- issue page: shared bits ---------- */
+.ptitle { font-size: 22px; font-weight: 600; margin: 6px 0 10px; line-height: 1.3; }
+.ptitle .muted { font-weight: 300; }
+.i-ref { display: flex; align-items: center; gap: 6px; color: var(--fg2); }
+.i-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--fg2); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 8px; border-radius: 999px; color: #fff; font-weight: 500; white-space: nowrap; }
+.pill.open { background: var(--open); } .pill.closed { background: var(--closed); } .pill.np { background: var(--np); }
+.md { font-size: 14px; line-height: 1.6; max-width: 820px; }
+.md p { margin: 0 0 12px; }
+.md h3 { font-size: 15px; margin: 18px 0 6px; }
+.md code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow: auto; margin: 0 0 12px; }
+.md pre code { background: none; padding: 0; line-height: 1.5; }
+.md ul { margin: 0 0 12px; padding-left: 22px; }
+.md ul.tasks { list-style: none; padding-left: 2px; }
+.md ul.tasks li { position: relative; padding-left: 22px; }
+.md ul.tasks li::before { content: ""; position: absolute; left: 1px; top: .42em; width: 11px; height: 11px; border: 1.5px solid var(--fg3); border-radius: 3px; }
+.md ul.tasks li.done::before { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--bg); }
+.iref, .xlink { color: var(--accent); cursor: pointer; }
+.iref:hover, .xlink:hover { text-decoration: underline; }
+.cmts { max-width: 820px; }
+.cmt { display: flex; gap: 10px; margin-top: 16px; }
+.cbox { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 6px; }
+.chd { background: var(--bg2); padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--fg2); border-radius: 6px 6px 0 0; }
+.cbd { padding: 10px 12px 0; }
+.nocmt { color: var(--fg3); margin-top: 16px; }
+.av { width: 28px; height: 28px; border-radius: 50%; background: hsl(var(--h) 40% 48%); color: #fff; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.av.sm { width: 20px; height: 20px; font-size: 10px; }
+.avs { display: inline-flex; }
+.avs .av + .av { margin-left: -5px; box-shadow: 0 0 0 2px var(--bg); }
+.dots { display: inline-flex; gap: 3px; flex: none; }
+.dots i { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .35); }
+.cycle { color: var(--blocked); font-size: 12px; display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.cycle .ic { width: 13px; height: 13px; }
+.none { color: var(--fg3); }
+.metaline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--fg2); }
+.metaline > span { display: inline-flex; align-items: center; gap: 5px; }
+[data-nav] { scroll-margin: 52px 32px 96px; }
+.navcur { outline: 2px solid var(--accent) !important; outline-offset: -2px; background-color: var(--accent-bg) !important; }
+.main:not(.focused) .navcur { outline-color: var(--fg3) !important; background-color: var(--bg3) !important; }
+
+/* ---------- page A: rail ---------- */
+.pa { max-width: 1240px; padding: 18px 28px 110px; }
+.pa .i-meta { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.pa-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 32px; margin-top: 18px; }
+.pa-rail section { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 12px; }
+.pa-rail h4 { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--fg2); margin: 0 0 6px; }
+.pa-rail .who { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.pa-rail .lbls { display: flex; flex-wrap: wrap; gap: 4px; }
+.pa-rail .ms { display: flex; align-items: center; gap: 6px; }
+.trow { display: flex; align-items: center; gap: 5px; height: 26px; margin: 0 -6px; padding: 0 6px 0 calc(2px + var(--d) * 16px); border-radius: 5px; cursor: pointer; white-space: nowrap; min-width: 0; }
+.trow:hover { background: var(--bg2); }
+.trow .t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trow.closed .t { color: var(--fg2); }
+.trow.closed > * { opacity: .8; }
+.trow .more { color: var(--fg3); font-size: 11px; flex: none; }
+.trow.cyc { cursor: default; }
+.subpanel { border: 1px solid var(--line); border-radius: 6px; margin: 22px 0 6px; max-width: 820px; overflow: hidden; }
+.sp-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg2); font-weight: 600; }
+.subpanel .trow { margin: 0; height: 34px; border-radius: 0; padding: 0 12px 0 calc(8px + var(--d) * 20px); border-top: 1px solid var(--line); }
+
+/* ---------- page B: map ---------- */
+.pb { padding: 14px 28px 110px; }
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; color: var(--fg2); font-size: 12px; }
+.crumb { display: inline-flex; gap: 4px; align-items: center; padding: 2px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; max-width: 420px; }
+.crumb:hover { background: var(--bg2); }
+.crumb .ic { width: 14px; height: 14px; }
+.crumb .t { overflow: hidden; text-overflow: ellipsis; }
+.pb .metaline { margin-bottom: 4px; }
+.pb-map { margin: 14px -28px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg2); overflow-x: auto; overflow-y: hidden; }
+.pb-canvas { position: relative; margin: 0 auto; }
+.pb-colh { position: absolute; top: 9px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); text-align: center; white-space: nowrap; }
+.pb-colh.c0 { color: var(--accent); }
+.node { position: absolute; width: 150px; height: 60px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; overflow: hidden; z-index: 1; }
+.node:hover { border-color: var(--accent); }
+.node.x { border-style: dashed; border-color: var(--fg3); }
+.node.closed { opacity: .62; }
+.node.center { border: 2px solid var(--accent); padding: 4px 7px; cursor: default; box-shadow: 0 2px 10px rgba(9, 105, 218, .18); }
+.node.isblk { box-shadow: inset 3px 0 0 var(--blocked); }
+.node.center.isblk { box-shadow: inset 3px 0 0 var(--blocked), 0 2px 10px rgba(9, 105, 218, .18); }
+.node .n1 { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--fg2); white-space: nowrap; min-width: 0; }
+.node .n1 .rchip { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.node .n1 .ic { width: 14px; height: 14px; }
+.node .n2 { font-size: 12px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.node.stub { border-style: dashed; align-items: center; justify-content: center; color: var(--accent); font-weight: 600; background: none; }
+.pb-svg { position: absolute; left: 0; top: 0; pointer-events: none; }
+.pb-svg path.e { fill: none; stroke: var(--fg3); stroke-width: 1.4; }
+.pb-svg path.e.dead { stroke-dasharray: 3 3; opacity: .55; }
+.pb-svg path.e.more { stroke-dasharray: 2 3; }
+.pb-svg path.e.cyc { stroke: var(--blocked); stroke-dasharray: 2 3; }
+.pb-svg marker path { fill: var(--fg3); }
+.pb-svg marker.cyc path { fill: var(--blocked); }
+.pb-note { position: absolute; font-size: 12px; color: var(--fg3); white-space: nowrap; }
+.pb-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 6px 28px; margin: 0 -28px; color: var(--fg3); font-size: 11px; border-bottom: 1px solid var(--line); }
+.pb-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pb-subs { margin: 18px -28px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.pb-subs .colhead { position: static; padding-left: 12px; }
+.pb-subs .arow { padding-left: 12px; }
+.pb-body { margin-top: 18px; }
+
+/* ---------- page C: path ---------- */
+.pc { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.pc-spine { width: 420px; flex: none; overflow: auto; border-right: 1px solid var(--line); background: var(--bg2); padding: 6px 0 110px; }
+.pc-content { flex: 1; overflow: auto; min-width: 0; padding: 18px 28px 110px; }
+.pc-sec { padding: 14px 16px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); display: flex; gap: 8px; align-items: baseline; }
+.pc-sec .muted { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.tl { position: relative; }
+.tl::before { content: ""; position: absolute; left: 25px; top: 0; bottom: 0; width: 2px; background: var(--line); }
+.tl .pc-sec { padding-left: 46px; position: relative; }
+.ti { position: relative; display: flex; gap: 10px; padding: 6px 14px 6px calc(16px + var(--d, 0) * 18px); cursor: pointer; }
+.ti:hover { background: var(--bg3); }
+.ti .dot { width: 20px; flex: none; display: flex; justify-content: center; padding-top: 1px; z-index: 1; }
+.ti .dot .st { background: var(--bg2); border-radius: 50%; box-shadow: 0 0 0 3px var(--bg2); }
+.ti .tb { min-width: 0; flex: 1; }
+.ti .t1 { line-height: 1.35; }
+.ti .t2 { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; font-size: 11px; color: var(--fg3); margin-top: 3px; }
+.ti .t2 .lbl { font-size: 10px; line-height: 16px; padding: 0 6px; }
+.ti.closed .t1 { color: var(--fg2); }
+.ti.closed .tb { opacity: .8; }
+.ti .hint { font-size: 11px; }
+.tg { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 9px; line-height: 16px; }
+.tg.ready { color: var(--ready); background: var(--ready-bg); }
+.tg.red { color: var(--blocked); background: var(--blocked-bg); }
+.ti.this { margin: 6px 10px; padding: 10px 12px 10px 6px; border: 2px solid var(--accent); border-radius: 8px; background: var(--bg); cursor: default; }
+.ti.this .dot .st { background: none; box-shadow: none; }
+.ti.this .t2 { font-size: 12px; color: var(--fg2); }
+.ti-none { padding: 4px 16px 8px 46px; color: var(--fg3); position: relative; }
+.pc-plain .ti .dot .st { box-shadow: none; }
+.pc-content .i-meta { margin-bottom: 8px; }
+.pc-content .metaline { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+
+/* ---------- help ---------- */
+.modal-bg { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.modal { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: 86vh; overflow: hidden; }
+.m-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
+.help { width: 760px; max-width: calc(100vw - 32px); }
+.help-body { display: grid; grid-template-columns: max-content 1fr; gap: 7px 16px; padding: 14px 16px; overflow: auto; }
+.help-body .h-k { text-align: right; }
+.help-body .h-sec { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); margin-top: 6px; }
+
+/* ---------- prototype chrome (not part of the design being evaluated) ---------- */
+#switcher {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 2px;
+  background: #111; color: #fff; border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); font-size: 12px; border: 1px solid #444;
+}
+#switcher button { background: none; border: 0; color: #fff; min-width: 28px; height: 28px; border-radius: 999px; cursor: pointer; padding: 0 8px; }
+#switcher button:hover { background: #333; }
+#switcher .swl { padding: 0 6px; white-space: nowrap; min-width: 110px; text-align: center; }
+#switcher .tag { background: #fbbf24; color: #111; border-radius: 999px; padding: 1px 7px; font-weight: 700; font-size: 10px; letter-spacing: .05em; }
+#switcher select { background: #222; color: #fff; border: 1px solid #555; border-radius: 999px; height: 26px; padding: 0 8px; margin: 0 4px; max-width: 280px; }
+#statebox {
+  position: fixed; right: 12px; bottom: 62px; z-index: 99; width: 420px; max-height: 64vh; overflow: auto; background: #111; color: #c9f7c9;
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 8px; white-space: pre; display: none; border: 1px solid #444;
+}
+#toast {
+  position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); background: #111; color: #fff; padding: 7px 14px; border-radius: 8px;
+  z-index: 101; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: min(900px, 86vw); text-align: center; border: 1px solid #444;
+}
+</style>
+</head>
+<body>
+<div id="app"><aside class="sidebar" id="sb"></aside><main class="main" id="mn"></main></div>
+<div id="switcher">
+  <span class="tag">PROTOTYPE</span>
+  <button id="sw-prev" title="Previous variant (Shift+Left)">&#8249;</button>
+  <span class="swl" id="sw-lbl"></span>
+  <button id="sw-next" title="Next variant (Shift+Right)">&#8250;</button>
+  <select id="sw-show" title="Jump to a showcase issue"></select>
+  <button id="sw-help" title="What this variant decides, and its keys (?)">?</button>
+  <button id="sw-state" title="Show the prototype's state (`)">state</button>
+</div>
+<pre id="statebox"></pre>
+<div id="toast"></div>
+<script>
+'use strict';
+// PROTOTYPE, throwaway: no tests, no error handling, globals everywhere on purpose.
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const ago = d => d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+
+// ---------- icons ----------
+const svg = d => `<svg class="ic" viewBox="0 0 16 16">${d}</svg>`;
+const I = {
+  repo: svg('<path d="M3.5 13.3V2.9c0-.8.6-1.4 1.4-1.4h8.6v9.9H4.9c-.8 0-1.4.6-1.4 1.3s.6 1.3 1.4 1.3h8.6"/>'),
+  view: svg('<path d="M2 3h12l-4.6 5.4v4.8l-2.8 1.3V8.4z"/>'),
+  all: svg('<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/><path d="M1.8 8 8 11.2 14.2 8"/><path d="M1.8 11 8 14.2 14.2 11"/>'),
+  open: svg('<circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>'),
+  closed: svg('<circle cx="8" cy="8" r="6.2"/><path d="m5.3 8.2 1.9 1.9 3.6-3.8"/>'),
+  notplanned: svg('<circle cx="8" cy="8" r="6.2"/><path d="M5.3 8h5.4"/>'),
+  blocked: svg('<circle cx="8" cy="8" r="6.2"/><path d="m3.7 12.3 8.6-8.6"/>'),
+  right: svg('<path d="m6 3.5 4.5 4.5L6 12.5"/>'),
+  down: svg('<path d="m3.5 6 4.5 4.5L12.5 6"/>'),
+  back: svg('<path d="M13 8H3m4.5-4.5L3 8l4.5 4.5"/>'),
+  gh: svg('<path d="M9 2.5h4.5V7M13.5 2.5 7 9M11.5 9.5v3.2c0 .5-.4.8-.8.8H3.3c-.5 0-.8-.4-.8-.8V5.3c0-.5.4-.8.8-.8h3.2"/>'),
+  plus: svg('<path d="M8 2.5v11M2.5 8h11"/>'),
+  arrow: svg('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+  up: svg('<path d="M8 13V3.5M4.5 7 8 3.5 11.5 7"/>'),
+  cycle: svg('<path d="M12.6 6.2A4.8 4.8 0 0 0 3.7 5M3.4 9.8a4.8 4.8 0 0 0 8.9 1.2"/><path d="M3.4 2.4v2.9h2.9M12.6 13.6v-2.9H9.7"/>'),
+  milestone: svg('<path d="M8 1.8v12.4M8 3h4.3l1.5 1.8-1.5 1.8H8"/>'),
+  comment: svg('<path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/>'),
+};
+
+// ---------- synthetic data ----------
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const pick = (a, r) => a[Math.floor(r() * a.length)];
+const rint = (lo, hi, r) => lo + Math.floor(r() * (hi - lo + 1));
+
+const ME = 'example-user';
+const PEOPLE = ['alex-k', 'sam-r', 'jo-dev', 'taylor-m', 'robin-q', 'casey-l', 'morgan-p'];
+const LABELS = ['bug', 'enhancement', 'docs', 'infra', 'good first issue', 'performance', 'security', 'ux', 'needs design', 'tech debt'];
+const MILESTONES = ['Q4 2026', 'Billing beta', 'v1.0', 'Hardening sprint'];
+const VERBS = ['Add', 'Fix', 'Remove', 'Migrate', 'Refactor', 'Document', 'Investigate', 'Support', 'Speed up', 'Split', 'Rename', 'Deprecate', 'Harden', 'Cache', 'Retry', 'Validate', 'Paginate', 'Expose', 'Backfill', 'Audit'];
+const THINGS = ['token refresh', 'webhook retries', 'invoice export', 'rate-limit handling', 'search index', 'session cookies', 'CSV import', 'dark mode', 'audit trail', 'pagination cursor', 'feature flag cleanup', 'error boundaries', 'release pipeline', 'retry budget', 'schema v2', 'timezone handling', 'bulk actions', 'health checks', 'keyboard shortcuts', 'PDF rendering', 'signup funnel', 'cache invalidation', 'SSO login', 'permissions model', 'notification digest', 'Linux packaging', 'mobile layout', 'empty states'];
+const SUFFIX = ['', '', '', '', ' for enterprise accounts', ' on slow networks', ' in the admin console', ' behind a flag', ' across regions', ' (follow-up)', ' before GA'];
+const EPIC_TITLES = ['Q4 reliability push', 'Self-serve data export', 'Public API v2', 'Accessibility audit fixes', 'Multi-region failover', 'Harden the webhook pipeline', 'Dark mode everywhere'];
+const SENTENCES = [
+  'This currently fails intermittently when the upstream service is slow to respond.',
+  'We should keep the existing behaviour behind a flag until the migration is done.',
+  'The fix itself is small, but it touches the retry logic that several other services depend on.',
+  'Once this lands we can remove the temporary workaround in the client.',
+  'There is some overlap with the work tracked in the parent issue, so coordinate before starting.',
+  'Open question: do we need to support the legacy format, or can we drop it now?',
+  'The design is agreed; what remains is implementation and rollout.',
+  'This blocks the rollout in the other repository, so it has priority this sprint.',
+];
+const TASKS = ['Covered by an integration test', 'Behind a feature flag', 'Documented in the changelog', 'Rolled out to staging', 'Metrics dashboard updated', 'The error path logs a useful message'];
+const SNIPPETS = [
+  'retry:\n  attempts: 5\n  backoff: exponential\n  max_delay: 30s',
+  'if (resp.status === 429) {\n  await sleep(Number(resp.headers.get("retry-after")) * 1000);\n}',
+  'ALTER TABLE usage_records ADD COLUMN workspace_id uuid NOT NULL;',
+  '$ make release VERSION=2.4.0 DRY_RUN=1',
+];
+const COMMENTS = ['<p>I can take this one next week.</p>', '<p>Is this still blocked, or can we start on the parts that do not depend on the API change?</p>', '<p>Moving this to the next milestone; the blocker is not resolved yet.</p>', '<p>Reproduced on staging. Logs attached in the incident channel.</p>', '<p>Looks good to me. One nit: the default should be <code>false</code>.</p>'];
+
+const ISSUES = new Map();      // "owner/repo#n" -> issue
+const REPO_ISSUES = new Map(); // "owner/repo" -> [keys]
+const repoKeys = repo => { if (!REPO_ISSUES.has(repo)) REPO_ISSUES.set(repo, []); return REPO_ISSUES.get(repo); };
+function mk(ref, title, state = 'open', o = {}) {
+  const i = ref.indexOf('#'), repo = ref.slice(0, i), r = mulberry32(hashStr(ref));
+  const updated = o.updated ?? rint(3, 80, r);
+  ISSUES.set(ref, {
+    key: ref, repo, number: +ref.slice(i + 1), title, state, author: o.author ?? pick(PEOPLE, r),
+    assignees: o.assignees ?? (r() < 0.25 ? [ME] : r() < 0.45 ? [pick(PEOPLE, r)] : r() < 0.55 ? [pick(PEOPLE, r), ME] : []),
+    labels: o.labels ?? [...new Set(r() < 0.65 ? [pick(LABELS, r), ...(r() < 0.3 ? [pick(LABELS, r)] : []), ...(r() < 0.15 ? [pick(LABELS, r)] : [])] : [])],
+    milestone: o.milestone !== undefined ? o.milestone : (r() < 0.3 ? pick(MILESTONES, r) : null),
+    reason: state === 'closed' ? (o.reason ?? (r() < 0.15 ? 'not planned' : 'completed')) : null,
+    parent: null, subs: [], blockedBy: [], blocking: [],
+    body: o.body ?? null, thread: o.thread ?? null, comments: o.thread ? o.thread.length : rint(0, 6, r),
+    updated, created: updated + rint(4, 60, r),
+  });
+  repoKeys(repo).push(ref);
+  return ref;
+}
+function attach(parentKey, childKey) {
+  const p = ISSUES.get(parentKey), c = ISSUES.get(childKey);
+  if (!p || !c || c.parent || parentKey === childKey) return;
+  for (let a = p; a; a = a.parent && ISSUES.get(a.parent)) if (a.key === childKey) return;
+  c.parent = parentKey; p.subs.push(childKey);
+}
+const tree = (p, cs) => cs.forEach(c => attach(p, c));
+function block(blockedKey, blockerKey) {
+  const a = ISSUES.get(blockedKey), b = ISSUES.get(blockerKey);
+  if (!a || !b || blockedKey === blockerKey || a.blockedBy.includes(blockerKey)) return;
+  a.blockedBy.push(blockerKey); b.blocking.push(blockedKey);
+}
+
+// Showcase 1: a tree across repositories and organizations, with a blocking chain running through it.
+// acme/api#122 is the hub the prototype opens on: parent two levels up (the top one external), nested
+// sub-issues, four steps of blockers with a diamond and an external issue, three steps of waiting issues.
+mk('acme/roadmap#4', 'Monetization 2027', 'open', { labels: ['epic'] });
+mk('acme/api#120', 'Launch usage-based billing', 'open', { labels: ['epic'], updated: 1 });
+mk('acme/infra#77', 'Provision the metering queue', 'closed', { reason: 'completed' });
+mk('acme/api#121', 'Meter API requests per workspace', 'closed', { reason: 'completed', labels: ['enhancement'] });
+mk('acme/api#122', 'Expose a usage endpoint', 'open', {
+  updated: 1, labels: ['enhancement', 'api'], assignees: [ME, 'sam-r'], milestone: 'Billing beta', author: 'jo-dev',
+  body: `<p>Expose metered usage per workspace, so the dashboard, the CSV export and invoicing all read the same numbers.</p>
+<h3>Endpoint</h3>
+<pre><code>GET /v2/workspaces/{id}/usage?from=2026-09-01&amp;to=2026-09-30
+→ 200 { "records": [ … ], "next": "&lt;cursor&gt;" }</code></pre>
+<h3>Acceptance criteria</h3>
+<ul class="tasks"><li class="done">Response schema agreed in {acme/api#127}</li><li>Records paginate with a cursor ({acme/api#128})</li><li>Rate cards from {globex/billing#40} applied to every record</li><li>The SDK exposes the endpoint ({vendor/sdk#89})</li></ul>
+<p>Until the rate cards land we can only return raw counts. The <a class="xlink" data-act="xlink">pricing design doc</a> has the record format.</p>`,
+  thread: [
+    ['sam-r', 5, '<p>Raw counts are ready behind the <code>usage_v2</code> flag. The pricing part waits on {globex/billing#40}.</p>'],
+    ['taylor-m', 3, '<p>The pricing database ({acme/infra#78}) is still waiting on the vendor approval, so rate cards will slip by at least a week.</p>'],
+    ['alex-k', 2, '<p>Could we ship raw counts first, so {acme/web#310} can start? The dashboard does not need prices on day one.</p>'],
+    ['jo-dev', 1, '<p>Fine by me. I will split the pricing part into its own sub-issue.</p>'],
+  ],
+});
+mk('acme/web#310', 'Usage dashboard page');
+mk('acme/web#311', 'Usage chart component', 'closed', { reason: 'completed' });
+mk('acme/web#312', 'Empty state for workspaces without usage');
+mk('acme/web#313', 'Export usage as CSV');
+mk('globex/billing#40', 'Rate cards for metered plans', 'open', { updated: 2 });
+mk('globex/billing#41', 'Model tiered pricing', 'closed', { reason: 'completed' });
+mk('globex/billing#42', 'Prorate mid-cycle plan changes');
+mk('globex/billing#43', 'Agree on plan tiers with sales', 'open', { labels: ['needs design'] });
+mk('vendor/sdk#88', 'Emit usage events from the SDK');
+mk('vendor/sdk#89', 'Usage client in the SDK');
+mk('acme/api#123', 'Invoice line items for usage');
+mk('acme/api#124', 'Document metered pricing', 'open', { labels: ['docs'] });
+mk('acme/api#125', 'Load-test the metering pipeline', 'closed', { reason: 'not planned' });
+mk('acme/api#127', 'Define the usage response schema', 'closed', { reason: 'completed' });
+mk('acme/api#128', 'Paginate usage records');
+mk('acme/infra#78', 'Provision the pricing database', 'open', { labels: ['infra'] });
+mk('acme/infra#79', 'Approve the database vendor', 'open', { labels: ['security'] });
+mk('partner/contracts#3', 'Sign the data processing agreement', 'open', { labels: ['legal'], assignees: ['robin-q'] });
+mk('acme/web#352', 'Usage alerts');
+mk('acme/web#353', 'Usage alert emails');
+mk('acme/handbook#30', 'Update the sales playbook for metered plans', 'open', { labels: ['docs'] });
+attach('acme/roadmap#4', 'acme/api#120');
+tree('acme/api#120', ['acme/infra#77', 'acme/api#121', 'acme/api#122', 'acme/web#310', 'globex/billing#40', 'vendor/sdk#88', 'acme/api#123', 'acme/api#124', 'acme/api#125']);
+tree('acme/api#122', ['acme/api#127', 'acme/api#128', 'vendor/sdk#89']);
+tree('acme/web#310', ['acme/web#311', 'acme/web#312', 'acme/web#313']);
+tree('globex/billing#40', ['globex/billing#41', 'globex/billing#42']);
+block('acme/api#121', 'acme/infra#77');
+block('acme/api#122', 'acme/api#121');
+block('acme/api#122', 'globex/billing#40');
+block('globex/billing#40', 'acme/infra#78');
+block('globex/billing#40', 'globex/billing#43');
+block('acme/infra#78', 'acme/infra#79');
+block('acme/infra#79', 'partner/contracts#3');
+block('globex/billing#43', 'partner/contracts#3'); // a diamond: reached along two routes
+block('acme/web#310', 'acme/api#122');
+block('acme/web#313', 'acme/api#122');
+block('acme/web#312', 'vendor/sdk#88');
+block('acme/api#123', 'acme/api#122');
+block('acme/api#123', 'globex/billing#42');
+block('acme/api#124', 'acme/api#123');
+block('acme/web#352', 'acme/web#310');
+block('acme/web#353', 'acme/web#352');
+block('acme/handbook#30', 'acme/api#124');
+mk('acme/api#126', 'Rename the usage scopes', 'open', { updated: 4 });
+block('acme/api#126', 'acme/api#121'); // blocked only by a closed issue: no longer blocked
+
+// Showcase 2: tracked issues whose parent issue lives in an external repository.
+mk('upstream/protocol#7', 'Protocol v3 rollout', 'open', { labels: ['epic'], updated: 3 });
+mk('upstream/protocol#8', 'Specify the v3 handshake', 'closed', { reason: 'completed' });
+mk('acme/api#140', 'Support the v3 handshake', 'open', { updated: 3 });
+mk('oss-org/parser#19', 'Parse v3 frames');
+mk('acme/web#330', 'Show the protocol version in settings');
+tree('upstream/protocol#7', ['upstream/protocol#8', 'acme/api#140', 'oss-org/parser#19', 'acme/web#330']);
+block('acme/api#140', 'oss-org/parser#19');
+mk('acme/infra#55', 'Rotate signing keys for v3', 'open', { updated: 5 });
+block('acme/infra#55', 'acme/api#140');
+block('acme/web#330', 'acme/api#140');
+
+// Showcase 3: a three-level tree.
+mk('example-user/verdandi#10', 'Ship the first desktop build', 'open', { labels: ['epic'], updated: 1 });
+mk('example-user/verdandi#11', 'Pick the GUI stack', 'closed', { reason: 'completed' });
+mk('example-user/verdandi#12', 'Issue list');
+mk('example-user/verdandi#13', 'Tree rows');
+mk('example-user/verdandi#14', 'Collapse state per list', 'closed', { reason: 'completed' });
+mk('example-user/verdandi#15', 'Keyboard navigation in trees');
+mk('example-user/verdandi#16', 'Blocking indicators');
+mk('example-user/verdandi#17', 'Windows installer');
+mk('example-user/verdandi#18', 'Sign the macOS build');
+mk('acme/infra#60', 'Buy a code-signing certificate', 'open', { updated: 6 });
+tree('example-user/verdandi#10', ['example-user/verdandi#11', 'example-user/verdandi#12', 'example-user/verdandi#17', 'example-user/verdandi#18']);
+tree('example-user/verdandi#12', ['example-user/verdandi#13', 'example-user/verdandi#16']);
+tree('example-user/verdandi#13', ['example-user/verdandi#14', 'example-user/verdandi#15']);
+block('example-user/verdandi#12', 'example-user/verdandi#11');
+block('example-user/verdandi#15', 'example-user/verdandi#14');
+block('example-user/verdandi#16', 'example-user/verdandi#13');
+block('example-user/verdandi#17', 'acme/infra#60');
+block('example-user/verdandi#18', 'acme/infra#60');
+
+// Showcase 4: every sub-issue closed, parent still open.
+mk('acme/infra#80', 'Retire the legacy importer', 'open', { labels: ['epic'], updated: 9 });
+['Freeze legacy import writes', 'Backfill imported records', 'Remove the import cron job', 'Delete the importer service'].forEach((t, i) => attach('acme/infra#80', mk(`acme/infra#${81 + i}`, t, 'closed', { reason: 'completed' })));
+
+// Showcase 5: a sequence of sibling sub-issues, each blocked by the one before.
+mk('acme/web#340', 'Redesign onboarding', 'open', { labels: ['epic'], updated: 2 });
+['Audit the current funnel', 'Write the new copy', 'Design the welcome screen', 'Build the welcome screen', 'Wire up analytics events', 'Roll out to 10% of signups']
+  .forEach((t, i) => { const k = mk(`acme/web#${341 + i}`, t, i < 2 ? 'closed' : 'open', i < 2 ? { reason: 'completed' } : {}); attach('acme/web#340', k); if (i) block(k, `acme/web#${340 + i}`); });
+
+// Showcase 6: a cycle. GitHub does not document that blocking relationships are acyclic.
+mk('acme/infra#95', 'Upgrade the Postgres cluster', 'open', { updated: 7, labels: ['infra'] });
+mk('acme/infra#96', 'Migrate extensions to the new version');
+mk('acme/infra#97', 'Test the upgrade in staging');
+block('acme/infra#95', 'acme/infra#96');
+block('acme/infra#96', 'acme/infra#97');
+block('acme/infra#97', 'acme/infra#95');
+
+// Filler: loose issues and a few small trees per repository.
+const frand = mulberry32(42);
+function filler(repo, nLoose, nTrees) {
+  const used = new Set(repoKeys(repo).map(k => ISSUES.get(k).number)), made = [];
+  let n = rint(20, 50, frand);
+  const next = () => { do n += rint(1, 3, frand); while (used.has(n)); used.add(n); return `${repo}#${n}`; };
+  const title = () => pick(VERBS, frand) + ' ' + pick(THINGS, frand) + pick(SUFFIX, frand);
+  for (let t = 0; t < nTrees; t++) {
+    const p = mk(next(), pick(EPIC_TITLES, frand), 'open', { labels: ['epic'] }), kids = [];
+    for (let j = rint(2, 5, frand); j > 0; j--) { const c = mk(next(), title(), frand() < 0.35 ? 'closed' : 'open'); attach(p, c); kids.push(c); }
+    for (let j = 1; j < kids.length; j++) if (frand() < 0.3) block(kids[j], kids[j - 1]);
+    made.push(p, ...kids);
+  }
+  for (let j = 0; j < nLoose; j++) made.push(mk(next(), title(), frand() < 0.25 ? 'closed' : 'open'));
+  for (const k of made) if (frand() < 0.08) block(k, pick(made, frand));
+  return made;
+}
+const TRACKED0 = ['acme/api', 'acme/web', 'globex/billing', 'example-user/verdandi', 'acme/infra', 'example-user/dotfiles'];
+const FILL = { 'acme/api': [16, 1], 'acme/web': [13, 1], 'globex/billing': [12, 2], 'example-user/verdandi': [7, 0], 'acme/infra': [11, 1], 'example-user/dotfiles': [9, 0], 'vendor/sdk': [5, 0], 'oss-org/parser': [5, 0] };
+const FILLED = {};
+for (const [repo, [loose, trees]] of Object.entries(FILL)) FILLED[repo] = filler(repo, loose, trees);
+for (let i = 0; i < 8; i++) { const a = pick(TRACKED0, frand), b = pick(TRACKED0, frand); if (a !== b) block(pick(FILLED[a], frand), pick(FILLED[b], frand)); }
+for (const ext of ['vendor/sdk', 'oss-org/parser']) for (let i = 0; i < 2; i++) block(pick(FILLED[pick(TRACKED0, frand)], frand), pick(FILLED[ext], frand));
+
+const alone = k => { const x = ISSUES.get(k); return !x.parent && !x.subs.length && !x.blockedBy.length && !x.blocking.length && x.state === 'open'; };
+const SHOWCASES = [
+  ['acme/api#122', 'Hub: deep chains both ways, nested sub-issues'],
+  ['acme/api#120', 'Epic: sub-issues across repositories'],
+  ['acme/web#346', 'End of a sequence: four steps back'],
+  ['partner/contracts#3', 'External issue at the root of two chains'],
+  ['acme/infra#95', 'A cycle in the blocking relationships'],
+  ['acme/api#140', 'Sub-issue of an external parent issue'],
+  ['acme/api#121', 'Closed issue'],
+  [REPO_ISSUES.get('example-user/dotfiles').find(alone), 'Nothing related'],
+];
+
+// ---------- app state ----------
+const VIEWS = {
+  'v:blocked': { name: 'Blocked', test: it => isBlocked(it) },
+  'v:epics': { name: 'Epics' },
+  'v:mine': { name: 'Assigned to me', test: it => it.state === 'open' && it.assignees.includes(ME) },
+};
+const S = {
+  variant: 'A',        // issue page variant; the list is fixed
+  order: ['r:acme/api', 'r:acme/web', 'r:globex/billing', 'r:example-user/verdandi', 'r:acme/infra', 'r:example-user/dotfiles', 'v:blocked', 'v:epics', 'v:mine'],
+  active: 'r:acme/api',
+  focus: 'main',       // 'sidebar' | 'main'
+  lists: {},           // per sidebar entry: { sel, expanded, scroll }
+  pages: [],           // stack of open issue pages; empty = the list is showing
+  modal: null,
+  scrollSel: false, scrollLink: false,
+};
+const newPage = k => ({ key: k, cur: null, scroll: 0, scroll2: 0, exp: new Set(), full: false, mapScroll: undefined });
+
+const trackedRepos = () => S.order.filter(x => x.startsWith('r:')).map(x => x.slice(2));
+const isTracked = repo => S.order.includes('r:' + repo);
+const openBlockers = it => it.blockedBy.filter(k => ISSUES.get(k).state === 'open');
+const openBlocked = it => it.state === 'open' ? it.blocking.filter(k => ISSUES.get(k).state === 'open') : [];
+const isBlocked = it => it.state === 'open' && openBlockers(it).length > 0;
+const doneSubs = it => it.subs.filter(k => ISSUES.get(k).state === 'closed').length;
+const hasOpenDesc = k => ISSUES.get(k).subs.some(c => ISSUES.get(c).state === 'open' || hasOpenDesc(c));
+const doneBranch = k => ISSUES.get(k).state === 'closed' && !hasOpenDesc(k);
+const ancestors = it => { const a = []; for (let p = it.parent; p; p = ISSUES.get(p).parent) a.unshift(p); return a; };
+function entryInfo(id) {
+  if (id === 'all') return { id, kind: 'all', name: 'All' };
+  if (id.startsWith('r:')) { const repo = id.slice(2); const [owner, name] = repo.split('/'); return { id, kind: 'repo', repo, owner, name }; }
+  return { id, kind: 'view', ...VIEWS[id] };
+}
+const icon = e => e.kind === 'all' ? I.all : e.kind === 'repo' ? I.repo : I.view;
+const titleHTML = e => e.kind === 'repo' ? `<span><span class="owner">${esc(e.owner)}/</span>${esc(e.name)}</span>` : esc(e.name);
+const ownerHue = repo => hashStr(repo.split('/')[0]) % 360;
+const refShort = (k, home) => { const it = ISSUES.get(k); return it.repo === home ? `#${it.number}` : `${it.repo}#${it.number}`; };
+const stIcon = it => it.state === 'open' ? `<span class="st st-open" title="Open">${I.open}</span>`
+  : it.reason === 'not planned' ? `<span class="st st-np" title="Closed as not planned">${I.notplanned}</span>` : `<span class="st st-closed" title="Closed">${I.closed}</span>`;
+const readyIcon = it => isBlocked(it) ? `<span class="st st-blocked" title="Open and blocked">${I.blocked}</span>` : stIcon(it);
+const extTag = it => isTracked(it.repo) ? '' : `<span class="ext" title="${esc(it.repo)} is not a tracked repository">external</span>`;
+const repoChip = repo => `<span class="rchip ${isTracked(repo) ? '' : 'x'}" style="--h:${ownerHue(repo)}" title="${esc(repo)}${isTracked(repo) ? '' : ' (not tracked)'}">${esc(isTracked(repo) ? repo.split('/')[1] : repo)}</span>`;
+const LABEL_COLORS = { bug: 'd73a4a', enhancement: 'a2eeef', docs: '0075ca', infra: 'c5def5', 'good first issue': '7057ff', performance: 'f9d0c4', security: 'b60205', ux: 'd4c5f9', 'needs design': 'fef2c0', 'tech debt': 'e4e669', epic: '3e4b9e', api: '1d76db', legal: '5319e7' };
+const labelPill = l => {
+  const h = LABEL_COLORS[l] ?? 'ededed', n = parseInt(h, 16), lum = (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+  return `<span class="lbl" style="background:#${h};color:${lum > 0.6 ? '#1f2328' : '#fff'}">${esc(l)}</span>`;
+};
+const labelsHTML = (it, max = 3) => it.labels.slice(0, max).map(labelPill).join('')
+  + (it.labels.length > max ? `<span class="lbl more" title="${esc(it.labels.slice(max).join(', '))}">+${it.labels.length - max}</span>` : '');
+const labelDots = it => it.labels.length ? `<span class="dots" title="${esc(it.labels.join(', '))}">${it.labels.map(l => `<i style="background:#${LABEL_COLORS[l] ?? 'ededed'}"></i>`).join('')}</span>` : '';
+const avatar = (p, cls = '') => `<span class="av ${cls}" style="--h:${hashStr(p) % 360}" title="${esc(p)}">${esc(p[0].toUpperCase())}</span>`;
+const progHTML = it => { const d = doneSubs(it), t = it.subs.length; return t ? `<span class="bar" title="${d} of ${t} sub-issues closed"><i style="width:${d / t * 100}%"></i></span><span class="frac">${d}/${t}</span>` : ''; };
+const statePill = it => it.state === 'open' ? `<span class="pill open">${I.open}Open</span>`
+  : it.reason === 'not planned' ? `<span class="pill np">${I.notplanned}Closed as not planned</span>` : `<span class="pill closed">${I.closed}Closed</span>`;
+const blockPills = it => {
+  const ob = it.state === 'open' ? openBlockers(it).length : 0, ow = openBlocked(it).length;
+  return (ob ? `<span class="cnt red" title="Blocked by ${plural(ob, 'open issue')}">${I.blocked}Blocked by ${ob}</span>` : '')
+    + (ow ? `<span class="cnt amber" title="Blocks ${plural(ow, 'open issue')}">${I.arrow}Blocks ${ow}</span>` : '');
+};
+
+// ---------- issue content (shared by every page variant) ----------
+const withRefs = (h, home) => h.replace(/\{([\w.-]+\/[\w.-]+#\d+)\}/g, (m, k) => ISSUES.has(k)
+  ? `<a class="iref" data-act="open" data-arg="${esc(k)}" title="${esc(ISSUES.get(k).title)} (opens in Verdandi)">${esc(refShort(k, home))}</a>` : k);
+function bodyHTML(it) {
+  if (it.body) return withRefs(it.body, it.repo);
+  const r = mulberry32(hashStr(it.key + '/body'));
+  let h = Array.from({ length: rint(1, 2, r) }, () => `<p>${Array.from({ length: rint(2, 3, r) }, () => pick(SENTENCES, r)).join(' ')}</p>`).join('');
+  if (it.blockedBy.length && r() < 0.8) h += `<p>Depends on {${it.blockedBy[0]}}; check the discussion there before starting.</p>`;
+  if (r() < 0.35) h += `<pre><code>${esc(pick(SNIPPETS, r))}</code></pre>`;
+  if (r() < 0.6) { const ts = [...new Set(Array.from({ length: rint(2, 4, r) }, () => pick(TASKS, r)))]; h += `<h3>Acceptance criteria</h3><ul class="tasks">${ts.map(t => `<li class="${r() < 0.4 ? 'done' : ''}">${t}</li>`).join('')}</ul>`; }
+  return withRefs(h, it.repo);
+}
+function commentsHTML(it) {
+  const r = mulberry32(hashStr(it.key + '/thread'));
+  const th = it.thread ?? Array.from({ length: it.comments }, (_, i) => [pick(PEOPLE, r), Math.max(1, it.updated + it.comments - i - 1),
+    r() < 0.25 && (it.blocking.length || it.blockedBy.length) ? `<p>Related: {${[...it.blocking, ...it.blockedBy][0]}}.</p>` : pick(COMMENTS, r)]);
+  if (!th.length) return '<div class="cmts"><div class="nocmt">No comments yet.</div></div>';
+  return `<div class="cmts">${th.map(([who, d, h]) => `<div class="cmt">${avatar(who)}<div class="cbox"><div class="chd"><b>${esc(who)}</b> commented ${ago(d)}</div><div class="cbd md">${withRefs(h, it.repo)}</div></div></div>`).join('')}</div>`;
+}
+const assigneesHTML = (it, names = true) => it.assignees.length
+  ? it.assignees.map(p => names ? `<span class="who">${avatar(p, 'sm')}${esc(p)}</span>` : avatar(p, 'sm')).join('') : '<span class="none">No one</span>';
+const openedLine = it => `<span><b>${esc(it.author)}</b>&nbsp;opened this ${ago(it.created)}</span>`;
+
+// ---------- blocking chains (shared) ----------
+const nbr = (x, dir) => dir === 'up' ? ISSUES.get(x).blockedBy : ISSUES.get(x).blocking;
+// Every issue reachable from k by following blocking relationships in one direction ('up': what blocks
+// it, 'down': what waits on it). depth = longest route from k, so an issue reached along two routes (a
+// diamond) sits beyond both. An edge back to an issue on the current route closes a cycle and is
+// flagged instead of followed. Closed issues are shown but only followed when throughClosed is set.
+// Edge a -> b: b is one step farther from k than a.
+function reach(k, dir, throughClosed) {
+  const nodes = new Map([[k, { key: k, depth: 0 }]]), edges = [], onRoute = new Set(), done = new Set(), post = [];
+  const follow = x => x === k || throughClosed || ISSUES.get(x).state === 'open';
+  const dfs = x => {
+    onRoute.add(x);
+    if (follow(x)) for (const y of nbr(x, dir)) {
+      if (onRoute.has(y)) { edges.push({ a: x, b: y, cycle: true }); continue; }
+      edges.push({ a: x, b: y, cycle: false });
+      if (!nodes.has(y)) nodes.set(y, { key: y, depth: 0 });
+      if (!done.has(y)) dfs(y);
+    }
+    onRoute.delete(x); done.add(x); post.push(x);
+  };
+  dfs(k);
+  const out = new Map();
+  for (const e of edges) if (!e.cycle) { if (!out.has(e.a)) out.set(e.a, []); out.get(e.a).push(e.b); }
+  for (const x of post.reverse()) for (const y of out.get(x) ?? []) nodes.get(y).depth = Math.max(nodes.get(y).depth, nodes.get(x).depth + 1);
+  return { nodes, edges };
+}
+const beyond = (k, dir) => reach(k, dir, false).nodes.size - 1;
+
+// ---------- the issue list (decided; not up for review here) ----------
+function memberKeys(id) {
+  const e = entryInfo(id);
+  if (e.kind === 'repo') return REPO_ISSUES.get(e.repo);
+  const tracked = trackedRepos().flatMap(r => REPO_ISSUES.get(r));
+  if (e.kind === 'all') return tracked;
+  if (id === 'v:epics') return tracked.filter(k => ISSUES.get(k).subs.length);
+  return tracked.filter(k => e.test(ISSUES.get(k)));
+}
+const sortRoots = keys => keys.slice().sort((a, b) => {
+  const x = ISSUES.get(a), y = ISSUES.get(b);
+  return (x.state === 'closed') - (y.state === 'closed') || (y.subs.length > 0) - (x.subs.length > 0) || x.updated - y.updated;
+});
+function model(id) {
+  const e = entryInfo(id), keys = memberKeys(id), mem = new Set(keys);
+  const home = e.kind === 'repo' ? e.repo : null;
+  if (e.kind === 'view' && id !== 'v:epics') return { flat: true, roots: sortRoots(keys), home, hidden: 0 };
+  const covered = k => { for (let p = ISSUES.get(k).parent; p; p = ISSUES.get(p).parent) if (mem.has(p)) return true; return false; };
+  const roots = [];
+  let hidden = 0;
+  for (const k of keys) {
+    if (covered(k)) continue;
+    if (doneBranch(k)) { hidden++; continue; }
+    roots.push(k);
+  }
+  return { flat: false, roots: sortRoots(roots), home, hidden };
+}
+function countFor(id) {
+  const e = entryInfo(id);
+  if (e.kind === 'repo') return REPO_ISSUES.get(e.repo).filter(k => ISSUES.get(k).state === 'open').length;
+  if (e.kind === 'all') return trackedRepos().reduce((s, r) => s + countFor('r:' + r), 0);
+  return memberKeys(id).filter(k => ISSUES.get(k).state === 'open').length;
+}
+function lstate(id) {
+  if (!S.lists[id]) S.lists[id] = { sel: null, expanded: new Set([...ISSUES.values()].filter(x => x.subs.length).map(x => x.key)), scroll: 0 };
+  return S.lists[id];
+}
+function selIndex(rows, id = S.active) {
+  const ls = lstate(id);
+  let i = ls.sel ? rows.findIndex(r => r.id === ls.sel) : -1;
+  if (i < 0 && ls.sel) for (let k = ls.sel; k && i < 0; k = ISSUES.get(k).parent) i = rows.findIndex(r => r.k === k);
+  if (i < 0) i = rows.length ? 0 : -1;
+  if (i >= 0) ls.sel = rows[i].id;
+  return i;
+}
+// One outline row, as decided for the issue list. The issue page of variant B reuses it for sub-issues.
+function outlineRow(r, o) {
+  const it = ISSUES.get(r.k), closed = it.state === 'closed', home = o.home, all = o.all;
+  const ob = openBlockers(it).length, tb = it.blockedBy.length, ow = openBlocked(it).length, tw = it.blocking.length;
+  const bb = ob && !closed ? `<span class="cnt red" title="Blocked by ${plural(ob, 'open issue')}">${I.blocked}${ob}</span>`
+    : tb ? `<span class="cnt mute" title="Not blocked now: ${ob} of ${plural(tb, 'blocking issue')} open${closed ? ', and this issue is closed' : ''}">${I.blocked}${ob}/${tb}</span>` : '';
+  const bl = ow ? `<span class="cnt amber" title="Blocks ${plural(ow, 'open issue')}">${I.arrow}${ow}</span>`
+    : tw ? `<span class="cnt mute" title="Blocks no open issue now (${tw} in total)">${I.arrow}0/${tw}</span>` : '';
+  const p = o.pchip && r.d === 0 && it.parent ? ISSUES.get(it.parent) : null;
+  const pchip = p ? `<span class="pchip" data-act="open" data-arg="${esc(p.key)}" title="Sub-issue of ${esc(p.key)}: ${esc(p.title)}">${I.up}${esc(refShort(p.key, home))}${isTracked(p.repo) ? '' : ' · external'}</span>` : '';
+  const ch = `<span class="chev" ${r.kids ? `data-act="${o.toggle}" data-arg="${esc(o.toggleArg)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>`;
+  return `<div class="arow ${o.sel ? 'row-sel' : ''} ${it.state}" ${o.nav ? `data-nav="${esc(o.nav)}"` : ''} data-act="${o.act}" data-arg="${esc(o.arg)}"><span class="guides" style="--d:${r.d}"></span>${ch}${stIcon(it)}${all ? repoChip(it.repo) : ''}`
+    + `<span class="num">${esc(all ? '#' + it.number : refShort(r.k, home))}</span><span class="title">${esc(it.title)}</span>${labelsHTML(it)}${all ? '' : extTag(it)}${pchip}<span class="sp"></span>`
+    + `<span class="col-prog">${progHTML(it)}</span><span class="col-bb">${bb}</span><span class="col-bl">${bl}</span></div>`;
+}
+const LIST = {
+  rows(id) {
+    const M = model(id), ls = lstate(id), rows = [];
+    const walk = (k, d) => {
+      const it = ISSUES.get(k), kids = it.subs.length > 0, exp = kids && ls.expanded.has(k);
+      rows.push({ id: k, k, d, kids, exp });
+      if (exp) it.subs.forEach(c => walk(c, d + 1));
+    };
+    if (M.flat) M.roots.forEach(k => rows.push({ id: k, k, d: 0 }));
+    else M.roots.forEach(k => walk(k, 0));
+    return { rows, M };
+  },
+  html(id) {
+    const { rows, M } = this.rows(id), si = selIndex(rows, id), all = entryInfo(id).kind === 'all';
+    const head = `<div class="colhead"><span class="c-title">Issue</span><span class="col-prog">Sub-issues</span><span class="col-bb">Blocked by</span><span class="col-bl">Blocks</span></div>`;
+    const foot = M.hidden ? `<div class="list-foot">${plural(M.hidden, 'closed issue')} with no open sub-issues ${M.hidden === 1 ? 'is' : 'are'} not listed</div>` : '';
+    return `<div class="alist">${head}${rows.map((r, i) => outlineRow(r, { sel: i === si, home: M.home, all, act: 'row', arg: r.id, toggle: 'toggle', toggleArg: r.k, pchip: true })).join('') || '<div class="empty">No issues here.</div>'}${foot}</div>`;
+  },
+};
+
+// ================= Page A: rail =================
+const PA = {
+  name: 'Rail', nav: 'linear', initial: null,
+  blurb: 'A · Rail: GitHub\'s layout. Content on the left with sub-issues under the body; parent issue and blocking chains in a right rail as indented trees, direct relationships only until you expand them',
+  stances: [
+    ['Layout', 'GitHub\'s: title and state on top, body and comments on the left, a 330px rail on the right. Sub-issues sit in a panel under the body, as on GitHub.'],
+    ['Blocking chains', 'Two indented trees in the rail, "Blocked by" and "Blocks". Each shows direct relationships only; a row with more beyond it has a chevron and "+N" (issues reachable past it). → or the chevron expands one step.'],
+    ['Depth', 'One step by default: the same data as GitHub\'s own page, one request per direction. Deeper steps load when expanded.'],
+    ['Closed blockers', 'Shown in place, dimmed; their own blockers are not followed.'],
+    ['Diamonds and cycles', 'A tree repeats an issue reached along two routes. A relationship back into the route shows as a red "cycle" row instead of repeating forever.'],
+    ['External issues', '"external" tag and a qualified reference (owner/repo#n), as in the list.'],
+    ['Parent issue', 'Rail section with the whole ancestry path, top-most first; the direct parent issue is last.'],
+    ['Labels', 'A Labels section in the rail with every label. Related-issue rows in the rail show labels as coloured dots (names on hover); sub-issue rows show pills.'],
+    ['Metadata', 'Assignees and milestone in the rail; author, age and comment count under the title; "Blocked by N" and "Blocks N" pills next to the state.'],
+  ],
+  keys: [['j k / ↑ ↓', 'Move through related issues: sub-issues, then the rail'], ['→ ←', 'Expand / collapse; ← on a nested row jumps to its parent row'], ['↵ or click', 'Open the issue page'], ['Space ⇧Space', 'Scroll the page']],
+  hint: '<kbd>j</kbd><kbd>k</kbd> related <kbd>←</kbd><kbd>→</kbd> fold <kbd>↵</kbd> open',
+  html(it, pg) {
+    const home = it.repo;
+    const head = `<div class="i-ref">${I.repo}<span>${esc(it.repo)}</span>${extTag(it)}</div>
+      <h1 class="ptitle">${esc(it.title)} <span class="muted">#${it.number}</span></h1>
+      <div class="i-meta">${statePill(it)}${blockPills(it)}${openedLine(it)}<span>· ${plural(it.comments, 'comment')}</span></div>`;
+    const subs = it.subs.length ? `<div class="subpanel"><div class="sp-head">Sub-issues ${progHTML(it)}</div>${this.subRows(it, pg, home)}</div>` : '';
+    const ob = it.state === 'open' ? openBlockers(it).length : 0, ow = openBlocked(it).length;
+    const anc = ancestors(it);
+    const rail = `<section><h4>Assignees</h4>${assigneesHTML(it)}</section>`
+      + `<section><h4>Labels</h4><div class="lbls">${it.labels.length ? it.labels.map(labelPill).join('') : '<span class="none">None yet</span>'}</div></section>`
+      + `<section><h4>Milestone</h4>${it.milestone ? `<span class="ms">${I.milestone}${esc(it.milestone)}</span>` : '<span class="none">No milestone</span>'}</section>`
+      + `<section><h4>Parent issue</h4>${anc.length ? anc.map((k, i) => this.row({ kind: 'issue', k, d: i, id: 'anc:' + k }, home, pg)).join('') : '<span class="none">None</span>'}</section>`
+      + `<section><h4>Blocked by ${ob ? `<span class="cnt red">${I.blocked}${ob} open</span>` : ''}</h4>${this.tree(it.key, 'up', pg, home) || '<span class="none">None</span>'}</section>`
+      + `<section><h4>Blocks ${ow ? `<span class="cnt amber">${I.arrow}${ow} open</span>` : ''}</h4>${this.tree(it.key, 'down', pg, home) || '<span class="none">None</span>'}</section>`;
+    return `<article class="pa">${head}<div class="pa-grid"><div class="pa-main"><div class="md">${bodyHTML(it)}</div>${subs}${commentsHTML(it)}</div><aside class="pa-rail">${rail}</aside></div></article>`;
+  },
+  tree(root, dir, pg, home) {
+    const rows = [];
+    const walk = (x, d, path) => {
+      for (const y of nbr(x, dir)) {
+        const id = `${dir}:${[...path.slice(1), y].join('>')}`;
+        if (path.includes(y)) { rows.push({ kind: 'cycle', k: y, d, id }); continue; }
+        const c = ISSUES.get(y), kids = c.state === 'open' ? nbr(y, dir).length : 0, exp = kids > 0 && pg.exp.has(id);
+        rows.push({ kind: 'issue', k: y, d, id, kids, exp, more: kids && !exp ? beyond(y, dir) : 0 });
+        if (exp) walk(y, d + 1, [...path, y]);
+      }
+    };
+    walk(root, 0, [root]);
+    return rows.map(r => this.row(r, home, pg)).join('');
+  },
+  row(r, home, pg) {
+    if (r.kind === 'cycle') return `<div class="trow cyc" style="--d:${r.d}"><span class="chev"></span><span class="cycle" title="This relationship leads back into the chain">${I.cycle}${esc(refShort(r.k, home))}${r.k === pg.key ? ', this issue,' : ''} again: a cycle</span></div>`;
+    const x = ISSUES.get(r.k);
+    return `<div class="trow ${x.state}" style="--d:${r.d}" data-nav="${esc(r.id)}" data-act="open" data-arg="${esc(r.k)}" ${r.kids ? `data-kids="1" data-exp="${r.exp ? 1 : ''}"` : ''} title="${esc(x.key)}: ${esc(x.title)}">`
+      + `<span class="chev" ${r.kids ? `data-act="ptoggle" data-arg="${esc(r.id)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>${readyIcon(x)}`
+      + `<span class="num">${esc(refShort(r.k, home))}</span><span class="t">${esc(x.title)}</span>${labelDots(x)}${extTag(x)}${r.more ? `<span class="more" title="${plural(r.more, 'more issue')} beyond this one">+${r.more}</span>` : ''}</div>`;
+  },
+  subRows(it, pg, home) {
+    const out = [];
+    const walk = (x, d, path) => {
+      for (const y of ISSUES.get(x).subs) {
+        const id = `sub:${[...path, y].join('>')}`, c = ISSUES.get(y), kids = c.subs.length, exp = kids > 0 && pg.exp.has(id);
+        out.push(`<div class="trow ${c.state}" style="--d:${d}" data-nav="${esc(id)}" data-act="open" data-arg="${esc(y)}" ${kids ? `data-kids="1" data-exp="${exp ? 1 : ''}"` : ''}>`
+          + `<span class="chev" ${kids ? `data-act="ptoggle" data-arg="${esc(id)}"` : ''}>${kids ? (exp ? I.down : I.right) : ''}</span>${readyIcon(c)}<span class="num">${esc(refShort(y, home))}</span>`
+          + `<span class="t">${esc(c.title)}</span>${labelsHTML(c)}${extTag(c)}<span class="sp"></span>${progHTML(c)}<span class="avs">${c.assignees.map(p => avatar(p, 'sm')).join('')}</span></div>`);
+        if (exp) walk(y, d + 1, [...path, y]);
+      }
+    };
+    walk(it.key, 0, []);
+    return out.join('');
+  },
+};
+
+// ================= Page B: map =================
+const PB = {
+  name: 'Map', nav: 'spatial', initial: 'center',
+  blurb: 'B · Map: relationships first. Parent issues as a breadcrumb, then a left-to-right map of the blocking chains (blockers left, waiting issues right, two steps each way), then sub-issues as in the list, then body and comments',
+  stances: [
+    ['Layout', 'Relationships first. Ancestry breadcrumb, title, one metadata line, then a full-width map of the blocking chains, then sub-issues, then body and comments.'],
+    ['Blocking chains', 'A graph: this issue in the centre column, blockers to the left, issues waiting on it to the right, one column per step. Arrows run left to right and point at the issue that waits.'],
+    ['Depth', 'Two steps each way. Anything farther folds into a "+N more" card at the edge; opening it draws the whole chain.'],
+    ['Closed blockers', 'Shown as faded cards with dashed arrows; their own blockers are not followed.'],
+    ['Diamonds and cycles', 'An issue reached along two routes is drawn once, with two arrows, in the column of its longest route. A cycle shows as a red dotted loop.'],
+    ['External issues', 'Dashed card border and an outlined owner/repo chip. Cards from another tracked repository carry its coloured repository chip.'],
+    ['Parent issue', 'A breadcrumb above the title, top-most issue first.'],
+    ['Sub-issues', 'The issue list\'s own outline rows, with the sub-issue, "Blocked by" and "Blocks" columns.'],
+    ['Labels', 'Every label as pills next to the state. Cards show labels as coloured dots.'],
+  ],
+  keys: [['← → ↑ ↓ / h j k l', 'Move across the page spatially: ← toward blockers, → toward waiting issues, ↓ below the map reaches the sub-issues'], ['↵ or click', 'Open the issue page; on "+N more", draw the whole chain'], ['Space ⇧Space', 'Scroll the page']],
+  hint: '<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> open',
+  CW: 150, SW: 92, CH: 60, GAP: 34, VG: 12, PAD: 16, HEAD: 32,
+  html(it, pg) {
+    const home = it.repo, anc = ancestors(it);
+    const crumbs = `<nav class="crumbs">${anc.map(k => { const a = ISSUES.get(k); return `<span class="crumb" data-nav="anc:${esc(k)}" data-act="open" data-arg="${esc(k)}" title="${esc(k)}: ${esc(a.title)}">${stIcon(a)}<span class="num">${esc(refShort(k, home))}</span><span class="t">${esc(a.title)}</span>${extTag(a)}</span><span class="muted">›</span>`; }).join('')}`
+      + `<span class="crumb" style="cursor:default">${I.repo}${esc(it.repo)} #${it.number}${extTag(it)}</span></nav>`;
+    const meta = `<div class="metaline">${statePill(it)}${blockPills(it)}${it.labels.map(labelPill).join('')}`
+      + `${it.assignees.length ? `<span class="avs" title="Assigned to ${esc(it.assignees.join(', '))}">${it.assignees.map(p => avatar(p, 'sm')).join('')}</span>` : ''}`
+      + `${it.milestone ? `<span>${I.milestone}${esc(it.milestone)}</span>` : ''}${openedLine(it)}<span>${I.comment}${it.comments}</span></div>`;
+    return `<article class="pb">${crumbs}<h1 class="ptitle">${esc(it.title)} <span class="muted">#${it.number}</span></h1>${meta}${this.map(it, pg)}${this.subs(it, pg, home)}`
+      + `<div class="pb-body md">${bodyHTML(it)}</div>${commentsHTML(it)}</article>`;
+  },
+  map(it, pg) {
+    const MAX = pg.full ? Infinity : 2, P = new Map(), cols = new Map(), edges = [], seen = new Set();
+    const add = (id, col, o) => { P.set(id, { id, col, ...o }); if (!cols.has(col)) cols.set(col, []); cols.get(col).push(id); };
+    add('center', 0, { key: it.key, center: true });
+    for (const [dir, sgn] of [['up', -1], ['down', 1]]) {
+      const R = reach(it.key, dir, false), idOf = k => k === it.key ? 'center' : `${dir}:${k}`;
+      let hidden = 0;
+      for (const n of R.nodes.values()) if (n.key !== it.key) { if (n.depth <= MAX) add(idOf(n.key), sgn * n.depth, { key: n.key }); else hidden++; }
+      const stub = hidden ? `${dir}:more` : null;
+      if (stub) add(stub, sgn * (MAX + 1), { stub: true, n: hidden });
+      for (const e of R.edges) {
+        const a = idOf(e.a), b = P.has(idOf(e.b)) ? idOf(e.b) : stub;
+        if (!P.has(a) || !b) continue;
+        const [from, to] = dir === 'up' ? [b, a] : [a, b]; // from the blocker to the issue that waits
+        if (seen.has(from + '>' + to)) continue;
+        seen.add(from + '>' + to);
+        edges.push({ from, to, cycle: e.cycle, more: b === stub, live: ISSUES.get(e.a).state === 'open' && ISSUES.get(e.b).state === 'open' });
+      }
+    }
+    // columns nearest the centre first; within a column, order by the neighbours already placed
+    const rowsMax = Math.max(...[...cols.values()].map(c => c.length)), ypos = new Map(), { CW, SW, CH, GAP, VG, PAD, HEAD } = this;
+    for (const c of [...cols.keys()].sort((a, b) => Math.abs(a) - Math.abs(b))) {
+      const ids = cols.get(c);
+      if (c !== 0) {
+        const score = id => {
+          if (P.get(id).stub) return 1e9;
+          const ys = edges.filter(e => e.from === id || e.to === id).map(e => ypos.get(e.from === id ? e.to : e.from)).filter(y => y !== undefined);
+          return ys.length ? ys.reduce((s, y) => s + y, 0) / ys.length : 1e8;
+        };
+        const sc = new Map(ids.map(id => [id, score(id)]));
+        ids.sort((a, b) => sc.get(a) - sc.get(b));
+      }
+      ids.forEach((id, i) => ypos.set(id, HEAD + ((rowsMax - ids.length) / 2 + i) * (CH + VG)));
+    }
+    const colX = new Map(), isStub = c => cols.get(c).every(id => P.get(id).stub);
+    let x = PAD;
+    for (const c of [...cols.keys()].sort((a, b) => a - b)) { colX.set(c, x); x += (isStub(c) ? SW : CW) + GAP; }
+    const W = Math.max(x - GAP + PAD, 560), H = HEAD + rowsMax * (CH + VG) - VG + PAD;
+    for (const p of P.values()) { p.x = colX.get(p.col); p.y = ypos.get(p.id); p.w = p.stub ? SW : CW; }
+    const path = e => {
+      const f = P.get(e.from), t = P.get(e.to), x1 = f.x + f.w, y1 = f.y + CH / 2, x2 = t.x, y2 = t.y + CH / 2;
+      if (x2 > x1) { const dx = Math.max(14, (x2 - x1) / 2); return `M${x1} ${y1}C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`; }
+      const yb = H - 4, fx = f.x + f.w / 2, tx = t.x + t.w / 2; // a cycle runs backwards: loop under the cards
+      return `M${fx} ${f.y + CH}C${fx} ${yb} ${tx} ${yb} ${tx} ${t.y + CH}`;
+    };
+    const marker = (id, cls) => `<marker id="${id}" class="${cls}" viewBox="0 0 6 6" refX="5.5" refY="3" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L6 3L0 6z"/></marker>`;
+    const svgEl = `<svg class="pb-svg" width="${W}" height="${H}"><defs>${marker('pb-arr', '')}${marker('pb-arr-c', 'cyc')}</defs>`
+      + edges.map(e => `<path class="e ${e.cycle ? 'cyc' : e.live ? '' : 'dead'} ${e.more ? 'more' : ''}" d="${path(e)}" marker-end="url(#${e.cycle ? 'pb-arr-c' : 'pb-arr'})"/>`).join('') + '</svg>';
+    const colLabel = c => c === 0 ? 'This issue' : c === -1 ? 'Blocked by' : c === 1 ? 'Blocks' : c < 0 ? `${-c} steps back` : `${c} steps on`;
+    const heads = [...cols.keys()].filter(c => !isStub(c)).map(c => `<div class="pb-colh ${c === 0 ? 'c0' : ''}" style="left:${colX.get(c)}px;width:${CW}px">${colLabel(c)}</div>`).join('');
+    const node = p => {
+      if (p.stub) return `<div class="node stub" style="left:${p.x}px;top:${p.y}px;width:${SW}px" data-nav="${esc(p.id)}" data-act="full" title="Draw the whole chain">+${p.n} more</div>`;
+      const n = ISSUES.get(p.key);
+      return `<div class="node ${n.state} ${isTracked(n.repo) ? '' : 'x'} ${p.center ? 'center' : ''} ${isBlocked(n) ? 'isblk' : ''}" style="left:${p.x}px;top:${p.y}px" data-nav="${esc(p.id)}" ${p.center ? '' : `data-act="open" data-arg="${esc(n.key)}"`} title="${esc(n.key)}: ${esc(n.title)}">`
+        + `<div class="n1">${readyIcon(n)}${n.repo !== it.repo ? repoChip(n.repo) : ''}<span class="num">#${n.number}</span><span class="sp"></span>${labelDots(n)}</div><div class="n2">${esc(n.title)}</div></div>`;
+    };
+    const lonely = P.size === 1 ? `<div class="pb-note" style="left:${colX.get(0) + CW + 16}px;top:${HEAD + CH / 2 - 9}px">No blocking relationships</div>` : '';
+    const legend = P.size > 1 ? `<div class="pb-legend"><span>arrows point at the issue that waits</span><span><svg width="24" height="8"><path d="M1 4H23" stroke="currentColor" stroke-dasharray="3 3"/></svg>no longer blocking</span><span><span class="st st-blocked">${I.blocked}</span>blocked</span><span>dashed card: external</span>${pg.full ? '' : '<span>two steps each way; "+N more" draws the rest</span>'}</div>` : '';
+    return `<section class="pb-map"><div class="pb-canvas" style="width:${W}px;height:${H}px">${svgEl}${heads}${[...P.values()].map(node).join('')}${lonely}</div></section>${legend}`;
+  },
+  subs(it, pg, home) {
+    if (!it.subs.length) return '';
+    const rows = [];
+    const walk = (x, d, path) => {
+      for (const y of ISSUES.get(x).subs) {
+        const id = `sub:${[...path, y].join('>')}`, kids = ISSUES.get(y).subs.length > 0, exp = kids && pg.exp.has(id);
+        rows.push({ k: y, d, id, kids, exp });
+        if (exp) walk(y, d + 1, [...path, y]);
+      }
+    };
+    walk(it.key, 0, []);
+    return `<section class="pb-subs"><div class="colhead"><span class="c-title">Sub-issues of this issue</span><span class="col-prog">Sub-issues</span><span class="col-bb">Blocked by</span><span class="col-bl">Blocks</span></div>`
+      + rows.map(r => outlineRow(r, { home, nav: r.id, act: 'open', arg: r.k, toggle: 'ptoggle', toggleArg: r.id })).join('') + '</section>';
+  },
+  after(c, pg) {
+    const m = c.querySelector('.pb-map');
+    if (!m) return;
+    if (pg.mapScroll === undefined) { const ctr = m.querySelector('.node.center'); pg.mapScroll = Math.max(0, ctr.offsetLeft + ctr.offsetWidth / 2 - m.clientWidth / 2); }
+    m.scrollLeft = pg.mapScroll;
+    m.onscroll = () => { pg.mapScroll = m.scrollLeft; };
+  },
+};
+
+// ================= Page C: path =================
+const PC = {
+  name: 'Path', nav: 'linear', initial: 'this', split: true,
+  blurb: 'C · Path: a relationship spine on the left, content on the right. Everything that blocks this issue, in the order it has to happen, then this issue, then everything waiting on it; open blockers nobody waits on are marked "ready"',
+  stances: [
+    ['Layout', 'Split: a 420px spine on the left, the issue\'s content on the right. Each scrolls on its own, so the relationships stay in view while reading.'],
+    ['Blocking chains', 'One timeline through this issue. Above it: every blocker, farthest first, so it reads in the order the work has to happen. Below it: every issue waiting on it, nearest first. Each entry says what it unblocks or what it comes after.'],
+    ['Depth', 'Everything reachable, never folded.'],
+    ['Closed blockers', 'Shown and followed: the timeline includes the finished history, dimmed.'],
+    ['"Ready now"', 'An open blocker with no open blockers of its own is marked "ready": work that can start today to move this issue.'],
+    ['Diamonds and cycles', 'An issue reached along two routes is listed once and names everything it unblocks. A relationship back into the chain is noted on the entry as a cycle.'],
+    ['External issues', 'Outlined owner/repo chip plus "external". Every entry from another repository carries its repository chip.'],
+    ['Parent issue', '"Part of" at the top of the spine, with the whole ancestry.'],
+    ['Sub-issues', 'Last section of the spine, fully expanded.'],
+    ['Labels', 'Every label as pills under the title. Spine entries show up to three pills.'],
+  ],
+  keys: [['j k / ↑ ↓', 'Walk the spine: k goes up toward the blockers, j down toward waiting issues and sub-issues'], ['↵ or click', 'Open the issue page'], ['Space ⇧Space', 'Scroll the content column']],
+  hint: '<kbd>j</kbd><kbd>k</kbd> walk the path <kbd>↵</kbd> open',
+  html(it, pg) {
+    const home = it.repo, anc = ancestors(it), up = reach(it.key, 'up', true), dn = reach(it.key, 'down', true);
+    const refs = ks => ks.map(k => k === it.key ? 'this issue' : esc(refShort(k, home))).join(', ');
+    const chip = x => x.repo === home ? '' : repoChip(x.repo);
+    const item = (n, dir, R) => {
+      const x = ISSUES.get(n.key), es = R.edges.filter(e => e.b === n.key && !e.cycle), cyc = R.edges.filter(e => e.a === n.key && e.cycle);
+      const ob = openBlockers(x).length;
+      const tag = x.state === 'closed' ? `<span>${x.reason === 'not planned' ? 'closed as not planned' : 'closed'}</span>`
+        : dir === 'up' ? (ob ? `<span class="tg red">waits on ${ob}</span>` : '<span class="tg ready">ready</span>') : '';
+      const hint = `<span class="hint">${dir === 'up' ? 'unblocks' : 'after'} ${refs(es.map(e => e.a))}</span>`
+        + (cyc.length ? `<span class="cycle">${I.cycle}${dir === 'up' ? 'also blocked by' : 'also blocks'} ${refs(cyc.map(e => e.b))}: a cycle</span>` : '');
+      return `<div class="ti ${x.state}" data-nav="${dir}:${esc(n.key)}" data-act="open" data-arg="${esc(n.key)}" title="${esc(x.key)} · ${plural(n.depth, 'step')} ${dir === 'up' ? 'before' : 'after'} this issue">`
+        + `<span class="dot">${readyIcon(x)}</span><div class="tb"><div class="t1">${esc(x.title)}</div><div class="t2">${chip(x)}<span class="num">#${x.number}</span>${extTag(x)}${labelsHTML(x)}${tag}${hint}</div></div></div>`;
+    };
+    const upN = [...up.nodes.values()].filter(n => n.key !== it.key).sort((a, b) => b.depth - a.depth || (ISSUES.get(b.key).state === 'closed') - (ISSUES.get(a.key).state === 'closed'));
+    const dnN = [...dn.nodes.values()].filter(n => n.key !== it.key).sort((a, b) => a.depth - b.depth);
+    const openUp = upN.filter(n => ISSUES.get(n.key).state === 'open'), ready = openUp.filter(n => !openBlockers(ISSUES.get(n.key)).length);
+    const openDn = dnN.filter(n => ISSUES.get(n.key).state === 'open');
+    const sec = (t, extra) => `<div class="pc-sec">${t}${extra ? `<span class="muted">${extra}</span>` : ''}</div>`;
+    const summary = it.state === 'closed' ? 'Closed.' : openUp.length ? `Waits on ${plural(openUp.length, 'open issue')}; ${ready.length} of them ${ready.length === 1 ? 'is' : 'are'} ready to start.` : 'Nothing open blocks it.';
+    const thisCard = `<div class="ti this" data-nav="this"><span class="dot">${readyIcon(it)}</span><div class="tb"><div class="t1"><b>This issue</b> <span class="num">#${it.number}</span></div>`
+      + `<div class="t2">${summary}${openDn.length ? ` ${plural(openDn.length, 'open issue')} ${openDn.length === 1 ? 'waits' : 'wait'} on it.` : ''}</div></div></div>`;
+    let spine = '';
+    if (anc.length) spine += sec('Part of') + `<div class="pc-plain">${anc.map((k, i) => { const a = ISSUES.get(k); return `<div class="ti ${a.state}" style="--d:${i}" data-nav="anc:${esc(k)}" data-act="open" data-arg="${esc(k)}"><span class="dot">${stIcon(a)}</span><div class="tb"><div class="t1">${esc(a.title)}</div><div class="t2">${chip(a)}<span class="num">#${a.number}</span>${extTag(a)}${a.subs.length ? progHTML(a) : ''}</div></div></div>`; }).join('')}</div>`;
+    spine += `<div class="tl">${sec('Before this', upN.length ? `${plural(upN.length, 'issue')} · ${openUp.length} open${openUp.length ? ` · ${ready.length} ready` : ''}` : '')}`
+      + (upN.length ? upN.map(n => item(n, 'up', up)).join('') : '<div class="ti-none">Nothing blocks this issue.</div>')
+      + thisCard + sec('After this', dnN.length ? `${plural(dnN.length, 'issue')} · ${openDn.length} open` : '')
+      + (dnN.length ? dnN.map(n => item(n, 'down', dn)).join('') : '<div class="ti-none">Nothing waits on this issue.</div>') + '</div>';
+    if (it.subs.length) {
+      const out = [];
+      const walk = (x, d, path) => ISSUES.get(x).subs.forEach(y => {
+        const c = ISSUES.get(y), id = `sub:${[...path, y].join('>')}`;
+        out.push(`<div class="ti ${c.state}" style="--d:${d}" data-nav="${esc(id)}" data-act="open" data-arg="${esc(y)}"><span class="dot">${readyIcon(c)}</span><div class="tb"><div class="t1">${esc(c.title)}</div><div class="t2">${chip(c)}<span class="num">#${c.number}</span>${extTag(c)}${labelsHTML(c)}${c.subs.length ? progHTML(c) : ''}</div></div></div>`);
+        walk(y, d + 1, [...path, y]);
+      });
+      walk(it.key, 0, []);
+      spine += sec('Sub-issues', `${doneSubs(it)} of ${it.subs.length} closed`) + `<div class="pc-plain">${out.join('')}</div>`;
+    }
+    const content = `<div class="i-ref">${I.repo}<span>${esc(it.repo)}</span>${extTag(it)}</div><h1 class="ptitle">${esc(it.title)} <span class="muted">#${it.number}</span></h1>`
+      + `<div class="i-meta">${statePill(it)}${blockPills(it)}${it.labels.map(labelPill).join('')}</div>`
+      + `<div class="metaline">${openedLine(it)}<span>${it.assignees.length ? `${it.assignees.map(p => avatar(p, 'sm')).join('')}${esc(it.assignees.join(', '))}` : '<span class="none">No assignee</span>'}</span>`
+      + `${it.milestone ? `<span>${I.milestone}${esc(it.milestone)}</span>` : ''}<span>${I.comment}${plural(it.comments, 'comment')}</span><span class="muted">updated ${ago(it.updated)}</span></div>`
+      + `<div class="md">${bodyHTML(it)}</div>${commentsHTML(it)}`;
+    return `<div class="pc"><aside class="pc-spine" data-scroll2>${spine}</aside><div class="pc-content" data-scroll>${content}</div></div>`;
+  },
+};
+
+const VARIANTS = { A: PA, B: PB, C: PC };
+const KEYS = Object.keys(VARIANTS);
+const PV = () => VARIANTS[S.variant];
+
+// ---------- render ----------
+const sbOrder = () => ['all', ...S.order.filter(x => x[0] === 'r'), ...S.order.filter(x => x[0] === 'v')];
+function renderSidebar() {
+  const sb = $('sb');
+  sb.className = 'sidebar' + (S.focus === 'sidebar' ? ' focused' : '');
+  const entry = id => {
+    const e = entryInfo(id);
+    const label = e.kind === 'repo' ? `<span class="name2"><span class="n1">${esc(e.name)}</span><span class="n2">${esc(e.owner)}</span></span>` : `<span class="name">${esc(e.name)}</span>`;
+    return `<div class="entry ${e.kind === 'repo' ? 'tall' : ''} ${S.active === id ? 'active' : ''}" data-act="entry" data-arg="${esc(id)}">${icon(e)}${label}<span class="count">${countFor(id)}</span></div>`;
+  };
+  const off = 'Settled in the app-shell prototype; not part of this one';
+  sb.innerHTML = `<div class="brand"><span class="logo"></span>Verdandi<span class="sp"></span><button class="iconbtn" data-act="help" title="Help (?)">?</button></div><div class="sb-scroll">${entry('all')}`
+    + `<div class="sec"><span>Repositories</span><button class="iconbtn" disabled title="${off}">${I.plus}</button></div>${S.order.filter(x => x[0] === 'r').map(entry).join('')}`
+    + `<div class="sec"><span>Views</span><button class="iconbtn" disabled title="${off}">${I.plus}</button></div>${S.order.filter(x => x[0] === 'v').map(entry).join('')}`
+    + `</div><div class="sb-foot"><kbd>Tab</kbd> sidebar ⇄ main · <kbd>?</kbd> help</div>`;
+}
+const navEls = () => [...$('scr').querySelectorAll('[data-nav]')];
+function renderMain() {
+  const mn = $('mn'), e = entryInfo(S.active);
+  mn.className = 'main' + (S.focus === 'main' ? ' focused' : '');
+  if (!S.pages.length) {
+    mn.innerHTML = `<div class="mainbar"><h2>${icon(e)}${titleHTML(e)}</h2><span class="sub">${countFor(S.active)} open</span><span class="sp"></span>`
+      + `<span class="hint"><kbd>↵</kbd> open <kbd>←</kbd><kbd>→</kbd> collapse / expand <kbd>e</kbd> all trees</span></div><div class="scroll" id="scr"></div>`;
+    const c = $('scr'), ls = lstate(S.active);
+    c.innerHTML = LIST.html(S.active);
+    c.scrollTop = ls.scroll;
+    if (S.scrollSel) { c.querySelector('.row-sel')?.scrollIntoView({ block: 'nearest' }); S.scrollSel = false; }
+    c.onscroll = () => { ls.scroll = c.scrollTop; };
+    return;
+  }
+  const top = S.pages.at(-1), prev = S.pages.at(-2), P = PV(), it = ISSUES.get(top.key);
+  mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${titleHTML(e)}${prev ? '' : '<kbd>Esc</kbd>'}</button>`
+    + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>Esc</kbd></button>` : '')
+    + `<span class="sp"></span><span class="hint">${P.hint}</span><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll ${P.split ? 'split' : ''}" id="scr"></div>`;
+  const c = $('scr');
+  c.innerHTML = P.html(it, top);
+  const main = P.split ? c.querySelector('[data-scroll]') : c, side = c.querySelector('[data-scroll2]');
+  main.scrollTop = top.scroll;
+  main.onscroll = () => { top.scroll = main.scrollTop; };
+  if (side) { side.scrollTop = top.scroll2; side.onscroll = () => { top.scroll2 = side.scrollTop; }; }
+  P.after?.(c, top);
+  const els = navEls();
+  let cur = els.find(x => x.dataset.nav === top.cur);
+  if (!cur && P.initial) cur = els.find(x => x.dataset.nav === P.initial);
+  top.cur = cur ? cur.dataset.nav : null;
+  if (cur) { cur.classList.add('navcur'); if (S.scrollLink) cur.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+  S.scrollLink = false;
+}
+function render() { renderSidebar(); renderMain(); renderState(); $('sw-lbl').textContent = `${S.variant} · ${PV().name}`; }
+function renderState() {
+  const box = $('statebox');
+  if (box.style.display !== 'block') return;
+  const top = S.pages.at(-1), k = top?.key ?? lstate(S.active).sel, it = k && ISSUES.get(k), thru = S.variant === 'C';
+  const chainOut = dir => { const R = reach(k, dir, thru); return { reachable: [...R.nodes.values()].filter(n => n.key !== k).map(n => `${n.key} (${ISSUES.get(n.key).state}, step ${n.depth})`), cycles: R.edges.filter(e => e.cycle).map(e => `${e.a} -> ${e.b}`) }; };
+  box.textContent = JSON.stringify({
+    variant: `${S.variant} (${PV().name})`, focus: S.focus, active: S.active,
+    pages: S.pages.map(p => ({ key: p.key, cursor: p.cur, expanded: [...p.exp], full: p.full || undefined })),
+    [top ? 'pageIssue' : 'selectedIssue']: it && {
+      ref: it.key, state: it.state, stateReason: it.reason, tracked: isTracked(it.repo), ancestors: ancestors(it),
+      '// as GitHub reports it (one request per relationship list)': '',
+      subIssuesSummary: { total: it.subs.length, completed: doneSubs(it) },
+      issueDependenciesSummary: { blockedBy: openBlockers(it).length, totalBlockedBy: it.blockedBy.length, blocking: openBlocked(it).length, totalBlocking: it.blocking.length },
+      [`// transitive; ${thru ? 'C follows closed issues' : 'A and B stop at closed issues'}`]: '',
+      upstream: chainOut('up'), downstream: chainOut('down'),
+    },
+  }, null, 2);
+}
+let toastTimer;
+function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, ms); }
+
+// ---------- actions ----------
+function activate(id) { S.active = id; S.pages = []; render(); }
+function openIssue(k) {
+  if (S.pages.at(-1)?.key === k) { toast('Already on this issue\'s page'); return; }
+  S.pages.push(newPage(k)); S.focus = 'main'; render();
+}
+function popPage() { S.pages.pop(); render(); }
+function toList() { S.pages = []; render(); }
+function gh(k) { if (!k) return; const it = ISSUES.get(k); toast(`Would open https://github.com/${it.repo}/issues/${it.number} in the browser`); }
+function toggleKey(k) { const ls = lstate(S.active); ls.expanded.has(k) ? ls.expanded.delete(k) : ls.expanded.add(k); render(); }
+const curRows = () => LIST.rows(S.active).rows;
+function moveSel(d) {
+  const rows = curRows(), ls = lstate(S.active);
+  if (!rows.length) return;
+  ls.sel = rows[Math.max(0, Math.min(rows.length - 1, selIndex(rows) + d))].id; S.scrollSel = true; render();
+}
+function goRight() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows), r = rows[i];
+  if (!r) return;
+  if (r.kids && !r.exp) ls.expanded.add(r.k);
+  else if (r.kids && rows[i + 1]) { ls.sel = rows[i + 1].id; S.scrollSel = true; }
+  render();
+}
+function goLeft() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows), r = rows[i];
+  if (!r) return;
+  if (r.exp) ls.expanded.delete(r.k);
+  else if (r.d > 0) for (let j = i - 1; j >= 0; j--) if (rows[j].d === r.d - 1) { ls.sel = rows[j].id; S.scrollSel = true; break; }
+  render();
+}
+function enterRow(rid) {
+  const rows = curRows(), ls = lstate(S.active);
+  if (rid) ls.sel = rid;
+  const r = rows[selIndex(rows)];
+  if (r) openIssue(r.k);
+}
+function toggleAll() {
+  const ls = lstate(S.active);
+  if (curRows().some(r => r.kids && !r.exp)) [...ISSUES.values()].forEach(x => { if (x.subs.length) ls.expanded.add(x.key); });
+  else ls.expanded.clear();
+  S.scrollSel = true; render();
+}
+// issue page cursor
+function pageMove(d) {
+  const top = S.pages.at(-1), els = navEls();
+  if (!els.length) return;
+  const i = els.findIndex(x => x.dataset.nav === top.cur);
+  top.cur = els[i < 0 ? (d > 0 ? 0 : els.length - 1) : Math.max(0, Math.min(els.length - 1, i + d))].dataset.nav;
+  S.scrollLink = true; render();
+}
+function pageSpatial(dx, dy) {
+  const top = S.pages.at(-1), els = navEls(), cur = els.find(x => x.dataset.nav === top.cur);
+  if (!cur) { if (els.length) { top.cur = els[0].dataset.nav; S.scrollLink = true; render(); } return; }
+  const a = cur.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2;
+  let best = null, bs = Infinity;
+  for (const x of els) {
+    if (x === cur) continue;
+    const b = x.getBoundingClientRect(), bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const p = dx ? (bx - ax) * dx : (by - ay) * dy;
+    if (p <= 4) continue;
+    const s = p + (dx ? Math.abs(by - ay) : Math.abs(bx - ax)) * 2.5;
+    if (s < bs) { bs = s; best = x; }
+  }
+  if (best) { top.cur = best.dataset.nav; S.scrollLink = true; render(); }
+}
+function pageFold(open) {
+  const top = S.pages.at(-1), cur = navEls().find(x => x.dataset.nav === top.cur);
+  if (!cur) return;
+  const id = cur.dataset.nav, kids = !!cur.dataset.kids, exp = !!cur.dataset.exp;
+  if (open) {
+    if (kids && !exp) top.exp.add(id);
+    else if (kids && exp) { const els = navEls(), i = els.indexOf(cur); if (els[i + 1]) { top.cur = els[i + 1].dataset.nav; S.scrollLink = true; } }
+  } else if (kids && exp) top.exp.delete(id);
+  else if (id.includes('>')) { top.cur = id.slice(0, id.lastIndexOf('>')); S.scrollLink = true; }
+  render();
+}
+function pageEnter() {
+  const top = S.pages.at(-1), cur = navEls().find(x => x.dataset.nav === top.cur);
+  if (!cur) return;
+  if (cur.dataset.act === 'open') openIssue(cur.dataset.arg);
+  else if (cur.dataset.act === 'full') { top.full = true; top.mapScroll = undefined; render(); }
+  else toast('This issue\'s page is already open');
+}
+function pageScroll(d) { const c = $('scr'), m = c.querySelector('[data-scroll]') ?? c; m.scrollBy({ top: d * m.clientHeight * 0.8, behavior: 'smooth' }); }
+function setVariant(v) {
+  closeHelp(false);
+  S.variant = v;
+  const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
+  render(); toast(PV().blurb, 6500);
+}
+const cycle = d => setVariant(KEYS[(KEYS.indexOf(S.variant) + d + KEYS.length) % KEYS.length]);
+function showcase(k) {
+  const repo = ISSUES.get(k).repo;
+  if (isTracked(repo)) S.active = 'r:' + repo;
+  S.pages = [newPage(k)]; S.focus = 'main'; render();
+}
+function openHelp() {
+  closeHelp(false);
+  S.modal = 'help';
+  const rows = (h, rs, bold) => `<div class="h-sec">${h}</div>` + rs.map(([k, d]) => `<div class="h-k">${bold ? `<b>${esc(k)}</b>` : `<kbd>${esc(k)}</kbd>`}</div><div>${esc(d)}</div>`).join('');
+  const page = [...PV().keys, ['Esc ⌫ [', 'Back one step (decided)'], ['o', 'Open the issue on GitHub'], ['Tab', 'Move focus between the sidebar and the main area (decided)']];
+  const list = [['j k / ↑ ↓', 'Move'], ['← →', 'Collapse / expand'], ['e', 'Expand or collapse every tree'], ['↵ or click', 'Open the issue page']];
+  const proto = [['⇧← ⇧→', 'Switch variant'], ['issue menu', 'Jump to a showcase issue'], ['`', 'Show / hide the state panel'], ['?', 'This help']];
+  const bg = el(`<div class="modal-bg"><div class="modal help"><div class="m-head"><b>Issue page, variant ${S.variant}: ${esc(PV().name)}</b><span class="sp"></span><kbd>Esc</kbd></div><div class="help-body">${rows('What this variant decides', PV().stances, true)}${rows('Keys on the issue page', page)}${rows('Keys in the list (decided)', list)}${rows('Prototype only', proto)}</div></div></div>`);
+  bg.onclick = e => { if (e.target === bg) closeHelp(); };
+  document.body.append(bg);
+}
+function closeHelp(rerender = true) { document.querySelectorAll('.modal-bg').forEach(n => n.remove()); S.modal = null; if (rerender) render(); }
+function toggleState() { const b = $('statebox'); b.style.display = b.style.display === 'block' ? 'none' : 'block'; renderState(); }
+
+// ---------- events ----------
+const isDown = e => e.key === 'ArrowDown' || e.key === 'j';
+const isUp = e => e.key === 'ArrowUp' || e.key === 'k';
+const isRight = e => e.key === 'ArrowRight' || e.key === 'l';
+const isLeft = e => e.key === 'ArrowLeft' || e.key === 'h';
+function keyMain(e) {
+  if (S.focus === 'sidebar') {
+    const ord = sbOrder();
+    if (isDown(e) || isUp(e)) { activate(ord[Math.max(0, Math.min(ord.length - 1, ord.indexOf(S.active) + (isDown(e) ? 1 : -1)))]); return true; }
+    if (e.key === 'Enter' || isRight(e) || e.key === 'Escape') { S.focus = 'main'; render(); return true; }
+    return false;
+  }
+  if (S.pages.length) {
+    const P = PV();
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === '[') { popPage(); return true; }
+    if (e.key === 'o') { gh(S.pages.at(-1).key); return true; }
+    if (e.key === ' ') { pageScroll(e.shiftKey ? -1 : 1); return true; }
+    if (e.key === 'Enter') { pageEnter(); return true; }
+    if (P.nav === 'spatial') {
+      if (isDown(e)) { pageSpatial(0, 1); return true; }
+      if (isUp(e)) { pageSpatial(0, -1); return true; }
+      if (isRight(e)) { pageSpatial(1, 0); return true; }
+      if (isLeft(e)) { pageSpatial(-1, 0); return true; }
+      return false;
+    }
+    if (isDown(e)) { pageMove(1); return true; }
+    if (isUp(e)) { pageMove(-1); return true; }
+    if (S.variant === 'A' && isRight(e)) { pageFold(true); return true; }
+    if (S.variant === 'A' && isLeft(e)) { pageFold(false); return true; }
+    return false;
+  }
+  if (isDown(e)) { moveSel(1); return true; }
+  if (isUp(e)) { moveSel(-1); return true; }
+  if (isRight(e)) { goRight(); return true; }
+  if (isLeft(e)) { goLeft(); return true; }
+  if (e.key === 'Enter') { enterRow(); return true; }
+  if (e.key === 'e') { toggleAll(); return true; }
+  if (e.key === 'o') { const r = curRows()[selIndex(curRows())]; if (r) gh(r.k); return true; }
+  return false;
+}
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { cycle(e.key === 'ArrowRight' ? 1 : -1); e.preventDefault(); return; }
+  if (S.modal === 'help') { if (e.key === 'Escape' || e.key === '?') { closeHelp(); e.preventDefault(); } return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '?') { openHelp(); e.preventDefault(); return; }
+  if (e.key === '`') { toggleState(); e.preventDefault(); return; }
+  if (e.key === 'Tab') { S.focus = S.focus === 'main' ? 'sidebar' : 'main'; render(); e.preventDefault(); return; }
+  if (keyMain(e)) e.preventDefault();
+});
+// clicked buttons must not keep focus, or Enter would both press them and act on the page
+document.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  if (!t) return;
+  const arg = t.dataset.arg, top = S.pages.at(-1);
+  // remember where the click happened, so coming back restores the cursor there
+  const nav = e.target.closest('[data-nav]');
+  if (top && nav && $('scr').contains(nav)) top.cur = nav.dataset.nav;
+  switch (t.dataset.act) {
+    case 'entry': S.focus = 'sidebar'; activate(arg); break;
+    case 'row': S.focus = 'main'; enterRow(arg); break;
+    case 'toggle': toggleKey(arg); break;
+    case 'ptoggle': top.exp.has(arg) ? top.exp.delete(arg) : top.exp.add(arg); render(); break;
+    case 'full': top.full = true; top.mapScroll = undefined; render(); break;
+    case 'open': openIssue(arg); break;
+    case 'xlink': toast('Would open the link in the browser'); break;
+    case 'gh': gh(arg); break;
+    case 'tolist': toList(); break;
+    case 'pop': popPage(); break;
+    case 'help': openHelp(); break;
+  }
+});
+$('sw-prev').onclick = () => cycle(-1);
+$('sw-next').onclick = () => cycle(1);
+$('sw-help').onclick = openHelp;
+$('sw-state').onclick = toggleState;
+const sel = $('sw-show');
+sel.innerHTML = '<option value="">Jump to a showcase…</option>' + SHOWCASES.map(([k, d]) => `<option value="${esc(k)}">${esc(d)} (${esc(k)})</option>`).join('');
+sel.onchange = () => { if (sel.value) showcase(sel.value); sel.value = ''; sel.blur(); };
+
+const params = new URL(location.href).searchParams, initial = params.get('variant');
+S.variant = KEYS.includes(initial) ? initial : 'A';
+// prototype-only deep link: ?page=owner/repo#n (URL-encode the #), or ?page=none to start on the list
+const startPage = params.get('page') ?? 'acme/api#122';
+if (ISSUES.has(startPage)) { if (isTracked(ISSUES.get(startPage).repo)) S.active = 'r:' + ISSUES.get(startPage).repo; S.pages = [newPage(startPage)]; }
+render();
+toast(PV().blurb, 6500);
+</script>
+</body>
+</html>
