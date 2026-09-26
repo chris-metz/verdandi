@@ -673,8 +673,8 @@ const A = {
       mountList($('scr'), S.active);
     } else {
       const top = S.pages.at(-1), prev = S.pages.at(-2);
-      mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${titleHTML(e)}<kbd>Esc</kbd></button>`
-        + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>⌫</kbd></button>` : '')
+      mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${titleHTML(e)}${prev ? '' : '<kbd>Esc</kbd>'}</button>`
+        + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>Esc</kbd></button>` : '')
         + `<span class="sp"></span><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll" id="scr"></div>`;
       mountPage($('scr'), top);
     }
@@ -684,8 +684,7 @@ const A = {
     if (e.key === 'Tab') { S.focus = S.focus === 'main' ? 'sidebar' : 'main'; render(); return true; }
     if (S.focus === 'sidebar') return sidebarKeys(e, true);
     if (S.pages.length) {
-      if (e.key === 'Escape') { toList(); return true; }
-      if (e.key === 'Backspace' || e.key === '[') { S.pages.length > 1 ? popPage() : toList(); return true; }
+      if (e.key === 'Escape' || e.key === 'Backspace' || e.key === '[') { popPage(); return true; }
       return pageKeys(e);
     }
     return listKeys(e);
@@ -695,8 +694,8 @@ const A = {
     ['j k / ↑ ↓', 'Move; in the sidebar this switches lists immediately'],
     ['← →', 'Collapse / expand; ← on a sub-issue jumps to its parent issue'],
     ['↵', 'Open the issue page (replaces the list)'],
-    ['Esc', 'Back to the list from any depth'],
-    ['⌫ or [', 'Back to the previous issue page'],
+    ['Esc, ⌫ or [', 'Back one step: to the previous issue page, or from the first one to the list'],
+    ['Click ← in the header', 'Back to the list from any depth'],
     [`${ALT}↑ ${ALT}↓`, 'Sidebar focused: move the entry within its section (keyboard alternative to drag-and-drop)'],
   ],
   openAdd() {
