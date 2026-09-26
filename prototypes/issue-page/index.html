@@ -30,6 +30,8 @@
     labels              rail section; dots in rows   by the state; dots on cards   under the title; pills in rows
     keys                j/k through links, ←/→ fold  arrows move across the map    j/k walk the spine
 
+  Verdict: B (Map) wins, as prototyped. A and C stay here for reference.
+
   Synthetic data only; nothing is persisted. The issue list is the decided one (variant A of the
   issue-list prototype) and is not up for review here.
 
@@ -583,7 +585,7 @@ const VIEWS = {
   'v:mine': { name: 'Assigned to me', test: it => it.state === 'open' && it.assignees.includes(ME) },
 };
 const S = {
-  variant: 'A',        // issue page variant; the list is fixed
+  variant: 'B',        // issue page variant; the list is fixed
   order: ['r:acme/api', 'r:acme/web', 'r:globex/billing', 'r:example-user/verdandi', 'r:acme/infra', 'r:example-user/dotfiles', 'v:blocked', 'v:epics', 'v:mine'],
   active: 'r:acme/api',
   focus: 'main',       // 'sidebar' | 'main'
@@ -1279,7 +1281,7 @@ sel.innerHTML = '<option value="">Jump to a showcase…</option>' + SHOWCASES.ma
 sel.onchange = () => { if (sel.value) showcase(sel.value); sel.value = ''; sel.blur(); };
 
 const params = new URL(location.href).searchParams, initial = params.get('variant');
-S.variant = KEYS.includes(initial) ? initial : 'A';
+S.variant = KEYS.includes(initial) ? initial : 'B';
 // prototype-only deep link: ?page=owner/repo#n (URL-encode the #), or ?page=none to start on the list
 const startPage = params.get('page') ?? 'acme/api#122';
 if (ISSUES.has(startPage)) { if (isTracked(ISSUES.get(startPage).repo)) S.active = 'r:' + ISSUES.get(startPage).repo; S.pages = [newPage(startPage)]; }
