@@ -21,6 +21,9 @@
     "All"                  one merged forest,       one merged forest,         repositories stacked, each
                              repository chips         repository column          as in its own list
 
+  Verdict: A wins, with one addition: labels are shown in every row (GitHub-coloured pills after the
+  title). B and C stay here for reference.
+
   The issue page is deliberately plain: it is another prototype's question. Synthetic data only;
   nothing is persisted.
 
@@ -134,6 +137,8 @@ kbd {
 .cnt.mute { color: var(--fg3); font-weight: 400; }
 .rchip { font-size: 11px; padding: 0 6px; border-radius: 4px; color: #fff; background: hsl(var(--h) 42% 44%); flex: none; line-height: 17px; }
 .rchip.x { background: none; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--fg3); }
+.lbl { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 7px; border-radius: 2em; flex: none; white-space: nowrap; }
+.lbl.more { background: var(--bg3); color: var(--fg2); }
 .pchip { font-size: 11px; color: var(--fg2); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 4px; flex: none; line-height: 17px; display: inline-flex; gap: 2px; align-items: center; }
 .pchip .ic { width: 12px; height: 12px; }
 .pchip:hover { border-color: var(--accent); color: var(--accent); }
@@ -315,7 +320,8 @@ function mk(ref, title, state = 'open', o = {}) {
   const i = ref.indexOf('#'), repo = ref.slice(0, i), r = mulberry32(hashStr(ref));
   ISSUES.set(ref, {
     key: ref, repo, number: +ref.slice(i + 1), title, state, author: pick(PEOPLE, r),
-    assignee: r() < 0.25 ? ME : (r() < 0.5 ? pick(PEOPLE, r) : null), labels: o.labels ?? (r() < 0.6 ? [pick(LABELS, r)] : []),
+    assignee: r() < 0.25 ? ME : (r() < 0.5 ? pick(PEOPLE, r) : null),
+    labels: o.labels ?? [...new Set(r() < 0.65 ? [pick(LABELS, r), ...(r() < 0.3 ? [pick(LABELS, r)] : []), ...(r() < 0.15 ? [pick(LABELS, r)] : [])] : [])],
     parent: null, subs: [], blockedBy: [], blocking: [], comments: rint(0, 6, r), updated: o.updated ?? rint(3, 80, r),
   });
   repoKeys(repo).push(ref);
@@ -468,6 +474,13 @@ const refShort = (k, home) => { const it = ISSUES.get(k); return it.repo === hom
 const stIcon = it => `<span class="st st-${it.state}" title="${it.state === 'open' ? 'Open' : 'Closed'}">${it.state === 'open' ? I.open : I.closed}</span>`;
 const readyIcon = it => isBlocked(it) ? `<span class="st st-blocked" title="Open and blocked">${I.blocked}</span>` : stIcon(it);
 const extTag = it => isTracked(it.repo) ? '' : `<span class="ext" title="${esc(it.repo)} is not a tracked repository">external</span>`;
+const LABEL_COLORS = { bug: 'd73a4a', enhancement: 'a2eeef', docs: '0075ca', infra: 'c5def5', 'good first issue': '7057ff', performance: 'f9d0c4', security: 'b60205', ux: 'd4c5f9', 'needs design': 'fef2c0', 'tech debt': 'e4e669', epic: '3e4b9e' };
+const labelPill = l => {
+  const h = LABEL_COLORS[l] ?? 'ededed', n = parseInt(h, 16), lum = (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+  return `<span class="lbl" style="background:#${h};color:${lum > 0.6 ? '#1f2328' : '#fff'}">${esc(l)}</span>`;
+};
+const labelsHTML = (it, max = 3) => it.labels.slice(0, max).map(labelPill).join('')
+  + (it.labels.length > max ? `<span class="lbl more" title="${esc(it.labels.slice(max).join(', '))}">+${it.labels.length - max}</span>` : '');
 const chev = r => `<span class="chev" ${r.kids ? `data-act="toggle" data-arg="${esc(r.kind === 'fold' ? r.id : r.k)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>`;
 
 // Which issues a sidebar entry lists, and how they arrange into trees. Shared by all variants; the
@@ -551,6 +564,7 @@ const A = {
     ['Closed sub-issues', 'Stay where GitHub\'s sub-issue order puts them, dimmed.'],
     ['Parent issue elsewhere', 'Under its parent issue in the parent\'s repository. In its own repository\'s list: at the top level, with a ↑ chip naming the parent issue.'],
     ['External issues', 'In trees like any other issue, tagged "external".'],
+    ['Labels', 'Added after the verdict: GitHub-coloured pills right after the title, at most three, then +N.'],
     ['"All"', 'One merged forest: each issue appears once, under its parent issue; every row carries a repository chip.'],
   ],
   rows(id) {
@@ -581,7 +595,7 @@ const A = {
     const p = r.d === 0 && it.parent ? ISSUES.get(it.parent) : null;
     const pchip = p ? `<span class="pchip" data-act="open" data-arg="${esc(p.key)}" title="Sub-issue of ${esc(p.key)}: ${esc(p.title)}">${I.up}${esc(refShort(p.key, home))}${isTracked(p.repo) ? '' : ' · external'}</span>` : '';
     return `<div class="arow ${sel ? 'row-sel' : ''} ${it.state}" data-act="row" data-arg="${esc(r.id)}"><span class="guides" style="--d:${r.d}"></span>${chev(r)}${stIcon(it)}${chip}`
-      + `<span class="num">${esc(all ? '#' + it.number : refShort(r.k, home))}</span><span class="title">${esc(it.title)}</span>${all ? '' : extTag(it)}${pchip}<span class="sp"></span>`
+      + `<span class="num">${esc(all ? '#' + it.number : refShort(r.k, home))}</span><span class="title">${esc(it.title)}</span>${labelsHTML(it)}${all ? '' : extTag(it)}${pchip}<span class="sp"></span>`
       + `<span class="col-prog">${prog}</span><span class="col-bb">${bb}</span><span class="col-bl">${bl}</span></div>`;
   },
 };
