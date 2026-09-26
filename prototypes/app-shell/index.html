@@ -1,0 +1,1106 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Do not build on this code.
+
+  Question ("Prototype the two-column app shell and sidebar", issue #2 under "Map: Verdandi MVP spec"):
+  how should Verdandi's two-column shell look and behave?
+
+  Plan: three structurally different shells, switchable via ?variant=A|B|C (floating bar at the
+  bottom, or Shift+Left/Right). They differ in sidebar grouping, the add-repository flow, how the
+  issue page replaces the list and how you get back, and how keyboard focus moves between panes.
+  The issue list and issue page themselves are deliberately plain: they belong to the sibling
+  prototypes. Synthetic data only; nothing is persisted.
+
+  Run: open this file in a browser.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdandi app shell prototype</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2; --fg: #1f2328; --fg2: #59636e; --fg3: #818b98;
+  --line: #d1d9e0; --accent: #0969da; --accent-bg: #ddf4ff; --sel: #e6eefb; --open: #1a7f37;
+  --closed: #8250df; --blocked: #cf222e; --scrim: rgba(31, 35, 40, .28);
+  --shadow: 0 8px 28px rgba(66, 74, 83, .28);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --bg2: #151b23; --bg3: #212830; --fg: #e6edf3; --fg2: #9198a1; --fg3: #6e7681;
+    --line: #30363d; --accent: #4493f8; --accent-bg: #132a47; --sel: #1a2638; --open: #3fb950;
+    --closed: #ab7df8; --blocked: #f85149; --scrim: rgba(1, 4, 9, .55);
+    --shadow: 0 8px 28px rgba(1, 4, 9, .85);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, sans-serif;
+  background: var(--bg); color: var(--fg); overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg3); padding: 0 4px; border-radius: 4px; }
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg2); white-space: nowrap;
+}
+.muted { color: var(--fg3); font-weight: 400; }
+.sp { flex: 1; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- shell ---------- */
+#app { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 100vh; }
+.sidebar {
+  width: 256px; background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden; transition: width .18s ease;
+}
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; font-weight: 600; white-space: nowrap; }
+.logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #8250df, #0969da); flex: none; }
+.sb-scroll { flex: 1; overflow: auto; padding: 2px 8px 16px; }
+.sb-foot { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg3); font-size: 11px; line-height: 1.8; }
+.iconbtn { border: 0; background: none; color: var(--fg2); width: 22px; height: 22px; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.iconbtn:hover { background: var(--bg3); color: var(--fg); }
+.iconbtn:disabled { opacity: .35; cursor: not-allowed; }
+
+.entry {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 30px; border-radius: 6px; cursor: default;
+  user-select: none; position: relative; white-space: nowrap;
+}
+.entry:hover { background: var(--bg3); }
+.entry.active { background: var(--sel); font-weight: 600; }
+.entry .ic { color: var(--fg2); }
+.entry.active .ic { color: var(--accent); }
+.entry .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.entry .count { color: var(--fg3); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.entry .sc { display: none; }
+body.show-sc .entry .sc { display: inline-block; }
+body.show-sc .entry .count { display: none; }
+.entry.dragging { opacity: .4; }
+.entry.drop-before::before, .entry.drop-after::after {
+  content: ""; position: absolute; left: 6px; right: 6px; height: 2px; background: var(--accent); border-radius: 2px;
+}
+.entry.drop-before::before { top: -1px; }
+.entry.drop-after::after { bottom: -1px; }
+.owner { color: var(--fg3); font-weight: 400; }
+
+.mainbar {
+  display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line);
+  flex: none; min-width: 0; white-space: nowrap;
+}
+.mainbar h2 { font-size: 14px; margin: 0; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+.mainbar .sub { color: var(--fg3); }
+.hint { color: var(--fg3); font-size: 12px; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.btn {
+  border: 1px solid var(--line); background: var(--bg2); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 28px;
+}
+.btn:hover { background: var(--bg3); }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--bg2); }
+.btn.primary { background: #1f883d; border-color: #1f883d; color: #fff; }
+.btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- issue list (deliberately plain; its presentation is another prototype's question) ---------- */
+.list { padding: 6px 0 90px; }
+.row {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 16px 0 calc(8px + var(--d, 0) * 22px);
+  cursor: pointer; white-space: nowrap;
+}
+.row:hover { background: var(--bg2); }
+.row.sel { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
+.chev { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg3); border-radius: 4px; flex: none; }
+.chev[data-act]:hover { background: var(--bg3); color: var(--fg); }
+.chev .ic { width: 12px; height: 12px; stroke-width: 1.8; }
+.num { color: var(--fg3); font-variant-numeric: tabular-nums; flex: none; }
+.row .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row.closed .title { color: var(--fg2); }
+.row .meta { margin-left: auto; display: flex; gap: 10px; color: var(--fg3); font-size: 12px; flex: none; padding-left: 12px; }
+.st { display: inline-flex; flex: none; }
+.st-open { color: var(--open); } .st-closed { color: var(--closed); }
+.blk { color: var(--blocked); display: inline-flex; align-items: center; gap: 3px; }
+.blk .ic { width: 13px; height: 13px; }
+.ext { font-size: 10px; border: 1px dashed var(--fg3); border-radius: 10px; padding: 0 6px; color: var(--fg2); flex: none; }
+.empty { padding: 40px; color: var(--fg3); text-align: center; }
+
+/* ---------- issue page (deliberately plain; its presentation is another prototype's question) ---------- */
+.issue { max-width: 1060px; padding: 20px 28px 110px; }
+.i-ref { display: flex; align-items: center; gap: 6px; color: var(--fg2); }
+.issue h1 { font-size: 22px; font-weight: 600; margin: 6px 0 10px; line-height: 1.3; }
+.i-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--fg2); padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 8px; border-radius: 999px; color: #fff; font-weight: 500; }
+.pill.open { background: var(--open); } .pill.closed { background: var(--closed); }
+.label { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px; }
+.i-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; margin-top: 16px; }
+@media (max-width: 1100px) { .i-grid { grid-template-columns: minmax(0, 1fr); } .side { order: -1; } }
+.i-body p { margin: 0 0 10px; }
+.comment { border: 1px solid var(--line); border-radius: 6px; margin-top: 14px; }
+.comment .ch { background: var(--bg2); padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--fg2); border-radius: 6px 6px 0 0; }
+.comment .cbody { padding: 10px 12px; }
+.side section { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.side h4 { font-size: 12px; color: var(--fg2); margin: 0 0 4px; font-weight: 600; }
+.lnk { display: flex; align-items: center; gap: 6px; padding: 3px 6px; margin: 0 -6px; border-radius: 5px; cursor: pointer; white-space: nowrap; min-width: 0; }
+.lnk:hover { background: var(--bg2); }
+.lnk.cur { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.lnk .t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.none { color: var(--fg3); }
+
+/* ---------- variant A: sections, page swap, Tab focus ---------- */
+.vA .entry.tall { min-height: 40px; }
+.vA .name2 { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.vA .name2 .n1, .vA .name2 .n2 { overflow: hidden; text-overflow: ellipsis; }
+.vA .name2 .n2 { font-size: 11px; color: var(--fg3); font-weight: 400; }
+.vA .sec { display: flex; align-items: center; justify-content: space-between; padding: 16px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); }
+.vA .sidebar.focused { box-shadow: inset 0 2px 0 var(--accent); }
+.vA .sidebar.focused .entry.active { background: var(--accent-bg); outline: 1px solid var(--accent); outline-offset: -1px; }
+.vA .main.focused > .mainbar { box-shadow: inset 0 2px 0 var(--accent); }
+.vA .main:not(.focused) .row.sel { background: var(--bg3); box-shadow: none; }
+.vA .sep { color: var(--line); }
+
+/* ---------- variant B: mixed list, sheets ---------- */
+.vB .sidebar { width: 248px; }
+.vB .numb { width: 12px; color: var(--fg3); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 400; flex: none; }
+.vB .addbar {
+  margin: 0 8px 8px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); color: var(--fg2); cursor: pointer; text-align: left;
+}
+.vB .addbar:hover { border-color: var(--fg3); }
+.vB .addbar span { flex: 1; }
+.sheets { position: absolute; inset: 0; z-index: 5; }
+.scrim { position: absolute; inset: 0; background: var(--scrim); cursor: pointer; }
+.sheet {
+  position: absolute; top: 0; bottom: 0; right: 0; left: calc(72px + var(--i) * 18px); background: var(--bg);
+  border-left: 1px solid var(--line); box-shadow: -10px 0 30px rgba(0, 0, 0, .18); display: flex; flex-direction: column;
+}
+.sheet.enter { animation: slidein .2s ease-out; }
+@keyframes slidein { from { transform: translateX(35%); opacity: .2; } to { transform: none; opacity: 1; } }
+.sheet.under { cursor: pointer; background: var(--bg2); }
+.sheet.under > * { pointer-events: none; }
+.depth { color: var(--fg3); font-size: 12px; }
+
+/* ---------- variant C: owner groups, rail, breadcrumbs ---------- */
+.vC .sidebar { width: 240px; }
+.vC.rail .sidebar { width: 58px; }
+.vC .grp-h { display: flex; align-items: center; gap: 8px; padding: 14px 8px 4px; color: var(--fg2); font-weight: 600; font-size: 12px; }
+.vC .entry.ind { padding-left: 34px; }
+.vC .entry.ind .ic { display: none; }
+.vC .sidebar.focused { box-shadow: inset 0 2px 0 var(--accent); }
+.vC .entry.cursor { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vC .main.focused > .mainbar { box-shadow: inset 0 2px 0 var(--accent); }
+.vC .main:not(.focused) .row.sel { background: var(--bg3); box-shadow: none; }
+.av { width: 18px; height: 18px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex: none; }
+.av .ic { width: 12px; height: 12px; }
+.av.sm { width: 26px; height: 26px; font-size: 11px; border-radius: 6px; }
+.inline-add { margin: 6px 8px 10px; display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 30px; border-radius: 6px; color: var(--fg2); cursor: pointer; white-space: nowrap; }
+.inline-add:hover { background: var(--bg3); }
+.inline-add span { flex: 1; }
+.inline-add.on { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); cursor: text; }
+.inline-add input { flex: 1; min-width: 0; border: 0; background: none; color: var(--fg); outline: none; font: inherit; padding: 5px 0; }
+.suggest { position: fixed; z-index: 30; width: 380px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; }
+.suggest .s-i { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.suggest .s-i .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.suggest .s-i.cur { background: var(--sel); }
+.suggest .s-h { padding: 4px 8px; color: var(--fg3); font-size: 11px; }
+.rail-list { display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 3px; overflow: auto; flex: 1; }
+.rail-i { width: 40px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--fg2); flex: none; }
+.rail-i:hover { background: var(--bg3); }
+.rail-i.active { background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.rail-sep { width: 26px; height: 1px; background: var(--line); margin: 5px 0; flex: none; }
+.crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; flex: 1; }
+.crumb { padding: 3px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; max-width: 280px; }
+.crumb:hover { background: var(--bg2); color: var(--fg); }
+.crumb.last { color: var(--fg); font-weight: 600; cursor: default; flex-shrink: 0; max-width: 460px; }
+.crumb.last:hover { background: none; }
+.crumb-sep { color: var(--fg3); flex: none; }
+
+/* ---------- modals ---------- */
+.modal-bg { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.modal-bg.top { align-items: flex-start; padding-top: 11vh; }
+.modal { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: 82vh; overflow: hidden; }
+.m-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
+.m-foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-top: 1px solid var(--line); }
+.m-in { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--fg3); }
+.m-in input { flex: 1; border: 0; background: none; outline: none; color: var(--fg); font: inherit; font-size: 14px; padding: 11px 0; }
+.add-a { width: 760px; height: 540px; max-width: calc(100vw - 32px); }
+.add-a .two { display: grid; grid-template-columns: 230px minmax(0, 1fr); flex: 1; min-height: 0; }
+.add-a .acc { border-right: 1px solid var(--line); overflow: auto; padding: 8px; background: var(--bg2); }
+.add-a .acc-i { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.add-a .acc-i:hover { background: var(--bg3); }
+.add-a .acc-i.on { background: var(--sel); font-weight: 600; }
+.add-a .acc-i .name { flex: 1; }
+.add-a .acc-note { padding: 12px 8px; color: var(--fg3); font-size: 11px; }
+.add-a .rp { display: flex; flex-direction: column; min-height: 0; }
+.add-a .rl { flex: 1; overflow: auto; padding: 6px; }
+.rl-i { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.rl-i .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.rl-i.cur { background: var(--sel); }
+.rl-i.dis { color: var(--fg3); cursor: default; }
+.cb { width: 16px; height: 16px; border: 1px solid var(--fg3); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.cb.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cb .ic { width: 12px; height: 12px; stroke-width: 2; }
+.rl-i.dis .cb.on { background: var(--fg3); border-color: var(--fg3); }
+.spot { width: 620px; max-width: calc(100vw - 32px); }
+.spot-res { overflow: auto; padding: 6px; max-height: 52vh; }
+.spot-g { padding: 8px 8px 2px; font-size: 11px; font-weight: 600; color: var(--fg3); display: flex; align-items: center; gap: 6px; }
+.spot-more { padding: 2px 8px 6px 32px; font-size: 11px; color: var(--fg3); }
+.spot-foot { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg3); font-size: 12px; }
+.tracked-ok { color: var(--open); display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.help { width: 600px; max-width: calc(100vw - 32px); }
+.help-body { display: grid; grid-template-columns: max-content 1fr; gap: 7px 16px; padding: 14px 16px; overflow: auto; }
+.help-body .h-k { text-align: right; }
+.help-body .h-sec { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); margin-top: 6px; }
+
+/* ---------- prototype chrome (not part of the design being evaluated) ---------- */
+#switcher {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 2px;
+  background: #111; color: #fff; border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); font-size: 12px;
+  border: 1px solid #444;
+}
+#switcher button { background: none; border: 0; color: #fff; min-width: 28px; height: 28px; border-radius: 999px; cursor: pointer; padding: 0 8px; }
+#switcher button:hover { background: #333; }
+#switcher .lbl { padding: 0 6px; white-space: nowrap; min-width: 190px; text-align: center; }
+#switcher .tag { background: #fbbf24; color: #111; border-radius: 999px; padding: 1px 7px; font-weight: 700; font-size: 10px; letter-spacing: .05em; }
+#statebox {
+  position: fixed; right: 12px; bottom: 62px; z-index: 99; width: 380px; max-height: 60vh; overflow: auto; background: #111; color: #c9f7c9;
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 8px; white-space: pre; display: none; border: 1px solid #444;
+}
+#toast {
+  position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); background: #111; color: #fff; padding: 7px 14px; border-radius: 8px;
+  z-index: 101; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 80vw; text-align: center; border: 1px solid #444;
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="switcher">
+  <span class="tag">PROTOTYPE</span>
+  <button id="sw-prev" title="Previous variant (Shift+Left)">&#8249;</button>
+  <span class="lbl" id="sw-lbl"></span>
+  <button id="sw-next" title="Next variant (Shift+Right)">&#8250;</button>
+  <button id="sw-state" title="Show the prototype's state (`)">state</button>
+</div>
+<pre id="statebox"></pre>
+<div id="toast"></div>
+<script>
+'use strict';
+// PROTOTYPE, throwaway: no tests, no error handling, globals everywhere on purpose.
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+const ALT = IS_MAC ? '⌥' : 'Alt+';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+
+// ---------- icons ----------
+const svg = d => `<svg class="ic" viewBox="0 0 16 16">${d}</svg>`;
+const I = {
+  repo: svg('<path d="M3.5 13.3V2.9c0-.8.6-1.4 1.4-1.4h8.6v9.9H4.9c-.8 0-1.4.6-1.4 1.3s.6 1.3 1.4 1.3h8.6"/>'),
+  view: svg('<path d="M2 3h12l-4.6 5.4v4.8l-2.8 1.3V8.4z"/>'),
+  all: svg('<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/><path d="M1.8 8 8 11.2 14.2 8"/><path d="M1.8 11 8 14.2 14.2 11"/>'),
+  open: svg('<circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>'),
+  closed: svg('<circle cx="8" cy="8" r="6.2"/><path d="m5.3 8.2 1.9 1.9 3.6-3.8"/>'),
+  right: svg('<path d="m6 3.5 4.5 4.5L6 12.5"/>'),
+  down: svg('<path d="m3.5 6 4.5 4.5L12.5 6"/>'),
+  blocked: svg('<circle cx="8" cy="8" r="6.2"/><path d="m3.7 12.3 8.6-8.6"/>'),
+  back: svg('<path d="M13 8H3m4.5-4.5L3 8l4.5 4.5"/>'),
+  gh: svg('<path d="M9 2.5h4.5V7M13.5 2.5 7 9M11.5 9.5v3.2c0 .5-.4.8-.8.8H3.3c-.5 0-.8-.4-.8-.8V5.3c0-.5.4-.8.8-.8h3.2"/>'),
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>'),
+  plus: svg('<path d="M8 2.5v11M2.5 8h11"/>'),
+  check: svg('<path d="m3.5 8.5 3 3 6-7"/>'),
+  x: svg('<path d="m4 4 8 8M12 4l-8 8"/>'),
+  crumb: svg('<path d="m6 3.5 4.5 4.5L6 12.5"/>'),
+};
+
+// ---------- synthetic data ----------
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const rand = mulberry32(11);
+const pick = (a, r = rand) => a[Math.floor(r() * a.length)];
+const rint = (lo, hi, r = rand) => lo + Math.floor(r() * (hi - lo + 1));
+
+const ME = 'example-user';
+const ACCOUNTS = {
+  'example-user': ['verdandi', 'dotfiles', 'notes', 'blog', 'advent-of-code', 'homelab', 'scripts', 'cv', 'recipes', 'keyboard-firmware', 'photo-sorter', 'talks'],
+  'acme': ['api', 'web', 'infra', 'mobile', 'design-system', 'docs', 'auth-service', 'billing-adapter', 'cli', 'data-pipeline', 'search', 'notifications', 'admin-console', 'sdk-js', 'sdk-python', 'terraform-modules', 'status-page', 'marketing-site', 'feature-flags', 'analytics', 'etl-jobs', 'support-bot', 'load-tests', 'runbooks', 'onboarding', 'email-templates', 'events', 'gateway', 'ledger', 'reports', 'scheduler', 'storage', 'telemetry', 'uploads', 'webhooks', 'workers', '.github', 'ci-images', 'playground', 'sandbox'],
+  'globex': ['billing', 'portal', 'warehouse', 'forecasting', 'crm-sync', 'edi-bridge', 'label-printer', 'returns', 'pricing', 'catalog', 'identity', 'audit-log', 'exports', 'imports', 'partner-api', 'kiosk', 'hr-tools', 'infra-live', 'infra-modules', 'qa-suite', 'metrics', 'alerts', 'docs', 'design', 'mobile-app'],
+  'initech': ['tps-reports', 'printer-driver', 'intranet', 'payroll', 'hardware-inventory', 'legacy-mainframe-bridge', 'style-guide', 'onboarding'],
+};
+const ALL_REPOS = Object.entries(ACCOUNTS).flatMap(([o, rs]) => rs.map(r => `${o}/${r}`));
+const EXTERNAL_REPOS = ['vendor/sdk', 'upstream/protocol', 'oss-org/parser'];
+const VERBS = ['Add', 'Fix', 'Remove', 'Migrate', 'Refactor', 'Document', 'Investigate', 'Support', 'Speed up', 'Split', 'Rename', 'Deprecate', 'Harden', 'Cache', 'Retry', 'Validate', 'Paginate', 'Expose', 'Backfill', 'Audit'];
+const THINGS = ['token refresh', 'webhook retries', 'invoice export', 'rate-limit handling', 'search index', 'session cookies', 'CSV import', 'dark mode', 'audit trail', 'pagination cursor', 'feature flag cleanup', 'error boundaries', 'sub-issue sync', 'release pipeline', 'Windows installer', 'retry budget', 'schema v2', 'timezone handling', 'bulk actions', 'health checks', 'keyboard shortcuts', 'PDF rendering', 'signup funnel', 'cache invalidation', 'SSO login', 'permissions model', 'notification digest', 'Linux packaging', 'mobile layout', 'empty states'];
+const SUFFIX = ['', '', '', '', ' for enterprise accounts', ' on slow networks', ' in the admin console', ' behind a flag', ' across regions', ' (follow-up)', ' before GA'];
+const EPIC_TITLES = ['Launch usage-based billing', 'Q4 reliability push', 'Migrate to the new auth provider', 'Redesign onboarding', 'Self-serve data export', 'Public API v2', 'Accessibility audit fixes', 'Ship the Windows build', 'Retire the legacy importer', 'Multi-region failover'];
+const PEOPLE = ['alex-k', 'sam-r', 'jo-dev', 'taylor-m', 'robin-q', 'casey-l', 'morgan-p'];
+const LABELS = ['bug', 'enhancement', 'docs', 'infra', 'good first issue', 'performance', 'security', 'ux', 'needs design', 'tech debt'];
+const SENTENCES = [
+  'This currently fails intermittently when the upstream service is slow to respond.',
+  'We should keep the existing behaviour behind a flag until the migration is done.',
+  'Steps to reproduce are in the linked thread; the short version is that the second request never completes.',
+  'The fix itself is small, but it touches the retry logic that several other services depend on.',
+  'Once this lands we can remove the temporary workaround in the client.',
+  'Acceptance: the happy path is covered by an integration test and the error path logs a useful message.',
+  'There is some overlap with the work tracked in the parent issue, so coordinate before starting.',
+  'Performance numbers from last week suggest this is worth doing before the next release.',
+  'Open question: do we need to support the legacy format, or can we drop it now?',
+  'The design is agreed; what remains is implementation and rollout.',
+  'This blocks the rollout in the other repository, so it has priority this sprint.',
+  'Nothing here is user-visible, but it simplifies the follow-up work considerably.',
+];
+const COMMENTS = [
+  'I can take this one next week.',
+  'Is this still blocked, or can we start on the parts that do not depend on the API change?',
+  'Linked the related issue in the other repository.',
+  'Tested on a staging build; looks good apart from the edge case mentioned above.',
+  'Moving this to the next milestone, the blocker is not resolved yet.',
+  'Could we split this? The second half is independent.',
+];
+
+const ISSUES = new Map();      // "owner/repo#n" -> issue
+const REPO_ISSUES = new Map(); // "owner/repo" -> [keys]
+
+function attach(parentKey, childKey) {
+  const p = ISSUES.get(parentKey), c = ISSUES.get(childKey);
+  if (!p || !c || c.parent || parentKey === childKey) return false;
+  for (let a = p; a; a = a.parent && ISSUES.get(a.parent)) if (a.key === childKey) return false;
+  c.parent = parentKey; p.subs.push(childKey); return true;
+}
+function block(blockedKey, blockerKey) {
+  const a = ISSUES.get(blockedKey), b = ISSUES.get(blockerKey);
+  if (!a || !b || blockedKey === blockerKey || a.blockedBy.includes(blockerKey)) return;
+  a.blockedBy.push(blockerKey); b.blocking.push(blockedKey);
+}
+function genRepo(repo, count) {
+  if (REPO_ISSUES.has(repo)) return;
+  const r = mulberry32(hashStr(repo));
+  count = count ?? rint(18, 46, r);
+  const keys = [];
+  let n = rint(1, 40, r);
+  for (let i = 0; i < count; i++) {
+    n += rint(1, 4, r);
+    const it = {
+      key: `${repo}#${n}`, repo, number: n, title: pick(VERBS, r) + ' ' + pick(THINGS, r) + pick(SUFFIX, r),
+      state: r() < 0.2 ? 'closed' : 'open', author: pick(PEOPLE, r), assignee: r() < 0.22 ? ME : (r() < 0.5 ? pick(PEOPLE, r) : null),
+      labels: [...new Set(r() < 0.7 ? [pick(LABELS, r)].concat(r() < 0.3 ? [pick(LABELS, r)] : []) : [])],
+      parent: null, subs: [], blockedBy: [], blocking: [], comments: rint(0, 6, r), updated: rint(1, 90, r),
+    };
+    ISSUES.set(it.key, it); keys.push(it.key);
+  }
+  const pool = keys.slice().sort(() => r() - 0.5);
+  const nEpics = Math.max(1, Math.round(count / 9));
+  for (let e = 0; e < nEpics && pool.length > 3; e++) {
+    const epic = ISSUES.get(pool.shift());
+    Object.assign(epic, { title: pick(EPIC_TITLES, r), state: 'open', labels: ['epic'] });
+    const nk = rint(2, 6, r);
+    for (let j = 0; j < nk && pool.length; j++) {
+      const c = pool.shift(); attach(epic.key, c);
+      if (r() < 0.3) for (let g = rint(1, 3, r); g > 0 && pool.length; g--) attach(c, pool.shift());
+    }
+  }
+  for (const k of keys) if (r() < 0.14) block(k, pick(keys, r));
+  REPO_ISSUES.set(repo, keys);
+}
+
+const INITIAL = ['example-user/verdandi', 'acme/api', 'acme/web', 'globex/billing', 'acme/infra', 'example-user/dotfiles'];
+INITIAL.forEach(r => genRepo(r));
+EXTERNAL_REPOS.forEach(r => genRepo(r, rint(6, 10)));
+(function crossLink() {
+  const two = () => { const a = pick(INITIAL); let b; do b = pick(INITIAL); while (b === a); return [a, b]; };
+  const epicsOf = repo => REPO_ISSUES.get(repo).filter(k => ISSUES.get(k).subs.length);
+  const loneOf = repo => REPO_ISSUES.get(repo).filter(k => { const x = ISSUES.get(k); return !x.parent && !x.subs.length; });
+  for (let i = 0; i < 12; i++) { const [a, b] = two(); const ep = epicsOf(a), lo = loneOf(b); if (ep.length && lo.length) attach(pick(ep), pick(lo)); }
+  for (let i = 0; i < 20; i++) { const [a, b] = two(); block(pick(REPO_ISSUES.get(a)), pick(REPO_ISSUES.get(b))); }
+  for (const ext of EXTERNAL_REPOS) {
+    for (let i = 0; i < 3; i++) block(pick(REPO_ISSUES.get(pick(INITIAL))), pick(REPO_ISSUES.get(ext)));
+    const ep = epicsOf(pick(INITIAL)), lo = loneOf(ext); if (ep.length && lo.length) attach(pick(ep), pick(lo));
+  }
+  const extEpic = epicsOf('upstream/protocol')[0], orphan = loneOf('acme/api')[0];
+  if (extEpic && orphan) attach(extEpic, orphan); // a tracked issue whose parent issue is external
+})();
+
+// ---------- app state ----------
+const VIEWS = {
+  'v:blocked': { name: 'Blocked', flat: true, test: it => it.state === 'open' && openBlockers(it) > 0 },
+  'v:epics': { name: 'Epics', flat: false },
+  'v:mine': { name: 'Assigned to me', flat: true, test: it => it.state === 'open' && it.assignee === ME },
+};
+const S = {
+  variant: 'A',
+  order: ['r:example-user/verdandi', 'r:acme/api', 'v:blocked', 'r:acme/web', 'r:globex/billing', 'r:acme/infra', 'v:epics', 'r:example-user/dotfiles', 'v:mine'],
+  active: 'all',
+  focus: 'main',     // 'sidebar' | 'main' (variants A and C)
+  sbCursor: 'all',   // variant C: sidebar cursor, separate from the active entry
+  lists: {},         // per sidebar entry: { sel, expanded, scroll }
+  pages: [],         // stack of open issue pages: { key, link, scroll }; empty = the list is showing
+  modal: null,       // 'add' | 'inline' | 'help'
+  shell: null, drag: null, dropAt: null, justPushed: false, scrollSel: false, scrollLink: false,
+};
+
+const trackedRepos = () => S.order.filter(x => x.startsWith('r:')).map(x => x.slice(2));
+const isTracked = repo => S.order.includes('r:' + repo);
+const openBlockers = it => it.blockedBy.filter(k => ISSUES.get(k).state === 'open').length;
+function entryInfo(id) {
+  if (id === 'all') return { id, kind: 'all', name: 'All' };
+  if (id.startsWith('r:')) { const repo = id.slice(2); const [owner, name] = repo.split('/'); return { id, kind: 'repo', repo, owner, name }; }
+  return { id, kind: 'view', ...VIEWS[id] };
+}
+const icon = e => e.kind === 'all' ? I.all : e.kind === 'repo' ? I.repo : I.view;
+const titleHTML = e => e.kind === 'repo' ? `<span><span class="owner">${esc(e.owner)}/</span>${esc(e.name)}</span>` : esc(e.name);
+const plainTitle = id => { const e = entryInfo(id); return e.kind === 'repo' ? e.repo : e.name; };
+const ownerColor = o => `hsl(${hashStr(o) % 360} 42% 46%)`;
+const avatar = o => `<span class="av" style="background:${ownerColor(o)}">${esc(o[0].toUpperCase())}</span>`;
+const refShort = (k, home) => { const it = ISSUES.get(k); return it.repo === home ? `#${it.number}` : `${it.repo}#${it.number}`; };
+const stIcon = it => `<span class="st st-${it.state}">${it.state === 'open' ? I.open : I.closed}</span>`;
+const extTag = it => isTracked(it.repo) ? '' : '<span class="ext" title="From a repository you do not track">external</span>';
+
+function listFor(id) {
+  const e = entryInfo(id), tr = new Set(trackedRepos());
+  const trackedKeys = () => [...tr].flatMap(r => REPO_ISSUES.get(r));
+  const parentOutside = (it, inside) => !it.parent || !inside(ISSUES.get(it.parent));
+  let roots, flat = false;
+  if (e.kind === 'repo') roots = REPO_ISSUES.get(e.repo).filter(k => parentOutside(ISSUES.get(k), p => p.repo === e.repo));
+  else if (e.kind === 'all') roots = trackedKeys().filter(k => parentOutside(ISSUES.get(k), p => tr.has(p.repo)));
+  else if (id === 'v:epics') roots = trackedKeys().filter(k => { const it = ISSUES.get(k); return it.subs.length && parentOutside(it, p => tr.has(p.repo) && p.subs.length); });
+  else { roots = trackedKeys().filter(k => e.test(ISSUES.get(k))); flat = true; }
+  roots.sort((a, b) => { const x = ISSUES.get(a), y = ISSUES.get(b); return (x.state === y.state ? 0 : x.state === 'open' ? -1 : 1) || (y.subs.length > 0) - (x.subs.length > 0) || x.updated - y.updated; });
+  return { roots, flat, home: e.kind === 'repo' ? e.repo : null };
+}
+function countFor(id) {
+  const e = entryInfo(id);
+  if (e.kind === 'repo') return REPO_ISSUES.get(e.repo).filter(k => ISSUES.get(k).state === 'open').length;
+  if (e.kind === 'all') return trackedRepos().reduce((s, r) => s + countFor('r:' + r), 0);
+  return listFor(id).roots.filter(k => ISSUES.get(k).state === 'open').length;
+}
+function lstate(id) {
+  if (!S.lists[id]) {
+    const L = listFor(id);
+    const firstTree = L.flat ? null : L.roots.find(k => ISSUES.get(k).subs.length);
+    S.lists[id] = { sel: L.roots[0] ?? null, expanded: new Set(firstTree ? [firstTree] : []), scroll: 0 };
+  }
+  return S.lists[id];
+}
+function visibleRows(id) {
+  const L = listFor(id), ls = lstate(id), rows = [];
+  const walk = (k, d) => {
+    const it = ISSUES.get(k), kids = it.subs.length > 0, exp = kids && ls.expanded.has(k);
+    rows.push({ k, d, kids, exp });
+    if (exp) it.subs.forEach(c => walk(c, d + 1));
+  };
+  L.roots.forEach(k => L.flat ? rows.push({ k, d: 0, kids: false, exp: false }) : walk(k, 0));
+  return { rows, L };
+}
+
+// ---------- shared rendering: plain list and plain issue page ----------
+function rowHTML(r, ls, L) {
+  const it = ISSUES.get(r.k), ob = openBlockers(it), done = it.subs.filter(k => ISSUES.get(k).state === 'closed').length;
+  return `<div class="row ${ls.sel === r.k ? 'sel' : ''} ${it.state}" style="--d:${r.d}" data-act="row" data-arg="${esc(r.k)}">`
+    + `<span class="chev" ${r.kids ? `data-act="toggle" data-arg="${esc(r.k)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>`
+    + `${stIcon(it)}<span class="num">${esc(refShort(r.k, L.home))}</span><span class="title">${esc(it.title)}</span>${extTag(it)}`
+    + `<span class="meta">${ob ? `<span class="blk" title="Blocked by ${ob} open issue(s)">${I.blocked}${ob}</span>` : ''}${it.subs.length ? `<span title="Sub-issues closed">${done}/${it.subs.length}</span>` : ''}</span></div>`;
+}
+function mountList(container, id) {
+  const { rows, L } = visibleRows(id), ls = lstate(id);
+  container.innerHTML = rows.length ? `<div class="list">${rows.map(r => rowHTML(r, ls, L)).join('')}</div>` : '<div class="empty">No issues here.</div>';
+  container.scrollTop = ls.scroll;
+  if (S.scrollSel) { container.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' }); S.scrollSel = false; }
+  container.onscroll = () => { ls.scroll = container.scrollTop; renderState(); };
+}
+const pageLinks = it => [...(it.parent ? [it.parent] : []), ...it.subs, ...it.blockedBy, ...it.blocking];
+function pageHTML(it, p, interactive = true) {
+  let li = 0;
+  const L = k => {
+    const x = ISSUES.get(k), idx = li++;
+    return `<div class="lnk ${interactive && idx === p.link ? 'cur' : ''}" data-act="open" data-arg="${esc(k)}">${stIcon(x)}<span class="num">${esc(refShort(k, it.repo))}</span><span class="t">${esc(x.title)}</span>${extTag(x)}</div>`;
+  };
+  const sec = (h, keys, extra = '') => `<section><h4>${h}${extra}</h4>${keys.length ? keys.map(L).join('') : '<div class="none">None</div>'}</section>`;
+  const done = it.subs.filter(k => ISSUES.get(k).state === 'closed').length;
+  const r = mulberry32(hashStr(it.key));
+  const paras = Array.from({ length: rint(2, 3, r) }, () => `<p>${Array.from({ length: rint(2, 3, r) }, () => pick(SENTENCES, r)).join(' ')}</p>`).join('');
+  const comments = Array.from({ length: Math.min(it.comments, 3) }, (_, i) => `<div class="comment"><div class="ch"><b>${pick(PEOPLE, r)}</b> commented ${it.updated - i > 0 ? it.updated - i : 1} days ago</div><div class="cbody">${pick(COMMENTS, r)}</div></div>`).join('');
+  return `<article class="issue">
+    <div class="i-ref">${I.repo}<span>${esc(it.repo)}</span><span class="muted">#${it.number}</span>${extTag(it)}</div>
+    <h1>${esc(it.title)}</h1>
+    <div class="i-meta"><span class="pill ${it.state}">${it.state === 'open' ? I.open : I.closed} ${it.state === 'open' ? 'Open' : 'Closed'}</span>
+      <span><b>${esc(it.author)}</b> opened this ${it.updated + 4} days ago · ${it.comments} comments</span>${it.labels.map(l => `<span class="label">${esc(l)}</span>`).join('')}</div>
+    <div class="i-grid">
+      <div class="i-main"><div class="i-body">${paras}</div>${comments}</div>
+      <aside class="side">${sec('Parent issue', it.parent ? [it.parent] : [])}${sec('Sub-issues', it.subs, it.subs.length ? ` <span class="muted">${done}/${it.subs.length} closed</span>` : '')}${sec('Blocked by', it.blockedBy)}${sec('Blocking', it.blocking)}</aside>
+    </div></article>`;
+}
+function mountPage(container, p) {
+  container.innerHTML = pageHTML(ISSUES.get(p.key), p);
+  container.scrollTop = p.scroll;
+  if (S.scrollLink) { container.querySelector('.lnk.cur')?.scrollIntoView({ block: 'nearest' }); S.scrollLink = false; }
+  container.onscroll = () => { p.scroll = container.scrollTop; };
+}
+const brand = () => `<div class="brand"><span class="logo"></span>Verdandi<span class="sp"></span><button class="iconbtn" data-act="help" title="Keyboard shortcuts (?)">?</button></div>`;
+
+// ---------- actions ----------
+const V = () => VARIANTS[S.variant];
+function activate(id) { S.active = id; S.sbCursor = id; S.pages = []; render(); }
+function openIssue(k) { S.pages.push({ key: k, link: -1, scroll: 0 }); S.justPushed = true; S.focus = 'main'; render(); }
+function popPage() { S.pages.pop(); render(); }
+function popTo(i) { S.pages.length = i + 1; render(); }
+function toList() { S.pages = []; render(); }
+function gh(k) { if (!k) return; const it = ISSUES.get(k); toast(`Would open https://github.com/${it.repo}/issues/${it.number} in the browser`); }
+function trackRepo(full) {
+  const id = 'r:' + full;
+  if (S.order.includes(id)) return false;
+  genRepo(full); S.order.push(id); return true;
+}
+function moveSel(d) {
+  const { rows } = visibleRows(S.active), ls = lstate(S.active);
+  if (!rows.length) return;
+  const i = rows.findIndex(r => r.k === ls.sel);
+  ls.sel = rows[Math.max(0, Math.min(rows.length - 1, i < 0 ? 0 : i + d))].k;
+  S.scrollSel = true; render();
+}
+function expandOrChild() {
+  const { rows } = visibleRows(S.active), ls = lstate(S.active), i = rows.findIndex(r => r.k === ls.sel), r = rows[i];
+  if (!r || !r.kids) return;
+  if (!r.exp) ls.expanded.add(r.k); else { ls.sel = rows[i + 1].k; S.scrollSel = true; }
+  render();
+}
+function collapseOrParent() {
+  const { rows } = visibleRows(S.active), ls = lstate(S.active), i = rows.findIndex(r => r.k === ls.sel), r = rows[i];
+  if (!r) return false;
+  if (r.exp) { ls.expanded.delete(r.k); render(); return true; }
+  if (r.d > 0) { for (let j = i - 1; j >= 0; j--) if (rows[j].d === r.d - 1) { ls.sel = rows[j].k; break; } S.scrollSel = true; render(); return true; }
+  return false;
+}
+function toggleExpand(k) { const ls = lstate(S.active); ls.expanded.has(k) ? ls.expanded.delete(k) : ls.expanded.add(k); ls.sel = k; render(); }
+function moveRelative(id, target, after) {
+  S.order.splice(S.order.indexOf(id), 1);
+  const j = S.order.indexOf(target);
+  S.order.splice(after ? j + 1 : j, 0, id);
+}
+function moveEntry(id, dir) {
+  if (id === 'all') return;
+  const peers = V().order().filter(x => x !== 'all' && (x === id || V().canDrop(id, x)));
+  const nb = peers[peers.indexOf(id) + dir];
+  if (nb) { moveRelative(id, nb, dir > 0); render(); }
+}
+
+const isDown = e => e.key === 'ArrowDown' || e.key === 'j';
+const isUp = e => e.key === 'ArrowUp' || e.key === 'k';
+function listKeys(e, onLeftEdge) {
+  const ls = lstate(S.active);
+  if (isDown(e)) { moveSel(1); return true; }
+  if (isUp(e)) { moveSel(-1); return true; }
+  if (e.key === 'ArrowRight' || e.key === 'l') { expandOrChild(); return true; }
+  if (e.key === 'ArrowLeft' || e.key === 'h') { if (!collapseOrParent() && onLeftEdge) onLeftEdge(); return true; }
+  if (e.key === 'Enter') { if (ls.sel) openIssue(ls.sel); return true; }
+  if (e.key === 'o') { gh(ls.sel); return true; }
+  return false;
+}
+function pageKeys(e) {
+  const top = S.pages.at(-1), links = pageLinks(ISSUES.get(top.key));
+  if (isDown(e) && links.length) { top.link = Math.min(links.length - 1, top.link + 1); S.scrollLink = true; render(); return true; }
+  if (isUp(e) && links.length) { top.link = Math.max(0, top.link - 1); S.scrollLink = true; render(); return true; }
+  if (e.key === 'Enter' && top.link >= 0) { openIssue(links[top.link]); return true; }
+  if (e.key === 'o') { gh(top.key); return true; }
+  return false;
+}
+function sidebarKeys(e, activateOnMove) {
+  const ord = V().order(), cur = activateOnMove ? S.active : S.sbCursor;
+  if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { moveEntry(cur, e.key === 'ArrowUp' ? -1 : 1); return true; }
+  if (isDown(e) || isUp(e)) {
+    const i = Math.max(0, Math.min(ord.length - 1, ord.indexOf(cur) + (isDown(e) ? 1 : -1)));
+    if (activateOnMove) activate(ord[i]); else { S.sbCursor = ord[i]; render(); }
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'ArrowRight' || e.key === 'l') {
+    if (!activateOnMove) { S.active = S.sbCursor; S.pages = []; }
+    S.focus = 'main'; render(); return true;
+  }
+  if (e.key === 'Escape') { S.focus = 'main'; S.sbCursor = S.active; render(); return true; }
+  return false;
+}
+
+// ---------- fuzzy match for the pickers ----------
+function fuzzy(q, s) {
+  let i = 0, score = 0, last = -2;
+  for (let j = 0; j < s.length && i < q.length; j++) {
+    if (s[j] === q[i]) { score += (j === last + 1 ? 3 : 1) + (j === 0 || '/-_.'.includes(s[j - 1]) ? 2 : 0); last = j; i++; }
+  }
+  return i === q.length ? score : -1;
+}
+const OWNER_REPO = /^[\w.-]+\/[\w.-]+$/;
+function searchRepos(q, { includeTracked = true, limit = 40 } = {}) {
+  q = q.trim().toLowerCase();
+  let hits = ALL_REPOS.filter(r => includeTracked || !isTracked(r))
+    .map(r => ({ r, s: fuzzy(q, r.toLowerCase()) })).filter(x => x.s >= 0)
+    .sort((a, b) => b.s - a.s || a.r.length - b.r.length).slice(0, limit).map(x => x.r);
+  const out = hits.map(full => ({ full, owner: full.split('/')[0], name: full.split('/')[1] }));
+  // a typed owner/repo outside the user's accounts: offered first only when nothing known matches
+  if (OWNER_REPO.test(q) && !ALL_REPOS.includes(q) && (includeTracked || !isTracked(q))) {
+    const free = { full: q, owner: q.split('/')[0], name: q.split('/')[1], free: true };
+    out.length ? out.push(free) : out.unshift(free);
+  }
+  return out;
+}
+
+// ================= Variant A: sections · page swap · Tab moves focus · two-pane picker =================
+const A = {
+  name: 'Sections',
+  blurb: 'A: sidebar sectioned by kind · the issue page replaces the list · Tab moves focus between panes · two-pane picker with checkboxes',
+  order() { return ['all', ...S.order.filter(x => x[0] === 'r'), ...S.order.filter(x => x[0] === 'v')]; },
+  canDrop(a, b) { return b !== 'all' && a[0] === b[0]; },
+  entry(id, n) {
+    const e = entryInfo(id);
+    const label = e.kind === 'repo' ? `<span class="name2"><span class="n1">${esc(e.name)}</span><span class="n2">${esc(e.owner)}</span></span>` : `<span class="name">${esc(e.name)}</span>`;
+    return `<div class="entry ${e.kind === 'repo' ? 'tall' : ''} ${S.active === id ? 'active' : ''}" data-act="entry" data-arg="${esc(id)}" data-id="${esc(id)}" ${id !== 'all' ? 'draggable="true"' : ''}>${icon(e)}${label}<span class="count">${countFor(id)}</span>${n ? `<kbd class="sc">${MOD}${n}</kbd>` : ''}</div>`;
+  },
+  sidebar() {
+    const ord = this.order(), num = id => { const i = ord.indexOf(id); return i < 9 ? i + 1 : null; };
+    const sb = $('sb');
+    sb.className = 'sidebar' + (S.focus === 'sidebar' ? ' focused' : '');
+    sb.innerHTML = brand() + '<div class="sb-scroll">' + this.entry('all', num('all'))
+      + `<div class="sec"><span>Repositories</span><button class="iconbtn" data-act="add" title="Add repositories (a)">${I.plus}</button></div>`
+      + ord.filter(x => x[0] === 'r').map(id => this.entry(id, num(id))).join('')
+      + `<div class="sec"><span>Views</span><button class="iconbtn" disabled title="What a view is gets decided in its own ticket">${I.plus}</button></div>`
+      + ord.filter(x => x[0] === 'v').map(id => this.entry(id, num(id))).join('')
+      + `</div><div class="sb-foot"><kbd>Tab</kbd> sidebar ⇄ list · <kbd>${ALT}↑↓</kbd> reorder · hold <kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd>/<kbd>${IS_MAC ? '⌥' : 'Alt'}</kbd> for numbers</div>`;
+  },
+  main() {
+    const mn = $('mn'), e = entryInfo(S.active);
+    mn.className = 'main' + (S.focus === 'main' ? ' focused' : '');
+    if (!S.pages.length) {
+      mn.innerHTML = `<div class="mainbar"><h2>${icon(e)}${titleHTML(e)}</h2><span class="sub">${countFor(S.active)} open</span><span class="sp"></span><span class="hint"><kbd>↵</kbd> open <kbd>o</kbd> GitHub <kbd>Tab</kbd> sidebar</span></div><div class="scroll" id="scr"></div>`;
+      mountList($('scr'), S.active);
+    } else {
+      const top = S.pages.at(-1), prev = S.pages.at(-2);
+      mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${titleHTML(e)}<kbd>Esc</kbd></button>`
+        + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>⌫</kbd></button>` : '')
+        + `<span class="sp"></span><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll" id="scr"></div>`;
+      mountPage($('scr'), top);
+    }
+  },
+  entryClick(id) { S.focus = 'sidebar'; activate(id); },
+  key(e) {
+    if (e.key === 'Tab') { S.focus = S.focus === 'main' ? 'sidebar' : 'main'; render(); return true; }
+    if (S.focus === 'sidebar') return sidebarKeys(e, true);
+    if (S.pages.length) {
+      if (e.key === 'Escape') { toList(); return true; }
+      if (e.key === 'Backspace' || e.key === '[') { S.pages.length > 1 ? popPage() : toList(); return true; }
+      return pageKeys(e);
+    }
+    return listKeys(e);
+  },
+  help: [
+    ['Tab', 'Move focus between the sidebar and the list (the focused pane has a blue top edge)'],
+    ['j k / ↑ ↓', 'Move; in the sidebar this switches lists immediately'],
+    ['← →', 'Collapse / expand; ← on a sub-issue jumps to its parent issue'],
+    ['↵', 'Open the issue page (replaces the list)'],
+    ['Esc', 'Back to the list from any depth'],
+    ['⌫ or [', 'Back to the previous issue page'],
+    [`${ALT}↑ ${ALT}↓`, 'Sidebar focused: move the entry within its section (keyboard alternative to drag-and-drop)'],
+  ],
+  openAdd() {
+    S.modal = 'add';
+    const st = { acc: ME, q: '', cur: 0, checked: new Set() };
+    const bg = el(`<div class="modal-bg"><div class="modal add-a" role="dialog">
+      <div class="m-head"><b>Add repositories</b><span class="muted">pick from your accounts, or type <code>owner/repo</code></span><span class="sp"></span><button class="iconbtn" data-m="close">${I.x}</button></div>
+      <div class="two"><div class="acc"></div><div class="rp"><div class="m-in">${I.search}<input spellcheck="false" autocomplete="off"></div><div class="rl"></div></div></div>
+      <div class="m-foot"><span class="hint"><kbd>↑↓</kbd> move <kbd>Space</kbd> select <kbd>Tab</kbd> next account <kbd>↵</kbd> add <kbd>Esc</kbd> cancel</span><span class="sp"></span><button class="btn" data-m="close">Cancel</button><button class="btn primary" data-m="add"></button></div>
+    </div></div>`);
+    document.body.append(bg);
+    const input = bg.querySelector('input'), accs = Object.keys(ACCOUNTS);
+    const items = () => {
+      const q = st.q.trim().toLowerCase();
+      if (q.includes('/')) return searchRepos(q);
+      return ACCOUNTS[st.acc].filter(r => r.toLowerCase().includes(q)).map(name => ({ full: `${st.acc}/${name}`, owner: st.acc, name }));
+    };
+    const toggle = x => { if (!x || isTracked(x.full)) return; st.checked.has(x.full) ? st.checked.delete(x.full) : st.checked.add(x.full); };
+    const draw = () => {
+      const list = items(), across = st.q.includes('/');
+      st.cur = Math.max(0, Math.min(st.cur, list.length - 1));
+      input.placeholder = `Filter ${st.acc}'s repositories, or type owner/repo`;
+      bg.querySelector('.acc').innerHTML = accs.map(o => `<div class="acc-i ${o === st.acc && !across ? 'on' : ''}" data-acc="${esc(o)}">${avatar(o)}<span class="name">${esc(o)}${o === ME ? ' <span class="muted">(you)</span>' : ''}</span><span class="muted">${ACCOUNTS[o].length}</span></div>`).join('')
+        + '<div class="acc-note">Organizations would come from <code>gh api user/orgs</code>. Typing <code>owner/repo</code> reaches any repository you can read.</div>';
+      bg.querySelector('.rl').innerHTML = list.map((x, i) => {
+        const tracked = isTracked(x.full), on = tracked || st.checked.has(x.full);
+        const name = x.free ? `<b>${esc(x.full)}</b> <span class="muted">· not in your accounts; Verdandi would check access with gh</span>` : across ? `<span class="owner">${esc(x.owner)}/</span>${esc(x.name)}` : esc(x.name);
+        return `<div class="rl-i ${i === st.cur ? 'cur' : ''} ${tracked ? 'dis' : ''}" data-i="${i}"><span class="cb ${on ? 'on' : ''}">${on ? I.check : ''}</span>${I.repo}<span class="name">${name}</span>${tracked ? '<span class="muted">already tracked</span>' : ''}</div>`;
+      }).join('') || '<div class="empty">No matching repositories.</div>';
+      bg.querySelector('.rl .cur')?.scrollIntoView({ block: 'nearest' });
+      const n = st.checked.size, btn = bg.querySelector('[data-m="add"]');
+      btn.textContent = n ? `Add ${n} ${n === 1 ? 'repository' : 'repositories'}` : 'Add';
+      btn.disabled = !n && !(list[st.cur] && !isTracked(list[st.cur].full));
+    };
+    const close = () => { bg.remove(); S.modal = null; render(); };
+    const commit = () => {
+      if (!st.checked.size) toggle(items()[st.cur]);
+      const added = [...st.checked].filter(trackRepo);
+      close();
+      if (added.length) toast(`Now tracking ${added.join(', ')}`);
+    };
+    input.oninput = () => { st.q = input.value; st.cur = 0; draw(); };
+    input.onkeydown = e => {
+      e.stopPropagation();
+      const n = items().length;
+      if (e.key === 'ArrowDown') { st.cur = Math.min(n - 1, st.cur + 1); draw(); }
+      else if (e.key === 'ArrowUp') { st.cur = Math.max(0, st.cur - 1); draw(); }
+      else if (e.key === ' ') { toggle(items()[st.cur]); draw(); }
+      else if (e.key === 'Tab') { st.acc = accs[(accs.indexOf(st.acc) + (e.shiftKey ? -1 : 1) + accs.length) % accs.length]; st.q = input.value = ''; st.cur = 0; draw(); }
+      else if (e.key === 'Enter') commit();
+      else if (e.key === 'Escape') close();
+      else return;
+      e.preventDefault();
+    };
+    bg.onclick = e => {
+      if (e.target === bg) return close();
+      const m = e.target.closest('[data-m]'); if (m) return m.dataset.m === 'close' ? close() : commit();
+      const a = e.target.closest('[data-acc]'); if (a) { st.acc = a.dataset.acc; st.q = input.value = ''; st.cur = 0; draw(); }
+      const r = e.target.closest('[data-i]'); if (r) { st.cur = +r.dataset.i; toggle(items()[st.cur]); draw(); }
+      input.focus();
+    };
+    draw(); input.focus();
+  },
+};
+
+// ================= Variant B: one mixed list · sheets over the list · focus never leaves the list · spotlight =================
+const B = {
+  name: 'Mixed list',
+  blurb: 'B: one user-ordered list with fixed numbers · issue pages stack as sheets over the list · focus stays in the list · spotlight picker',
+  order() { return ['all', ...S.order]; },
+  canDrop(a, b) { return b !== 'all'; },
+  entry(id, n) {
+    const e = entryInfo(id);
+    return `<div class="entry ${S.active === id ? 'active' : ''}" data-act="entry" data-arg="${esc(id)}" data-id="${esc(id)}" ${id !== 'all' ? 'draggable="true"' : ''} title="${n ? `${MOD}${n}` : ''}"><span class="numb">${n ?? ''}</span>${icon(e)}<span class="name">${titleHTML(e)}</span><span class="count">${countFor(id)}</span></div>`;
+  },
+  sidebar() {
+    const sb = $('sb'), ord = this.order();
+    sb.className = 'sidebar';
+    sb.innerHTML = brand() + `<button class="addbar" data-act="add">${I.plus}<span>Add repository…</span><kbd>a</kbd></button>`
+      + `<div class="sb-scroll">${ord.map((id, i) => this.entry(id, i < 9 ? i + 1 : null)).join('')}</div>`
+      + `<div class="sb-foot"><kbd>${ALT}↑↓</kbd> previous / next list · <kbd>⇧${ALT}↑↓</kbd> reorder</div>`;
+  },
+  main() {
+    const mn = $('mn'), e = entryInfo(S.active);
+    mn.className = 'main';
+    mn.innerHTML = `<div class="mainbar"><h2>${icon(e)}${titleHTML(e)}</h2><span class="sub">${countFor(S.active)} open</span><span class="sp"></span><span class="hint"><kbd>↵</kbd> open <kbd>o</kbd> GitHub <kbd>${ALT}↑↓</kbd> switch list</span></div><div class="scroll" id="scr"></div>`
+      + (S.pages.length ? `<div class="sheets"><div class="scrim" data-act="tolist" title="Back to the list"></div>${S.pages.map((p, i) => this.sheet(p, i)).join('')}</div>` : '');
+    mountList($('scr'), S.active);
+    S.pages.forEach((p, i) => {
+      const c = $('sheet-scr-' + i);
+      c.scrollTop = p.scroll; c.onscroll = () => { p.scroll = c.scrollTop; };
+      if (i === S.pages.length - 1 && S.scrollLink) { c.querySelector('.lnk.cur')?.scrollIntoView({ block: 'nearest' }); S.scrollLink = false; }
+    });
+  },
+  sheet(p, i) {
+    const top = i === S.pages.length - 1;
+    return `<section class="sheet ${top ? 'top' : 'under'} ${top && S.justPushed ? 'enter' : ''}" style="--i:${i}" ${top ? '' : `data-act="popto" data-arg="${i}" title="Back to ${esc(p.key)}"`}>`
+      + `<div class="mainbar"><button class="btn ghost" data-act="pop" title="Close this sheet">${I.x}<kbd>Esc</kbd></button><span class="depth">${S.pages.length > 1 ? `${i + 1} of ${S.pages.length}` : ''}</span><span class="sp"></span><button class="btn" data-act="gh" data-arg="${esc(p.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div>`
+      + `<div class="scroll" id="sheet-scr-${i}">${pageHTML(ISSUES.get(p.key), p, top)}</div></section>`;
+  },
+  entryClick(id) { activate(id); },
+  key(e) {
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const d = e.key === 'ArrowUp' ? -1 : 1;
+      if (e.shiftKey) moveEntry(S.active, d);
+      else { const ord = this.order(); activate(ord[Math.max(0, Math.min(ord.length - 1, ord.indexOf(S.active) + d))]); }
+      return true;
+    }
+    if (S.pages.length) {
+      if (e.key === 'Escape' || e.key === 'Backspace') { popPage(); return true; }
+      return pageKeys(e);
+    }
+    return listKeys(e);
+  },
+  help: [
+    ['j k / ↑ ↓', 'Move in the list; the sidebar never takes keyboard focus'],
+    [`${ALT}↑ ${ALT}↓`, 'Previous / next sidebar entry'],
+    [`⇧${ALT}↑ ⇧${ALT}↓`, 'Move the current sidebar entry (keyboard alternative to drag-and-drop)'],
+    ['← →', 'Collapse / expand; ← on a sub-issue jumps to its parent issue'],
+    ['↵', 'Open the issue as a sheet over the list; ↵ on a related issue stacks another sheet'],
+    ['Esc or ⌫', 'Close the top sheet (one level back)'],
+    ['Click the dimmed strip', 'Close all sheets; click a sheet edge to go back to it'],
+  ],
+  openAdd() {
+    S.modal = 'add';
+    const st = { q: '', cur: 0, items: [] };
+    const bg = el(`<div class="modal-bg top"><div class="modal spot" role="dialog">
+      <div class="m-in">${I.search}<input placeholder="Track a repository: search your accounts, or type owner/repo" spellcheck="false" autocomplete="off"></div>
+      <div class="spot-res"></div>
+      <div class="spot-foot"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> track and keep going</span><span><kbd>Esc</kbd> done</span><span>type <code>acme/</code> to scope to one owner</span></div>
+    </div></div>`);
+    document.body.append(bg);
+    const input = bg.querySelector('input'), res = bg.querySelector('.spot-res');
+    const row = (x, i) => `<div class="rl-i ${i === st.cur ? 'cur' : ''}" data-i="${i}">${I.repo}<span class="name">${x.free ? `<b>${esc(x.full)}</b> <span class="muted">· not in your accounts; would check access with gh</span>` : `<span class="owner">${esc(x.owner)}/</span><b>${esc(x.name)}</b>`}</span>${isTracked(x.full) ? `<span class="tracked-ok">${I.check}tracked</span>` : i === st.cur ? '<kbd>↵ track</kbd>' : ''}</div>`;
+    const draw = () => {
+      const q = st.q.trim();
+      if (!q) {
+        const html = [];
+        st.items = [];
+        for (const o of Object.keys(ACCOUNTS)) {
+          const rs = ACCOUNTS[o].slice(0, 4).map(name => ({ full: `${o}/${name}`, owner: o, name }));
+          html.push(`<div class="spot-g">${avatar(o)}${esc(o)}${o === ME ? ' <span class="muted">(you)</span>' : ''}</div>`);
+          rs.forEach(x => { html.push(row(x, st.items.length)); st.items.push(x); });
+          if (ACCOUNTS[o].length > 4) html.push(`<div class="spot-more">…${ACCOUNTS[o].length - 4} more; type to search</div>`);
+        }
+        res.innerHTML = html.join('');
+      } else {
+        st.items = searchRepos(q);
+        st.cur = Math.min(st.cur, Math.max(0, st.items.length - 1));
+        res.innerHTML = st.items.map(row).join('') || '<div class="empty">No matches. Type the full <code>owner/repo</code> to add any repository you can read.</div>';
+      }
+      res.querySelector('.cur')?.scrollIntoView({ block: 'nearest' });
+    };
+    const close = () => { bg.remove(); S.modal = null; render(); };
+    const track = x => { if (x && trackRepo(x.full)) { toast(`Now tracking ${x.full}`); render(); } draw(); input.focus(); };
+    input.oninput = () => { st.q = input.value; st.cur = 0; draw(); };
+    input.onkeydown = e => {
+      e.stopPropagation();
+      if (e.key === 'ArrowDown') { st.cur = Math.min(st.items.length - 1, st.cur + 1); draw(); }
+      else if (e.key === 'ArrowUp') { st.cur = Math.max(0, st.cur - 1); draw(); }
+      else if (e.key === 'Enter') track(st.items[st.cur]);
+      else if (e.key === 'Escape') close();
+      else return;
+      e.preventDefault();
+    };
+    bg.onclick = e => {
+      if (e.target === bg) return close();
+      const r = e.target.closest('[data-i]'); if (r) { st.cur = +r.dataset.i; track(st.items[st.cur]); }
+      input.focus();
+    };
+    draw(); input.focus();
+  },
+};
+
+// ================= Variant C: owner groups · inline add · rail + breadcrumbs · arrows cross panes =================
+const C = {
+  name: 'Owner groups',
+  blurb: 'C: sidebar grouped by owner · inline add, no modal · the sidebar shrinks to a rail on the issue page · breadcrumbs · ← at the left edge enters the sidebar',
+  groups() {
+    const repos = S.order.filter(x => x[0] === 'r'), ownerOf = x => x.slice(2).split('/')[0];
+    const owners = [...new Set(repos.map(ownerOf))].sort((a, b) => (b === ME) - (a === ME) || a.localeCompare(b));
+    return [...owners.map(o => ({ key: o, ids: repos.filter(x => ownerOf(x) === o) })), { key: 'Views', ids: S.order.filter(x => x[0] === 'v') }];
+  },
+  order() { return ['all', ...this.groups().flatMap(g => g.ids)]; },
+  groupOf(id) { return id[0] === 'v' ? 'Views' : id.slice(2).split('/')[0]; },
+  canDrop(a, b) { return b !== 'all' && this.groupOf(a) === this.groupOf(b); },
+  entry(id, n, ind) {
+    const e = entryInfo(id), cursor = S.focus === 'sidebar' && S.sbCursor === id;
+    return `<div class="entry ${ind ? 'ind' : ''} ${S.active === id ? 'active' : ''} ${cursor ? 'cursor' : ''}" data-act="entry" data-arg="${esc(id)}" data-id="${esc(id)}" ${id !== 'all' ? 'draggable="true"' : ''}>${icon(e)}<span class="name">${esc(e.name)}</span><span class="count">${countFor(id)}</span>${n ? `<kbd class="sc">${MOD}${n}</kbd>` : ''}</div>`;
+  },
+  sidebar() {
+    const sb = $('sb'), rail = S.pages.length > 0, ord = this.order();
+    $('app').classList.toggle('rail', rail);
+    sb.className = 'sidebar' + (S.focus === 'sidebar' ? ' focused' : '');
+    if (rail) {
+      const item = id => {
+        const e = entryInfo(id);
+        const inner = e.kind === 'repo' ? `<span class="av sm" style="background:${ownerColor(e.owner)}">${esc(e.name.replace(/^\./, '').slice(0, 2))}</span>` : icon(e);
+        return `<div class="rail-i ${S.active === id ? 'active' : ''}" data-act="entry" data-arg="${esc(id)}" title="${esc(plainTitle(id))}">${inner}</div>`;
+      };
+      sb.innerHTML = `<div class="rail-list">${item('all')}${this.groups().map(g => '<div class="rail-sep"></div>' + g.ids.map(item).join('')).join('')}</div>`;
+      return;
+    }
+    const num = id => { const i = ord.indexOf(id); return i < 9 ? i + 1 : null; };
+    sb.innerHTML = brand() + '<div class="sb-scroll">' + this.entry('all', num('all'), false)
+      + this.groups().map(g => `<div class="grp-h">${g.key === 'Views' ? `<span class="av" style="background:var(--fg3)">${I.view}</span>` : avatar(g.key)}<span>${esc(g.key)}</span>${g.key === ME ? '<span class="muted">you</span>' : ''}</div>`
+        + g.ids.map(id => this.entry(id, num(id), true)).join('')).join('')
+      + '</div>'
+      + (S.modal === 'inline'
+        ? `<div class="inline-add on">${I.search}<input id="inl" placeholder="owner/repo, or search" spellcheck="false" autocomplete="off"></div>`
+        : `<div class="inline-add" data-act="add">${I.plus}<span>Add repository</span><kbd>a</kbd></div>`);
+  },
+  main() {
+    const mn = $('mn'), e = entryInfo(S.active);
+    mn.className = 'main' + (S.focus === 'main' ? ' focused' : '');
+    const sep = `<span class="crumb-sep">${I.crumb}</span>`;
+    if (!S.pages.length) {
+      mn.innerHTML = `<div class="mainbar"><div class="crumbs"><span class="crumb last">${icon(e)}${titleHTML(e)}</span><span class="sub">${countFor(S.active)} open</span></div><span class="hint"><kbd>←</kbd> at the left edge: sidebar</span></div><div class="scroll" id="scr"></div>`;
+      mountList($('scr'), S.active);
+    } else {
+      const crumbs = [`<span class="crumb" data-act="tolist" title="Back to the list">${icon(e)}${titleHTML(e)}</span>`]
+        .concat(S.pages.map((p, i) => {
+          const it = ISSUES.get(p.key), last = i === S.pages.length - 1;
+          return `<span class="crumb ${last ? 'last' : ''}" ${last ? '' : `data-act="popto" data-arg="${i}"`} title="${esc(p.key + ' ' + it.title)}">${stIcon(it)}<span class="num">${esc(p.key)}</span>${last ? esc(it.title) : ''}</span>`;
+        }));
+      const top = S.pages.at(-1);
+      mn.innerHTML = `<div class="mainbar"><div class="crumbs">${crumbs.join(sep)}</div><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll" id="scr"></div>`;
+      mountPage($('scr'), top);
+    }
+  },
+  entryClick(id) { S.focus = 'main'; activate(id); },
+  key(e) {
+    if (S.focus === 'sidebar') return sidebarKeys(e, false);
+    if (S.pages.length) {
+      if (e.key === 'Escape' || e.key === 'Backspace') { popPage(); return true; }
+      return pageKeys(e);
+    }
+    return listKeys(e, () => { S.focus = 'sidebar'; S.sbCursor = S.active; render(); });
+  },
+  help: [
+    ['j k / ↑ ↓', 'Move in whichever pane has focus; moving in the sidebar does not switch lists yet'],
+    ['← →', 'Collapse / expand; ← on a collapsed top-level issue moves focus into the sidebar'],
+    ['→ or ↵ (sidebar)', 'Open that list and move focus into it; Esc returns without switching'],
+    ['↵', 'Open the issue page; the sidebar shrinks to a rail'],
+    ['Esc or ⌫', 'Back one breadcrumb'],
+    [`${ALT}↑ ${ALT}↓`, 'Sidebar focused: move the entry within its owner group (keyboard alternative to drag-and-drop)'],
+  ],
+  openAdd() {
+    S.pages = []; S.modal = 'inline'; render();
+    const input = $('inl'), pop = el('<div class="suggest"></div>'), st = { cur: 0, items: [] };
+    document.body.append(pop);
+    const place = () => { const r = input.getBoundingClientRect(), sr = $('sb').getBoundingClientRect(); pop.style.left = (sr.right + 6) + 'px'; pop.style.bottom = (innerHeight - r.bottom - 4) + 'px'; };
+    const draw = () => {
+      const q = input.value.trim();
+      st.items = q ? searchRepos(q, { includeTracked: false, limit: 9 }) : ALL_REPOS.filter(r => !isTracked(r)).slice(0, 7).map(full => ({ full, owner: full.split('/')[0], name: full.split('/')[1] }));
+      st.cur = Math.min(st.cur, Math.max(0, st.items.length - 1));
+      pop.innerHTML = (q ? '' : '<div class="s-h">From your accounts. Type to search, or enter owner/repo.</div>')
+        + (st.items.map((x, i) => `<div class="s-i ${i === st.cur ? 'cur' : ''}" data-i="${i}">${I.repo}<span class="name">${x.free ? `<b>${esc(x.full)}</b> <span class="muted">· would check access with gh</span>` : `<span class="owner">${esc(x.owner)}/</span>${esc(x.name)}`}</span>${i === st.cur ? '<kbd>↵</kbd>' : ''}</div>`).join('') || '<div class="s-h">No matches among untracked repositories.</div>');
+      place();
+    };
+    const close = () => { pop.remove(); if (S.modal === 'inline') { S.modal = null; render(); } };
+    const choose = x => { if (!x) return; trackRepo(x.full); close(); S.focus = 'main'; activate('r:' + x.full); toast(`Now tracking ${x.full}`); };
+    input.oninput = () => { st.cur = 0; draw(); };
+    input.onkeydown = e => {
+      e.stopPropagation();
+      if (e.key === 'ArrowDown') { st.cur = Math.min(st.items.length - 1, st.cur + 1); draw(); }
+      else if (e.key === 'ArrowUp') { st.cur = Math.max(0, st.cur - 1); draw(); }
+      else if (e.key === 'Enter') choose(st.items[st.cur]);
+      else if (e.key === 'Escape') close();
+      else return;
+      e.preventDefault();
+    };
+    input.onblur = () => setTimeout(close, 120);
+    pop.onmousedown = e => { const r = e.target.closest('[data-i]'); e.preventDefault(); if (r) choose(st.items[+r.dataset.i]); };
+    draw(); input.focus();
+  },
+};
+
+const VARIANTS = { A, B, C };
+const KEYS = Object.keys(VARIANTS);
+
+// ---------- render ----------
+function render() {
+  const app = $('app');
+  if (S.shell !== S.variant) {
+    app.innerHTML = '<aside class="sidebar" id="sb"></aside><main class="main" id="mn"></main>';
+    S.shell = S.variant;
+  }
+  app.className = 'v' + S.variant + (app.classList.contains('rail') && S.variant === 'C' ? ' rail' : '');
+  V().sidebar(); V().main(); renderState();
+  S.justPushed = false;
+  $('sw-lbl').textContent = `${S.variant} · ${V().name}`;
+}
+function renderState() {
+  const box = $('statebox');
+  if (box.style.display !== 'block') return;
+  const ls = lstate(S.active), ord = V().order();
+  box.textContent = JSON.stringify({
+    variant: `${S.variant} (${V().name})`,
+    focus: S.variant === 'B' ? 'list (fixed)' : S.focus,
+    sidebarCursor: S.variant === 'C' ? S.sbCursor : undefined,
+    active: S.active,
+    sidebar: ord.map((id, i) => `${i < 9 ? i + 1 : '·'}  ${plainTitle(id)}`),
+    list: { selected: ls.sel, expanded: [...ls.expanded], scrollTop: Math.round(ls.scroll) },
+    pages: S.pages.map(p => p.key),
+    modal: S.modal,
+  }, null, 2);
+}
+let toastTimer;
+function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, ms); }
+function closeOverlays() { document.querySelectorAll('.modal-bg, .suggest').forEach(n => n.remove()); S.modal = null; }
+function setVariant(v) {
+  closeOverlays();
+  S.variant = v; S.focus = 'main'; S.sbCursor = S.active;
+  const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
+  render(); toast(V().blurb, 4500);
+}
+const cycle = d => setVariant(KEYS[(KEYS.indexOf(S.variant) + d + KEYS.length) % KEYS.length]);
+function openHelp() {
+  S.modal = 'help';
+  const common = [
+    ['a', 'Add a repository'],
+    [`${MOD}1–9`, `Jump to a sidebar entry (a browser tab keeps ${MOD}1–9 for itself, so use ${ALT}1–9 here)`],
+    ['o', 'Open the selected issue on GitHub'],
+    ['?', 'This help'],
+  ];
+  const proto = [['⇧← ⇧→', 'Switch variant'], ['`', 'Show / hide the state panel']];
+  const rows = (h, rs) => `<div class="h-sec">${h}</div>` + rs.map(([k, d]) => `<div class="h-k"><kbd>${esc(k)}</kbd></div><div>${esc(d)}</div>`).join('');
+  const bg = el(`<div class="modal-bg"><div class="modal help"><div class="m-head"><b>Keyboard: variant ${S.variant} (${esc(V().name)})</b><span class="sp"></span><kbd>Esc</kbd></div><div class="help-body">${rows('This variant', V().help)}${rows('Everywhere', common)}${rows('Prototype only', proto)}</div></div></div>`);
+  bg.onclick = e => { if (e.target === bg) closeHelp(); };
+  document.body.append(bg);
+}
+function closeHelp() { closeOverlays(); render(); }
+function toggleState() { const b = $('statebox'); b.style.display = b.style.display === 'block' ? 'none' : 'block'; renderState(); }
+
+// ---------- events ----------
+const isTyping = e => { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable); };
+document.addEventListener('keydown', e => {
+  if (['Meta', 'Control', 'Alt'].includes(e.key)) document.body.classList.add('show-sc');
+  if (isTyping(e)) return;
+  if (e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { cycle(e.key === 'ArrowRight' ? 1 : -1); e.preventDefault(); return; }
+  if (S.modal === 'help') { if (e.key === 'Escape' || e.key === '?') { closeHelp(); e.preventDefault(); } return; }
+  if (S.modal) return;
+  if ((e.metaKey || e.ctrlKey || e.altKey) && /^Digit[1-9]$/.test(e.code)) {
+    const id = V().order()[+e.code.slice(5) - 1];
+    if (id) { if (S.variant === 'C') S.focus = 'main'; activate(id); }
+    e.preventDefault(); return;
+  }
+  if (e.metaKey || e.ctrlKey) return; // leave browser shortcuts alone
+  if (e.key === '?') { openHelp(); e.preventDefault(); return; }
+  if (e.key === '`') { toggleState(); e.preventDefault(); return; }
+  if (e.key === 'a' && !e.altKey) { V().openAdd(); e.preventDefault(); return; }
+  if (V().key(e)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { if (['Meta', 'Control', 'Alt'].includes(e.key)) document.body.classList.remove('show-sc'); });
+window.addEventListener('blur', () => document.body.classList.remove('show-sc'));
+// clicked buttons must not keep focus, or Enter would both press them and act on the list
+document.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  if (!t) return;
+  const arg = t.dataset.arg;
+  switch (t.dataset.act) {
+    case 'entry': V().entryClick(arg); break;
+    case 'toggle': toggleExpand(arg); break;
+    case 'row': lstate(S.active).sel = arg; openIssue(arg); break;
+    case 'open': openIssue(arg); break;
+    case 'gh': gh(arg); break;
+    case 'tolist': toList(); break;
+    case 'pop': popPage(); break;
+    case 'popto': popTo(+arg); break;
+    case 'add': V().openAdd(); break;
+    case 'help': openHelp(); break;
+  }
+});
+// drag-and-drop reordering in the sidebar (a drop is only allowed where the variant's grouping permits it)
+function clearDrop() { document.querySelectorAll('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after')); S.dropAt = null; }
+document.addEventListener('dragstart', e => {
+  const en = e.target.closest && e.target.closest('.entry[draggable]');
+  if (!en) return;
+  S.drag = en.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', S.drag);
+  requestAnimationFrame(() => en.classList.add('dragging'));
+});
+document.addEventListener('dragover', e => {
+  if (!S.drag) return;
+  const en = e.target.closest && e.target.closest('.entry');
+  clearDrop();
+  if (!en || en.dataset.id === S.drag || !V().canDrop(S.drag, en.dataset.id)) return;
+  e.preventDefault();
+  const r = en.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+  en.classList.add(after ? 'drop-after' : 'drop-before');
+  S.dropAt = { id: en.dataset.id, after };
+});
+document.addEventListener('drop', e => { if (S.drag && S.dropAt) { e.preventDefault(); moveRelative(S.drag, S.dropAt.id, S.dropAt.after); } });
+document.addEventListener('dragend', () => { clearDrop(); S.drag = null; render(); });
+
+$('sw-prev').onclick = () => cycle(-1);
+$('sw-next').onclick = () => cycle(1);
+$('sw-state').onclick = toggleState;
+
+const initial = new URL(location.href).searchParams.get('variant');
+S.variant = KEYS.includes(initial) ? initial : 'A';
+render();
+toast(V().blurb, 4500);
+</script>
+</body>
+</html>
