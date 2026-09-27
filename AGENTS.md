@@ -1,6 +1,6 @@
 ## Git workflow
 
-For now, commit and push directly to `main`.
+For now, commit and push directly to `main`. Run `pnpm check` (typecheck, lint, format check and tests) before every push to `main`, and push only when it passes.
 
 ## Agent skills
 
