@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Account, Contract, IssueList, Scope } from "./contract.ts";
+import type {
+  Account,
+  Contract,
+  IssueList,
+  IssueNode,
+  Scope,
+} from "./contract.ts";
 import { createCore } from "./core.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
 import { createFakeGitHub, type FakeGitHub } from "./testing/fake-github.ts";
@@ -54,6 +60,63 @@ async function openUntilLoaded(
   });
   await core.openList(scope);
   return settled;
+}
+
+/** The list pushed next for a scope, after `act`. */
+async function nextList(
+  core: Contract,
+  scope: Scope,
+  act: () => Promise<void>,
+): Promise<IssueList> {
+  const pushed = new Promise<IssueList>((resolve) => {
+    const unsubscribe = core.on("listChanged", (list) => {
+      if (isDeepStrictEqual(list.scope, scope)) {
+        unsubscribe();
+        resolve(list);
+      }
+    });
+  });
+  await act();
+  return pushed;
+}
+
+/** The issues of a list whose sub-issues are collapsed, by reference. */
+function collapsedIssues(list: IssueList): string[] {
+  const collapsed: string[] = [];
+  function visit(node: IssueNode) {
+    if (!node.expanded) collapsed.push(node.issue.reference);
+    node.subIssues.forEach(visit);
+  }
+  list.trees.forEach(visit);
+  return collapsed;
+}
+
+/**
+ * A list as a user reads it: one line per issue, sub-issues indented below
+ * their parent issue, with what the row says besides its title.
+ */
+function outline(list: IssueList): string[] {
+  const lines: string[] = [];
+  function add(node: IssueNode, depth: number, tags: string[]) {
+    const { reference, title, state, external } = node.issue;
+    if (state === "closed") tags.unshift("closed");
+    if (external) tags.unshift("external");
+    lines.push(
+      [`${"  ".repeat(depth)}${reference} ${title}`, ...tags].join(" · "),
+    );
+    for (const subIssue of node.subIssues) add(subIssue, depth + 1, []);
+  }
+  for (const tree of list.trees) {
+    const parent = tree.parent;
+    add(
+      tree,
+      0,
+      parent
+        ? [`↑ ${parent.reference}${parent.external ? " external" : ""}`]
+        : [],
+    );
+  }
+  return lines;
 }
 
 const acmeApi: Scope = {
@@ -235,27 +298,23 @@ describe("repository list", () => {
   it("shows a tracked repository's open issues", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
-      { id: "I_api3", number: 3, title: "Retry webhooks", state: "open" },
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
+      { number: 3, title: "Retry webhooks" },
+      { number: 1, title: "Crash on start" },
     ]);
     const core = createTestCore(github);
 
-    expect(await openUntilLoaded(core, acmeApi)).toEqual({
-      scope: { kind: "repository", repository: { owner: "acme", name: "api" } },
-      issues: [
-        { id: "I_api3", number: 3, title: "Retry webhooks", state: "open" },
-        { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-      ],
-      loading: { status: "loaded" },
-    });
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#3 Retry webhooks",
+      "#1 Crash on start",
+    ]);
   });
 
   it("shows the issues page by page as they arrive", async () => {
     const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 2 });
     github.addRepository("acme/api", [
-      { id: "I_api5", number: 5, title: "Dark mode", state: "open" },
-      { id: "I_api4", number: 4, title: "Audit trail", state: "open" },
-      { id: "I_api2", number: 2, title: "CSV import", state: "open" },
+      { number: 5, title: "Dark mode", updatedAt: "2026-09-05T00:00:00Z" },
+      { number: 4, title: "Audit trail", updatedAt: "2026-09-04T00:00:00Z" },
+      { number: 2, title: "CSV import", updatedAt: "2026-09-02T00:00:00Z" },
     ]);
     const core = createTestCore(github);
     const pushed: IssueList[] = [];
@@ -264,14 +323,17 @@ describe("repository list", () => {
     await openUntilLoaded(core, acmeApi);
 
     expect(
-      pushed.map(({ issues, loading }) => ({
-        numbers: issues.map((issue) => issue.number),
-        loading: loading.status,
+      pushed.map((list) => ({
+        outline: outline(list),
+        loading: list.loading.status,
       })),
     ).toEqual([
-      { numbers: [], loading: "loading" },
-      { numbers: [5, 4], loading: "loading" },
-      { numbers: [5, 4, 2], loading: "loaded" },
+      { outline: [], loading: "loading" },
+      { outline: ["#5 Dark mode", "#4 Audit trail"], loading: "loading" },
+      {
+        outline: ["#5 Dark mode", "#4 Audit trail", "#2 CSV import"],
+        loading: "loaded",
+      },
     ]);
   });
 
@@ -282,12 +344,8 @@ describe("repository list", () => {
       views: [],
     });
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.addRepository("acme/api", [
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-    ]);
-    github.addRepository("acme/web", [
-      { id: "I_web1", number: 1, title: "Broken footer", state: "open" },
-    ]);
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
     const core = createTestCore(github);
 
     await core.getSidebar();
@@ -300,25 +358,22 @@ describe("repository list", () => {
   it("shows a loaded repository again without asking GitHub", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
+      { number: 2, title: "Launch billing", subIssues: ["acme/api#1"] },
+      { number: 1, title: "Meter requests", state: "closed" },
     ]);
-    github.addRepository("acme/web", [
-      { id: "I_web1", number: 1, title: "Broken footer", state: "open" },
-    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
     const core = createTestCore(github);
 
-    await openUntilLoaded(core, acmeApi);
+    const first = await openUntilLoaded(core, acmeApi);
     await openUntilLoaded(core, acmeWeb);
     const requestsBefore = github.requestsFor("acme/api");
     const revisited = await openUntilLoaded(core, acmeApi);
 
-    expect(revisited).toEqual({
-      scope: acmeApi,
-      issues: [
-        { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-      ],
-      loading: { status: "loaded" },
-    });
+    expect(revisited).toEqual(first);
+    expect(outline(revisited)).toEqual([
+      "#2 Launch billing",
+      "  #1 Meter requests · closed",
+    ]);
     expect(github.requestsFor("acme/api")).toBe(requestsBefore);
   });
 
@@ -327,7 +382,7 @@ describe("repository list", () => {
 
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
-      issues: [],
+      trees: [],
       loading: {
         status: "failed",
         message:
@@ -341,27 +396,17 @@ describe("repository list", () => {
     const core = createTestCore(github);
 
     await openUntilLoaded(core, acmeApi);
-    github.addRepository("acme/api", [
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-    ]);
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const reopened = await openUntilLoaded(core, acmeApi);
 
-    expect(await openUntilLoaded(core, acmeApi)).toEqual({
-      scope: acmeApi,
-      issues: [
-        { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-      ],
-      loading: { status: "loaded" },
-    });
+    expect(outline(reopened)).toEqual(["#1 Crash on start"]);
+    expect(reopened.loading.status).toBe("loaded");
   });
 
   it("does not load a repository twice when it is reopened mid-load", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.addRepository("acme/api", [
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-    ]);
-    github.addRepository("acme/web", [
-      { id: "I_web1", number: 1, title: "Broken footer", state: "open" },
-    ]);
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
     const core = createTestCore(github);
     github.pause();
 
@@ -370,13 +415,7 @@ describe("repository list", () => {
     const revisited = openUntilLoaded(core, acmeApi);
     github.resume();
 
-    expect(await revisited).toEqual({
-      scope: acmeApi,
-      issues: [
-        { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-      ],
-      loading: { status: "loaded" },
-    });
+    expect(outline(await revisited)).toEqual(["#1 Crash on start"]);
     // Its one page was asked for once.
     expect(github.requestsFor("acme/api")).toBe(1);
   });
@@ -384,14 +423,488 @@ describe("repository list", () => {
   it("keeps issues in memory only", async () => {
     await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.addRepository("acme/api", [
-      { id: "I_api1", number: 1, title: "Crash on start", state: "open" },
-    ]);
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const core = createTestCore(github);
 
     await core.getSidebar();
     await openUntilLoaded(core, acmeApi);
 
     expect(await readdir(home, { recursive: true })).toEqual(["settings.json"]);
+  });
+
+  it("names a repository without regard to case, as GitHub does", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+
+    const first = await openUntilLoaded(core, acmeApi);
+    const requestsBefore = github.requestsFor("acme/api");
+    const shouted: Scope = {
+      kind: "repository",
+      repository: { owner: "Acme", name: "API" },
+    };
+    const again = await openUntilLoaded(core, shouted);
+
+    expect(again).toEqual({ ...first, scope: shouted });
+    expect(github.requestsFor("acme/api")).toBe(requestsBefore);
+  });
+});
+
+describe("sub-issue forest", () => {
+  it("nests sub-issues under their parent issue, in GitHub's order", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 4, title: "Invoice line items" },
+      { number: 3, title: "Usage endpoint", subIssues: ["acme/api#4"] },
+      { number: 2, title: "Rate cards" },
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["acme/api#3", "acme/api#2"],
+      },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Launch billing",
+      "  #3 Usage endpoint",
+      "    #4 Invoice line items",
+      "  #2 Rate cards",
+    ]);
+  });
+
+  it("lists parent issues first, then the most recently updated", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 6, title: "Typo in README", updatedAt: "2026-09-03T00:00:00Z" },
+      {
+        number: 5,
+        title: "Harden webhooks",
+        updatedAt: "2026-08-01T00:00:00Z",
+        subIssues: ["acme/api#1"],
+      },
+      { number: 4, title: "Flaky test", updatedAt: "2026-09-20T00:00:00Z" },
+      {
+        number: 3,
+        title: "Launch billing",
+        updatedAt: "2026-09-10T00:00:00Z",
+        subIssues: ["acme/api#2"],
+      },
+      { number: 2, title: "Rate cards", updatedAt: "2026-09-25T00:00:00Z" },
+      { number: 1, title: "Retry budget", updatedAt: "2026-07-01T00:00:00Z" },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#3 Launch billing",
+      "  #2 Rate cards",
+      "#5 Harden webhooks",
+      "  #1 Retry budget",
+      "#4 Flaky test",
+      "#6 Typo in README",
+    ]);
+  });
+
+  it("keeps closed sub-issues in place", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Usage endpoint" },
+      { number: 2, title: "Meter requests", state: "closed" },
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["acme/api#2", "acme/api#3"],
+      },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Launch billing",
+      "  #2 Meter requests · closed",
+      "  #3 Usage endpoint",
+    ]);
+  });
+
+  it("leaves out closed issues without open sub-issues, and counts them", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 5, title: "Old crash", state: "closed" },
+      {
+        number: 4,
+        title: "Finished rollout",
+        state: "closed",
+        subIssues: ["acme/api#3"],
+      },
+      { number: 3, title: "Finished step", state: "closed" },
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual([
+      "#1 Launch billing",
+      "  #2 Meter requests · closed",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 1,
+      closedNotListed: 3,
+    });
+  });
+
+  it("keeps a closed issue as the parent of its open sub-issues", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 5, title: "Rate cards" },
+      { number: 4, title: "Usage endpoint" },
+      {
+        number: 3,
+        title: "Metering",
+        state: "closed",
+        subIssues: ["acme/api#4"],
+      },
+      { number: 2, title: "Meter requests", state: "closed" },
+      {
+        number: 1,
+        title: "Launch billing",
+        state: "closed",
+        subIssues: ["acme/api#2", "acme/api#3", "acme/api#5"],
+      },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual([
+      "#1 Launch billing · closed",
+      "  #2 Meter requests · closed",
+      "  #3 Metering · closed",
+      "    #4 Usage endpoint",
+      "  #5 Rate cards",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 2,
+      closedNotListed: 0,
+    });
+  });
+
+  it("keeps a closed issue as the parent of its open sub-issues through another repository", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 7, title: "Usage endpoint" },
+      {
+        number: 5,
+        title: "Launch billing",
+        state: "closed",
+        subIssues: ["acme/web#3"],
+      },
+      { number: 4, title: "Old crash", state: "closed" },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 3, title: "Usage dashboard", subIssues: ["acme/api#7"] },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual([
+      "#5 Launch billing · closed",
+      "  acme/web#3 Usage dashboard",
+      "    #7 Usage endpoint",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 1,
+      closedNotListed: 1,
+    });
+  });
+
+  it("names sub-issues from other repositories in full, and tags external ones", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["acme/web#7", "vendor/sdk#3"],
+      },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 8, title: "Usage chart", state: "closed" },
+      { number: 7, title: "Usage page", subIssues: ["acme/web#8"] },
+    ]);
+    github.addRepository("vendor/sdk", [
+      { number: 4, title: "Batch events" },
+      { number: 3, title: "Emit usage events", subIssues: ["vendor/sdk#4"] },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Launch billing",
+      "  acme/web#7 Usage page",
+      "    acme/web#8 Usage chart · closed",
+      "  vendor/sdk#3 Emit usage events · external",
+      "    vendor/sdk#4 Batch events · external",
+    ]);
+  });
+
+  it("puts a sub-issue whose parent issue lives in another repository at the top level, naming the parent", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Support the v3 handshake" },
+      { number: 1, title: "Usage endpoint" },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 5, title: "Usage dashboard", subIssues: ["acme/api#1"] },
+    ]);
+    github.addRepository("upstream/protocol", [
+      { number: 7, title: "Protocol v3 rollout", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual([
+      "#2 Support the v3 handshake · ↑ upstream/protocol#7 external",
+      "#1 Usage endpoint · ↑ acme/web#5",
+    ]);
+    expect(list.trees.map((tree) => tree.parent)).toEqual([
+      {
+        id: "I_upstream/protocol#7",
+        reference: "upstream/protocol#7",
+        title: "Protocol v3 rollout",
+        external: true,
+      },
+      {
+        id: "I_acme/web#5",
+        reference: "acme/web#5",
+        title: "Usage dashboard",
+        external: false,
+      },
+    ]);
+    expect(outline(await openUntilLoaded(core, acmeWeb))).toEqual([
+      "#5 Usage dashboard",
+      "  acme/api#1 Usage endpoint",
+    ]);
+  });
+
+  it("shows an issue once when it nests below another one through a different repository", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Usage endpoint" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/web#5"] },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 5, title: "Usage dashboard", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Launch billing",
+      "  acme/web#5 Usage dashboard · external",
+      "    #2 Usage endpoint",
+    ]);
+  });
+
+  it("shows each issue's labels, sub-issue progress and blocking counts", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 3,
+        title: "Usage endpoint",
+        labels: [
+          { name: "api", color: "0075ca" },
+          { name: "good first issue", color: "7057ff" },
+        ],
+        blocking: { open: 2, total: 2 },
+      },
+      { number: 2, title: "Meter requests", state: "closed" },
+      {
+        number: 1,
+        title: "Launch billing",
+        labels: [{ name: "roadmap", color: "3e4b9e" }],
+        subIssues: ["acme/api#2", "acme/api#3"],
+        blockedBy: { open: 1, total: 3 },
+        blocking: { open: 0, total: 1 },
+      },
+    ]);
+    const core = createTestCore(github);
+    const [tree] = (await openUntilLoaded(core, acmeApi)).trees;
+
+    expect(tree?.issue).toEqual({
+      id: "I_acme/api#1",
+      reference: "#1",
+      title: "Launch billing",
+      state: "open",
+      url: "https://github.com/acme/api/issues/1",
+      labels: [{ name: "roadmap", color: "3e4b9e" }],
+      external: false,
+      subIssueProgress: { closed: 1, total: 2 },
+      blockedBy: { open: 1, total: 3 },
+      blocking: { open: 0, total: 1 },
+    });
+    expect(tree?.subIssues[1]?.issue).toEqual({
+      id: "I_acme/api#3",
+      reference: "#3",
+      title: "Usage endpoint",
+      state: "open",
+      url: "https://github.com/acme/api/issues/3",
+      labels: [
+        { name: "api", color: "0075ca" },
+        { name: "good first issue", color: "7057ff" },
+      ],
+      external: false,
+      subIssueProgress: { closed: 0, total: 0 },
+      blockedBy: { open: 0, total: 0 },
+      blocking: { open: 2, total: 2 },
+    });
+  });
+
+  it("nests an open sub-issue once its parent issue's page arrives", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Usage endpoint" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+    const pushed: string[][] = [];
+    core.on("listChanged", (list) => pushed.push(outline(list)));
+
+    await openUntilLoaded(core, acmeApi);
+
+    expect(pushed).toEqual([
+      [],
+      ["#2 Usage endpoint · ↑ #1"],
+      ["#1 Launch billing", "  #2 Usage endpoint"],
+    ]);
+    // Both issues came with their pages; neither was read on its own.
+    expect(github.requestsFor("acme/api")).toBe(2);
+  });
+
+  it("reads the issues a list shows beyond its open ones up to 100 at a time", async () => {
+    const closed = (from: number) =>
+      Array.from({ length: 75 }, (_, index) => from + index);
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      ...[...closed(100), ...closed(200)].map((number) => ({
+        number,
+        title: `Step ${String(number)}`,
+        state: "closed" as const,
+      })),
+      {
+        number: 2,
+        title: "Webhooks",
+        subIssues: closed(200).map((number) => `acme/api#${String(number)}`),
+      },
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: closed(100).map((number) => `acme/api#${String(number)}`),
+      },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toHaveLength(152);
+    // One page of open issues, then 150 closed sub-issues in two requests.
+    expect(github.requestsFor("acme/api")).toBe(3);
+  });
+});
+
+describe("expansion", () => {
+  /** acme/api with two trees, one of them nested two levels deep. */
+  function billingRepository() {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 5, title: "Dark mode" },
+      { number: 4, title: "Invoice line items" },
+      { number: 3, title: "Usage endpoint", subIssues: ["acme/api#4"] },
+      { number: 2, title: "Webhooks", subIssues: ["acme/api#5"] },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#3"] },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    return github;
+  }
+
+  it("starts with every tree fully expanded", async () => {
+    const core = createTestCore(billingRepository());
+
+    expect(collapsedIssues(await openUntilLoaded(core, acmeApi))).toEqual([]);
+  });
+
+  it("collapses and expands one issue's sub-issues", async () => {
+    const core = createTestCore(billingRepository());
+    await openUntilLoaded(core, acmeApi);
+
+    const collapsed = await nextList(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#3", false),
+    );
+    expect(collapsedIssues(collapsed)).toEqual(["#3"]);
+    expect(outline(collapsed)).toEqual([
+      "#2 Webhooks",
+      "  #5 Dark mode",
+      "#1 Launch billing",
+      "  #3 Usage endpoint",
+      "    #4 Invoice line items",
+    ]);
+
+    const expanded = await nextList(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#3", true),
+    );
+    expect(collapsedIssues(expanded)).toEqual([]);
+  });
+
+  it("collapses and expands every tree at once", async () => {
+    const core = createTestCore(billingRepository());
+    await openUntilLoaded(core, acmeApi);
+    await core.setExpanded(acmeApi, "I_acme/api#2", false);
+
+    const collapsed = await nextList(core, acmeApi, () =>
+      core.setAllExpanded(acmeApi, false),
+    );
+    expect(collapsedIssues(collapsed)).toEqual(["#2", "#5", "#1", "#3", "#4"]);
+
+    await core.setExpanded(acmeApi, "I_acme/api#1", true);
+    const expanded = await nextList(core, acmeApi, () =>
+      core.setAllExpanded(acmeApi, true),
+    );
+    expect(collapsedIssues(expanded)).toEqual([]);
+  });
+
+  it("collapses issues that load after every tree was collapsed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Usage endpoint" },
+      { number: 2, title: "Launch billing", subIssues: ["acme/api#1"] },
+      { number: 1, title: "Meter requests", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    github.pause();
+    const loaded = openUntilLoaded(core, acmeApi);
+    await core.setAllExpanded(acmeApi, false);
+    github.resume();
+
+    expect(collapsedIssues(await loaded)).toEqual(["#2", "#1", "#3"]);
+  });
+
+  it("keeps each list's expansion when another list was opened meanwhile", async () => {
+    const core = createTestCore(billingRepository());
+    await openUntilLoaded(core, acmeApi);
+    await core.setExpanded(acmeApi, "I_acme/api#1", false);
+
+    await openUntilLoaded(core, acmeWeb);
+    const reopened = await openUntilLoaded(core, acmeApi);
+
+    expect(collapsedIssues(reopened)).toEqual(["#1"]);
   });
 });

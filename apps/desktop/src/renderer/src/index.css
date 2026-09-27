@@ -42,6 +42,11 @@
   --color-background: var(--background);
   --color-issue-open: var(--issue-open);
   --color-issue-closed: var(--issue-closed);
+  --color-blocked: var(--blocked);
+  --color-blocked-surface: var(--blocked-surface);
+  --color-blocking: var(--blocking);
+  --color-selection: var(--selection);
+  --color-selection-edge: var(--selection-edge);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -88,6 +93,13 @@
   /* GitHub's issue state colours. */
   --issue-open: #1a7f37;
   --issue-closed: #8250df;
+  /* "Blocked by" in red, "Blocks" in amber. */
+  --blocked: #cf222e;
+  --blocked-surface: #ffebe9;
+  --blocking: #9a6700;
+  /* The selected row of the focused list. */
+  --selection: #ddf4ff;
+  --selection-edge: #0969da;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -125,6 +137,11 @@
     --sidebar-ring: oklch(0.556 0 0);
     --issue-open: #3fb950;
     --issue-closed: #a371f7;
+    --blocked: #f85149;
+    --blocked-surface: rgb(248 81 73 / 15%);
+    --blocking: #d29922;
+    --selection: #132a47;
+    --selection-edge: #4493f8;
   }
 }
 
@@ -138,4 +155,14 @@
   html {
     @apply font-sans;
   }
+}
+
+/* One vertical guide per level of nesting in a list, 20px apart. */
+.indent-guides {
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0 9px,
+    var(--border) 9px 10px,
+    transparent 10px 20px
+  );
 }

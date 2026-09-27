@@ -53,6 +53,44 @@ const graphqlHeaders = [
   "X-Ratelimit-Used: 289",
 ];
 
+/**
+ * An issue node as GitHub returns it for the issue fields Verdandi reads, in
+ * `acme/api` and without relationships unless given.
+ */
+function issueNode({
+  id = "I_kwDOAbCdEs4AAAAB",
+  repository = "acme/api",
+  number,
+  title = "An issue",
+  state = "OPEN",
+}: {
+  id?: string;
+  repository?: string;
+  number: number;
+  title?: string;
+  state?: "OPEN" | "CLOSED";
+}) {
+  return {
+    id,
+    number,
+    title,
+    state,
+    url: `https://github.com/${repository}/issues/${String(number)}`,
+    updatedAt: "2026-09-01T12:00:00Z",
+    repository: { nameWithOwner: repository },
+    labels: { nodes: [] },
+    parent: null,
+    subIssuesSummary: { total: 0, completed: 0 },
+    issueDependenciesSummary: {
+      blockedBy: 0,
+      blocking: 0,
+      totalBlockedBy: 0,
+      totalBlocking: 0,
+    },
+    subIssues: { nodes: [] },
+  };
+}
+
 describe("gh adapter", () => {
   it("reads the viewer's login", async () => {
     const github = createGhAdapter({
@@ -218,6 +256,7 @@ describe("gh adapter", () => {
               data: {
                 viewer: { login: "octo-reader" },
                 repository: {
+                  closedIssues: { totalCount: 42 },
                   issues: {
                     pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjI=" },
                     nodes: [
@@ -226,12 +265,66 @@ describe("gh adapter", () => {
                         number: 12,
                         title: "Retry failed webhooks",
                         state: "OPEN",
+                        url: "https://github.com/acme/api/issues/12",
+                        updatedAt: "2026-09-20T08:15:00Z",
+                        repository: { nameWithOwner: "acme/api" },
+                        labels: {
+                          nodes: [
+                            { name: "bug", color: "d73a4a" },
+                            { name: "webhooks", color: "c5def5" },
+                          ],
+                        },
+                        parent: {
+                          id: "I_kwDOAxYzAb4AAAAF",
+                          number: 5,
+                          title: "Harden the webhook pipeline",
+                          state: "OPEN",
+                          repository: { nameWithOwner: "acme/infra" },
+                        },
+                        subIssuesSummary: { total: 2, completed: 1 },
+                        issueDependenciesSummary: {
+                          blockedBy: 1,
+                          blocking: 0,
+                          totalBlockedBy: 2,
+                          totalBlocking: 1,
+                        },
+                        subIssues: {
+                          nodes: [
+                            {
+                              id: "I_kwDOAbCdEs4AAAAN",
+                              number: 13,
+                              title: "Back off between retries",
+                              state: "CLOSED",
+                              repository: { nameWithOwner: "acme/api" },
+                            },
+                            {
+                              id: "I_kwDOBcDeFg4AAAAC",
+                              number: 2,
+                              title: "Retry in the SDK",
+                              state: "OPEN",
+                              repository: { nameWithOwner: "vendor/sdk" },
+                            },
+                          ],
+                        },
                       },
                       {
                         id: "I_kwDOAbCdEs4AAAAH",
                         number: 7,
                         title: "Crash on start",
                         state: "OPEN",
+                        url: "https://github.com/acme/api/issues/7",
+                        updatedAt: "2026-09-18T17:40:12Z",
+                        repository: { nameWithOwner: "acme/api" },
+                        labels: { nodes: [] },
+                        parent: null,
+                        subIssuesSummary: { total: 0, completed: 0 },
+                        issueDependenciesSummary: {
+                          blockedBy: 0,
+                          blocking: 0,
+                          totalBlockedBy: 0,
+                          totalBlocking: 0,
+                        },
+                        subIssues: { nodes: [] },
                       },
                     ],
                   },
@@ -253,17 +346,68 @@ describe("gh adapter", () => {
         issues: [
           {
             id: "I_kwDOAbCdEs4AAAAM",
+            repository: { owner: "acme", name: "api" },
             number: 12,
             title: "Retry failed webhooks",
             state: "open",
+            url: "https://github.com/acme/api/issues/12",
+            updatedAt: "2026-09-20T08:15:00Z",
+            labels: [
+              { name: "bug", color: "d73a4a" },
+              { name: "webhooks", color: "c5def5" },
+            ],
+            parent: {
+              id: "I_kwDOAxYzAb4AAAAF",
+              repository: { owner: "acme", name: "infra" },
+              number: 5,
+              title: "Harden the webhook pipeline",
+              state: "open",
+            },
+            subIssues: [
+              {
+                id: "I_kwDOAbCdEs4AAAAN",
+                repository: { owner: "acme", name: "api" },
+                number: 13,
+                title: "Back off between retries",
+                state: "closed",
+              },
+              {
+                id: "I_kwDOBcDeFg4AAAAC",
+                repository: { owner: "vendor", name: "sdk" },
+                number: 2,
+                title: "Retry in the SDK",
+                state: "open",
+              },
+            ],
+            subIssuesSummary: { total: 2, completed: 1 },
+            issueDependenciesSummary: {
+              blockedBy: 1,
+              totalBlockedBy: 2,
+              blocking: 0,
+              totalBlocking: 1,
+            },
           },
           {
             id: "I_kwDOAbCdEs4AAAAH",
+            repository: { owner: "acme", name: "api" },
             number: 7,
             title: "Crash on start",
             state: "open",
+            url: "https://github.com/acme/api/issues/7",
+            updatedAt: "2026-09-18T17:40:12Z",
+            labels: [],
+            parent: undefined,
+            subIssues: [],
+            subIssuesSummary: { total: 0, completed: 0 },
+            issueDependenciesSummary: {
+              blockedBy: 0,
+              totalBlockedBy: 0,
+              blocking: 0,
+              totalBlocking: 0,
+            },
           },
         ],
+        closedIssueCount: 42,
         nextPage: "Y3Vyc29yOjI=",
       },
     });
@@ -286,16 +430,10 @@ describe("gh adapter", () => {
               data: {
                 viewer: { login: "octo-reader" },
                 repository: {
+                  closedIssues: { totalCount: 0 },
                   issues: {
                     pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjM=" },
-                    nodes: [
-                      {
-                        id: "I_kwDOAbCdEs4AAAAC",
-                        number: 2,
-                        title: "Empty state for new users",
-                        state: "OPEN",
-                      },
-                    ],
+                    nodes: [issueNode({ number: 2, title: "Empty state" })],
                   },
                 },
               },
@@ -307,25 +445,15 @@ describe("gh adapter", () => {
       ),
     });
 
-    expect(
-      await github.fetchOpenIssues(
-        { owner: "acme", name: "api" },
-        "Y3Vyc29yOjI=",
-      ),
-    ).toEqual({
-      ok: true,
-      value: {
-        issues: [
-          {
-            id: "I_kwDOAbCdEs4AAAAC",
-            number: 2,
-            title: "Empty state for new users",
-            state: "open",
-          },
-        ],
-        nextPage: undefined,
-      },
-    });
+    const page = await github.fetchOpenIssues(
+      { owner: "acme", name: "api" },
+      "Y3Vyc29yOjI=",
+    );
+
+    expect(page.ok && page.value.issues.map((issue) => issue.title)).toEqual([
+      "Empty state",
+    ]);
+    expect(page.ok && page.value.nextPage).toBeUndefined();
     expect(requests.map((request) => request.variables)).toEqual([
       { owner: "acme", name: "api", after: "Y3Vyc29yOjI=" },
     ]);
@@ -377,9 +505,10 @@ describe("gh adapter", () => {
             data: {
               viewer: { login: "octo-reader" },
               repository: {
+                closedIssues: { totalCount: 0 },
                 issues: {
                   pageInfo: { hasNextPage: false, endCursor: null },
-                  nodes: [{ id: "I_kwDOAbCdEs4AAAAB", number: "1" }],
+                  nodes: [{ ...issueNode({ number: 1 }), number: "1" }],
                 },
               },
             },
@@ -395,5 +524,138 @@ describe("gh adapter", () => {
       ok: false,
       error: { kind: "unexpected-response" },
     });
+  });
+
+  it("reads issues by node ID, from any repositories", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                nodes: [
+                  issueNode({
+                    id: "I_kwDOAbCdEs4AAAAN",
+                    number: 13,
+                    title: "Back off between retries",
+                    state: "CLOSED",
+                  }),
+                  issueNode({
+                    id: "I_kwDOBcDeFg4AAAAC",
+                    repository: "vendor/sdk",
+                    number: 2,
+                    title: "Retry in the SDK",
+                  }),
+                ],
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    const read = await github.fetchIssues([
+      "I_kwDOAbCdEs4AAAAN",
+      "I_kwDOBcDeFg4AAAAC",
+    ]);
+
+    expect(
+      read.ok &&
+        read.value.map(({ id, repository, number, title, state, url }) => ({
+          id,
+          repository,
+          number,
+          title,
+          state,
+          url,
+        })),
+    ).toEqual([
+      {
+        id: "I_kwDOAbCdEs4AAAAN",
+        repository: { owner: "acme", name: "api" },
+        number: 13,
+        title: "Back off between retries",
+        state: "closed",
+        url: "https://github.com/acme/api/issues/13",
+      },
+      {
+        id: "I_kwDOBcDeFg4AAAAC",
+        repository: { owner: "vendor", name: "sdk" },
+        number: 2,
+        title: "Retry in the SDK",
+        state: "open",
+        url: "https://github.com/vendor/sdk/issues/2",
+      },
+    ]);
+    expect(requests.map((request) => request.variables)).toEqual([
+      { ids: ["I_kwDOAbCdEs4AAAAN", "I_kwDOBcDeFg4AAAAC"] },
+    ]);
+  });
+
+  it("reports an issue ID GitHub cannot resolve", async () => {
+    const message =
+      "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'.";
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: {
+              viewer: { login: "octo-reader" },
+              nodes: [issueNode({ number: 13 }), null],
+            },
+            errors: [
+              {
+                type: "NOT_FOUND",
+                path: ["nodes", 1],
+                locations: [{ line: 1, column: 40 }],
+                message,
+              },
+            ],
+          }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    expect(
+      await github.fetchIssues(["I_kwDOAbCdEs4AAAAN", "I_kwDOAbCdEs4AAAAZ"]),
+    ).toEqual({ ok: false, error: { kind: "graphql", messages: [message] } });
+  });
+
+  it("reports a node it cannot read as an issue", async () => {
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 0,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: {
+              viewer: { login: "octo-reader" },
+              // A pull request's ID matches no field of `... on Issue`.
+              nodes: [issueNode({ number: 13 }), {}],
+            },
+          }),
+        ),
+        stderr: "",
+      }),
+    });
+
+    expect(
+      await github.fetchIssues(["I_kwDOAbCdEs4AAAAN", "PR_kwDOAbCdEs5AAAAB"]),
+    ).toEqual({ ok: false, error: { kind: "unexpected-response" } });
   });
 });

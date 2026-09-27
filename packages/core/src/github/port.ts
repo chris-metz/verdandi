@@ -1,4 +1,4 @@
-import type { RepositoryAddress } from "../contract.ts";
+import type { Label, RepositoryAddress } from "../contract.ts";
 
 /**
  * The GitHub-access port. Every GitHub read the core makes goes through it,
@@ -10,12 +10,18 @@ export interface GitHubAccess {
   fetchViewer(): Promise<GitHubResult<Viewer>>;
   /**
    * Reads one page of a repository's open issues, newest first: the first
-   * page, or the one after the `after` cursor of the previous page.
+   * page, or the one after the `after` cursor of the previous page. Each page
+   * also counts the repository's closed issues, without reading them.
    */
   fetchOpenIssues(
     repository: RepositoryAddress,
     after?: string,
   ): Promise<GitHubResult<IssuePage>>;
+  /**
+   * Reads up to 100 issues by node ID, from any repositories, e.g. closed
+   * sub-issues or the parent issue of an issue already read.
+   */
+  fetchIssues(ids: readonly string[]): Promise<GitHubResult<Issue[]>>;
 }
 
 export interface Viewer {
@@ -25,6 +31,38 @@ export interface Viewer {
 export interface Issue {
   /** GitHub's node ID. */
   id: string;
+  /** The repository it lives in. */
+  repository: RepositoryAddress;
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  /** Its page on github.com. */
+  url: string;
+  /** When it last changed, as an ISO 8601 timestamp. */
+  updatedAt: string;
+  labels: Label[];
+  /** Its parent issue, if it has one. */
+  parent: IssueReference | undefined;
+  /** Its sub-issues, in GitHub's order. */
+  subIssues: IssueReference[];
+  /** GitHub's `subIssuesSummary`. */
+  subIssuesSummary: { total: number; completed: number };
+  /**
+   * GitHub's `issueDependenciesSummary`: how many open issues block this one
+   * and how many it blocks, and the totals including closed ones.
+   */
+  issueDependenciesSummary: {
+    blockedBy: number;
+    totalBlockedBy: number;
+    blocking: number;
+    totalBlocking: number;
+  };
+}
+
+/** Another issue as a relationship names it, without reading it. */
+export interface IssueReference {
+  id: string;
+  repository: RepositoryAddress;
   number: number;
   title: string;
   state: "open" | "closed";
@@ -32,6 +70,8 @@ export interface Issue {
 
 export interface IssuePage {
   issues: Issue[];
+  /** How many closed issues the repository has. */
+  closedIssueCount: number;
   /** The cursor to read the next page after, or none on the last page. */
   nextPage: string | undefined;
 }

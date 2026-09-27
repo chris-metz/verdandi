@@ -33,6 +33,10 @@ const core = createCore({
 });
 
 wireContract(core);
+// The renderer's one way to open a link, e.g. `o` on an issue.
+ipcMain.on(ipcChannels.openExternal, (_event, url: unknown) => {
+  if (typeof url === "string") openExternal(url);
+});
 
 void app.whenReady().then(() => {
   createWindow();

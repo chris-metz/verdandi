@@ -1,5 +1,14 @@
+import type { Label } from "../contract.ts";
+import { isObject } from "../json.ts";
+import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandRunner } from "./command-runner.ts";
-import type { GitHubAccess, GitHubResult, Issue, IssuePage } from "./port.ts";
+import type {
+  GitHubAccess,
+  GitHubResult,
+  Issue,
+  IssuePage,
+  IssueReference,
+} from "./port.ts";
 
 export interface GhAdapterOptions {
   runCommand: CommandRunner;
@@ -7,6 +16,23 @@ export interface GhAdapterOptions {
 
 /** The most issues GitHub returns in one page. */
 const issuesPerPage = 100;
+
+/** Another issue as a relationship names it. */
+const referenceFields = "id number title state repository { nameWithOwner }";
+
+/**
+ * What Verdandi reads of an issue for a list. A parent has at most 100
+ * sub-issues, and an issue at most 100 labels, so one page of each is all.
+ */
+const issueFields = `
+  id number title state url updatedAt
+  repository { nameWithOwner }
+  labels(first: 100) { nodes { name color } }
+  parent { ${referenceFields} }
+  subIssuesSummary { total completed }
+  issueDependenciesSummary { blockedBy blocking totalBlockedBy totalBlocking }
+  subIssues(first: 100) { nodes { ${referenceFields} } }
+`;
 
 /** The GitHub-access port implemented with `gh api`. */
 export function createGhAdapter({
@@ -91,7 +117,10 @@ export function createGhAdapter({
     },
     async fetchOpenIssues({ owner, name }, after) {
       const result = await graphql(
+        // Ordered by creation, which never changes while the pages are
+        // read; the list orders its issues itself.
         `repository(owner: $owner, name: $name) {
+          closedIssues: issues(states: CLOSED) { totalCount }
           issues(
             states: OPEN
             first: ${String(issuesPerPage)}
@@ -99,7 +128,7 @@ export function createGhAdapter({
             orderBy: { field: CREATED_AT, direction: DESC }
           ) {
             pageInfo { hasNextPage endCursor }
-            nodes { id number title state }
+            nodes { ${issueFields} }
           }
         }`,
         {
@@ -113,12 +142,25 @@ export function createGhAdapter({
       if (!page) return { ok: false, error: { kind: "unexpected-response" } };
       return { ok: true, value: page };
     },
+    async fetchIssues(ids) {
+      const result = await graphql(
+        `nodes(ids: $ids) { ... on Issue { ${issueFields} } }`,
+        { ids: { type: "[ID!]!", value: ids } },
+      );
+      if (!result.ok) return result;
+      const nodes = (result.value.data as { nodes?: unknown } | undefined)
+        ?.nodes;
+      const issues = Array.isArray(nodes) ? readIssues(nodes) : undefined;
+      if (!issues) return { ok: false, error: { kind: "unexpected-response" } };
+      return { ok: true, value: issues };
+    },
   };
 }
 
 /** The `data` of an issue page query, as far as it can be trusted. */
 interface IssuePageData {
   repository?: {
+    closedIssues?: { totalCount?: unknown };
     issues?: {
       pageInfo?: { hasNextPage?: unknown; endCursor?: unknown };
       nodes?: unknown;
@@ -128,10 +170,16 @@ interface IssuePageData {
 
 /** Reads a page of issues, or `undefined` if it is not one. */
 function readIssuePage(data: unknown): IssuePage | undefined {
-  const connection = (data as IssuePageData | undefined)?.repository?.issues;
+  const repository = (data as IssuePageData | undefined)?.repository;
+  const connection = repository?.issues;
   const nodes = connection?.nodes;
+  const closedIssueCount = repository?.closedIssues?.totalCount;
   const { hasNextPage, endCursor } = connection?.pageInfo ?? {};
-  if (!Array.isArray(nodes) || typeof hasNextPage !== "boolean") {
+  if (
+    !Array.isArray(nodes) ||
+    typeof hasNextPage !== "boolean" ||
+    typeof closedIssueCount !== "number"
+  ) {
     return undefined;
   }
   let nextPage: string | undefined;
@@ -139,28 +187,129 @@ function readIssuePage(data: unknown): IssuePage | undefined {
     if (typeof endCursor !== "string") return undefined;
     nextPage = endCursor;
   }
+  const issues = readIssues(nodes);
+  if (!issues) return undefined;
+  return { issues, closedIssueCount, nextPage };
+}
+
+/** Reads issue nodes, or `undefined` if any is not one. */
+function readIssues(nodes: unknown[]): Issue[] | undefined {
   const issues: Issue[] = [];
   for (const node of nodes) {
     const issue = readIssue(node);
     if (!issue) return undefined;
     issues.push(issue);
   }
-  return { issues, nextPage };
+  return issues;
 }
 
 /** Reads one issue node, or `undefined` if it is not one. */
 function readIssue(node: unknown): Issue | undefined {
-  if (typeof node !== "object" || node === null) return undefined;
-  const { id, number, title, state } = node as Record<string, unknown>;
+  const reference = readReference(node);
+  if (!reference || !isObject(node)) return undefined;
+  const { url, updatedAt, labels, parent, subIssues } = node;
+  const subIssuesSummary = readCounts(node.subIssuesSummary, [
+    "total",
+    "completed",
+  ]);
+  const issueDependenciesSummary = readCounts(node.issueDependenciesSummary, [
+    "blockedBy",
+    "totalBlockedBy",
+    "blocking",
+    "totalBlocking",
+  ]);
+  const labelList = readNodes(labels, readLabel);
+  const subIssueList = readNodes(subIssues, readReference);
+  const parentReference = parent === null ? null : readReference(parent);
+  if (
+    typeof url !== "string" ||
+    typeof updatedAt !== "string" ||
+    !subIssuesSummary ||
+    !issueDependenciesSummary ||
+    !labelList ||
+    !subIssueList ||
+    parentReference === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...reference,
+    url,
+    updatedAt,
+    labels: labelList,
+    parent: parentReference ?? undefined,
+    subIssues: subIssueList,
+    subIssuesSummary,
+    issueDependenciesSummary,
+  };
+}
+
+/** Reads a related issue, or `undefined` if it is not one. */
+function readReference(node: unknown): IssueReference | undefined {
+  if (!isObject(node)) return undefined;
+  const { id, number, title, state } = node;
+  const nameWithOwner = isObject(node.repository)
+    ? node.repository.nameWithOwner
+    : undefined;
+  const repository =
+    typeof nameWithOwner === "string"
+      ? parseRepositoryAddress(nameWithOwner)
+      : undefined;
   if (
     typeof id !== "string" ||
     typeof number !== "number" ||
     typeof title !== "string" ||
-    (state !== "OPEN" && state !== "CLOSED")
+    (state !== "OPEN" && state !== "CLOSED") ||
+    !repository
   ) {
     return undefined;
   }
-  return { id, number, title, state: state === "OPEN" ? "open" : "closed" };
+  return {
+    id,
+    repository,
+    number,
+    title,
+    state: state === "OPEN" ? "open" : "closed",
+  };
+}
+
+function readLabel(node: unknown): Label | undefined {
+  if (!isObject(node)) return undefined;
+  const { name, color } = node;
+  if (typeof name !== "string" || typeof color !== "string") return undefined;
+  return { name, color };
+}
+
+/** Reads a connection's `nodes`, or `undefined` if any is unreadable. */
+function readNodes<T>(
+  connection: unknown,
+  read: (node: unknown) => T | undefined,
+): T[] | undefined {
+  if (!isObject(connection) || !Array.isArray(connection.nodes)) {
+    return undefined;
+  }
+  const values: T[] = [];
+  for (const node of connection.nodes) {
+    const value = read(node);
+    if (value === undefined) return undefined;
+    values.push(value);
+  }
+  return values;
+}
+
+/** Reads an object of counts, or `undefined` if one is not a number. */
+function readCounts<K extends string>(
+  value: unknown,
+  keys: K[],
+): Record<K, number> | undefined {
+  if (!isObject(value)) return undefined;
+  const counts = {} as Record<K, number>;
+  for (const key of keys) {
+    const count = value[key];
+    if (typeof count !== "number") return undefined;
+    counts[key] = count;
+  }
+  return counts;
 }
 
 /** A GraphQL response body, as far as it can be trusted. */

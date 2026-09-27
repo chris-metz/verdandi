@@ -29,6 +29,10 @@ export function createCore({ github, settings }: CoreOptions): Contract {
   const lists = createIssueLists({
     store: createIssueStore(),
     request,
+    trackedRepositories: async () => {
+      const result = await settings.read();
+      return result.ok ? result.value.repositories : [];
+    },
     push: (list) => {
       events.emit("listChanged", list);
     },
@@ -60,6 +64,14 @@ export function createCore({ github, settings }: CoreOptions): Contract {
     },
     openList(scope) {
       lists.open(scope);
+      return Promise.resolve();
+    },
+    setExpanded(scope, issueId, expanded) {
+      lists.setExpanded(scope, issueId, expanded);
+      return Promise.resolve();
+    },
+    setAllExpanded(scope, expanded) {
+      lists.setAllExpanded(scope, expanded);
       return Promise.resolve();
     },
     on: events.on,

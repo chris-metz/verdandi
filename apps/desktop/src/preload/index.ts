@@ -4,7 +4,7 @@ import {
   type CoreEventName,
 } from "@verdandi/core/contract";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { ipcChannels } from "../shared/ipc";
+import { ipcChannels, type DesktopApi } from "../shared/ipc";
 
 const requests = Object.fromEntries(
   requestNames.map((name) => [
@@ -29,3 +29,11 @@ const api = {
 } as Contract;
 
 contextBridge.exposeInMainWorld("verdandi", api);
+
+const desktop: DesktopApi = {
+  openExternal(url) {
+    ipcRenderer.send(ipcChannels.openExternal, url);
+  },
+};
+
+contextBridge.exposeInMainWorld("desktop", desktop);

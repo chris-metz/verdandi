@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { RepositoryAddress } from "../contract.ts";
 import { userDataDirectory, type HostEnvironment } from "../directories.ts";
+import { isObject } from "../json.ts";
+import { parseRepositoryAddress } from "../repository-address.ts";
 import type { Settings, SettingsResult, SettingsStorage } from "./port.ts";
 
 /**
@@ -53,7 +55,7 @@ function readSettings(json: unknown): Settings | string {
   for (const [index, entry] of repositories.entries()) {
     const address =
       isObject(entry) && typeof entry.name === "string"
-        ? parseAddress(entry.name)
+        ? parseRepositoryAddress(entry.name)
         : undefined;
     if (!address) {
       return `repositories[${String(index)}].name is not "owner/name".`;
@@ -61,15 +63,4 @@ function readSettings(json: unknown): Settings | string {
     addresses.push(address);
   }
   return { repositories: addresses };
-}
-
-/** Splits `owner/name`, if it is one. */
-function parseAddress(nameWithOwner: string): RepositoryAddress | undefined {
-  const [owner, name, ...rest] = nameWithOwner.split("/");
-  if (!owner || !name || rest.length > 0) return undefined;
-  return { owner, name };
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
