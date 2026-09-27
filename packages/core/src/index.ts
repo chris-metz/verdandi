@@ -9,6 +9,7 @@ export type {
   Issue,
   IssuePage,
   IssueReference,
+  RepositorySummary,
   Viewer,
 } from "./github/port.ts";
 export { runCommand } from "./github/run-command.ts";

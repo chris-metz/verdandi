@@ -2,13 +2,14 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Account,
   Contract,
   IssueList,
   IssueNode,
   Scope,
+  SidebarEntries,
 } from "./contract.ts";
 import { createCore } from "./core.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
@@ -78,6 +79,53 @@ async function nextList(
   });
   await act();
   return pushed;
+}
+
+/** The sidebar pushed next, after `act`. */
+async function nextSidebar(
+  core: Contract,
+  act: () => Promise<unknown>,
+): Promise<SidebarEntries> {
+  const pushed = new Promise<SidebarEntries>((resolve) => {
+    const unsubscribe = core.on("sidebarChanged", (sidebar) => {
+      unsubscribe();
+      resolve(sidebar);
+    });
+  });
+  await act();
+  return pushed;
+}
+
+/** Reads the sidebar and waits until no count is being read any more. */
+async function readUntilCounted(core: Contract): Promise<SidebarEntries> {
+  const settled = new Promise<SidebarEntries>((resolve) => {
+    const unsubscribe = core.on("sidebarChanged", (sidebar) => {
+      if (
+        sidebar.status === "failed" ||
+        sidebar.repositories.every(
+          ({ openIssues }) => openIssues.status !== "loading",
+        )
+      ) {
+        unsubscribe();
+        resolve(sidebar);
+      }
+    });
+  });
+  await core.getSidebar();
+  return settled;
+}
+
+/**
+ * The sidebar's tracked repositories as a user reads them: `owner/name` and
+ * the open-issue count, "–" while it is unknown.
+ */
+function sidebarLines(sidebar: SidebarEntries): string[] {
+  if (sidebar.status === "failed") return [sidebar.message];
+  return sidebar.repositories.map(({ repository, openIssues }) => {
+    const count =
+      openIssues.status === "known" ? String(openIssues.count) : "–";
+    return `${repository.owner}/${repository.name} ${count}`;
+  });
 }
 
 /** The issues of a list whose sub-issues are collapsed, by reference. */
@@ -216,14 +264,11 @@ describe("sidebar", () => {
     });
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
-    expect(await core.getSidebar()).toEqual({
-      status: "read",
-      repositories: [
-        { owner: "acme", name: "web" },
-        { owner: "acme", name: "api" },
-        { owner: "octo-org", name: "tools" },
-      ],
-    });
+    expect(sidebarLines(await core.getSidebar())).toEqual([
+      "acme/web –",
+      "acme/api –",
+      "octo-org/tools –",
+    ]);
   });
 
   it("reads the settings file from this platform's user data directory", async () => {
@@ -249,10 +294,7 @@ describe("sidebar", () => {
       }),
     });
 
-    expect(await core.getSidebar()).toEqual({
-      status: "read",
-      repositories: [{ owner: "acme", name: "api" }],
-    });
+    expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api –"]);
   });
 
   it("says where the settings file is when it is not JSON", async () => {
@@ -291,6 +333,321 @@ describe("sidebar", () => {
         `Cannot read ${join(home, "settings.json")}:`,
       ) as unknown,
     });
+  });
+});
+
+describe("sidebar counts", () => {
+  it("reads every tracked repository's open-issue count in one request, without loading their issues", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [
+        { name: "acme/api" },
+        { name: "acme/web" },
+        { name: "octo-org/tools" },
+      ],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Retry webhooks" },
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    github.addRepository("octo-org/tools", []);
+    const core = createTestCore(github);
+
+    let read: SidebarEntries | undefined;
+    const pushed = await nextSidebar(core, async () => {
+      read = await core.getSidebar();
+    });
+
+    expect(read).toEqual({
+      status: "read",
+      repositories: [
+        {
+          repository: { owner: "acme", name: "api" },
+          openIssues: { status: "loading" },
+        },
+        {
+          repository: { owner: "acme", name: "web" },
+          openIssues: { status: "loading" },
+        },
+        {
+          repository: { owner: "octo-org", name: "tools" },
+          openIssues: { status: "loading" },
+        },
+      ],
+    });
+    expect(sidebarLines(pushed)).toEqual([
+      "acme/api 2",
+      "acme/web 1",
+      "octo-org/tools 0",
+    ]);
+    expect(github.requestsReceived).toBe(1);
+    // That one request read no issues.
+    expect(github.requestsFor("acme/api")).toBe(0);
+    expect(github.requestsFor("acme/web")).toBe(0);
+    expect(github.requestsFor("octo-org/tools")).toBe(0);
+  });
+
+  it("reads the counts of more than 100 tracked repositories 100 at a time", async () => {
+    const names = Array.from(
+      { length: 150 },
+      (_, index) => `acme/service-${String(index + 1)}`,
+    );
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: "Crash on start" }]);
+    }
+    const core = createTestCore(github);
+
+    const sidebar = await readUntilCounted(core);
+
+    expect(sidebarLines(sidebar)).toHaveLength(150);
+    expect(
+      sidebarLines(sidebar).filter((line) => !line.endsWith(" 1")),
+    ).toEqual([]);
+    expect(github.requestsReceived).toBe(2);
+  });
+
+  it("keeps the other counts when GitHub cannot read one tracked repository", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [
+        { name: "acme/api" },
+        { name: "acme/gone" },
+        { name: "acme/web" },
+      ],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    const core = createTestCore(github);
+
+    expect(await readUntilCounted(core)).toEqual({
+      status: "read",
+      repositories: [
+        {
+          repository: { owner: "acme", name: "api" },
+          openIssues: { status: "known", count: 1 },
+        },
+        {
+          repository: { owner: "acme", name: "gone" },
+          openIssues: {
+            status: "failed",
+            message:
+              "GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+          },
+        },
+        {
+          repository: { owner: "acme", name: "web" },
+          openIssues: { status: "known", count: 2 },
+        },
+      ],
+    });
+    expect(github.requestsReceived).toBe(1);
+  });
+
+  it("says why no count could be read when GitHub cannot be asked", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.failWith({ kind: "gh-not-found" });
+    const core = createTestCore(github);
+
+    const sidebar = await readUntilCounted(core);
+
+    expect(
+      sidebar.status === "read" &&
+        sidebar.repositories.map(({ openIssues }) => openIssues),
+    ).toEqual([
+      {
+        status: "failed",
+        message: "GitHub CLI (gh) was not found on PATH.",
+      },
+      {
+        status: "failed",
+        message: "GitHub CLI (gh) was not found on PATH.",
+      },
+    ]);
+  });
+
+  it("updates a count when its repository's list loads, without asking GitHub again", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+    expect(sidebarLines(await readUntilCounted(core))).toEqual([
+      "acme/api 1",
+      "acme/web 1",
+    ]);
+
+    github.addRepository("acme/api", [
+      { number: 3, title: "Retry webhooks" },
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const pushed = await nextSidebar(core, () =>
+      openUntilLoaded(core, acmeApi),
+    );
+
+    expect(sidebarLines(pushed)).toEqual(["acme/api 3", "acme/web 1"]);
+    // The counts, then the list's one page.
+    expect(github.requestsReceived).toBe(2);
+  });
+
+  it("takes a count GitHub could not read at first from the repository's list", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+    expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api –"]);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const pushed = await nextSidebar(core, () =>
+      openUntilLoaded(core, acmeApi),
+    );
+
+    expect(sidebarLines(pushed)).toEqual(["acme/api 2"]);
+  });
+
+  it("keeps the count a list gave over an older one that arrives after it", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    github.pause("fetchRepositorySummaries");
+
+    // GitHub counts one open issue, but its answer is slow to arrive.
+    await core.getSidebar();
+    github.addRepository("acme/api", [
+      { number: 3, title: "Retry webhooks" },
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const loaded = await nextSidebar(core, () =>
+      openUntilLoaded(core, acmeApi),
+    );
+    expect(sidebarLines(loaded)).toEqual(["acme/api 3"]);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+    github.resume();
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+
+    expect(pushed.map(sidebarLines)).not.toContainEqual(["acme/api 1"]);
+    expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api 3"]);
+  });
+
+  it("keeps the count a list gave when the counts asked for before it fail", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+    github.pause("fetchRepositorySummaries");
+
+    // GitHub cannot resolve acme/api yet, but its answer is slow to arrive.
+    await core.getSidebar();
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    await openUntilLoaded(core, acmeApi);
+    github.resume();
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+
+    expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api 2"]);
+  });
+
+  it("pushes the sidebar only when a count changes", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Usage endpoint" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+
+    await openUntilLoaded(core, acmeApi);
+    await core.setExpanded(acmeApi, "I_acme/api#1", false);
+    await openUntilLoaded(core, acmeApi);
+
+    expect(pushed).toEqual([]);
+  });
+
+  it("asks again only for the counts it could not read, the next time the sidebar is read", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    expect(sidebarLines(await readUntilCounted(core))).toEqual([
+      "acme/api 1",
+      "acme/web –",
+    ]);
+
+    github.addRepository("acme/web", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    github.addRepository("acme/api", [
+      { number: 2, title: "Retry webhooks" },
+      { number: 1, title: "Crash on start" },
+    ]);
+
+    // acme/api's count is known for the session; only acme/web's is asked.
+    expect(sidebarLines(await readUntilCounted(core))).toEqual([
+      "acme/api 1",
+      "acme/web 2",
+    ]);
+    expect(github.requestsReceived).toBe(2);
+  });
+
+  it("asks for the counts once when the sidebar is read twice at once", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    github.pause();
+
+    const counted = readUntilCounted(core);
+    await core.getSidebar();
+    github.resume();
+
+    expect(sidebarLines(await counted)).toEqual(["acme/api 1"]);
+    expect(github.requestsReceived).toBe(1);
+  });
+
+  it("asks GitHub nothing while no repository is tracked", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+
+    await core.getSidebar();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(github.requestsReceived).toBe(0);
   });
 });
 

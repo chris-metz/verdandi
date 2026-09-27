@@ -15,4 +15,9 @@ export const ipcChannels = {
 export interface DesktopApi {
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
+  /** The operating system, e.g. for ⌘ or Ctrl in shortcuts. */
+  platform: Platform;
 }
+
+/** The operating systems Verdandi runs on, as Node names them. */
+export type Platform = "darwin" | "win32" | "linux";

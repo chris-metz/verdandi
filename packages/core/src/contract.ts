@@ -27,9 +27,28 @@ export interface RepositoryAddress {
 export type SidebarEntries =
   | {
       status: "read";
-      /** The tracked repositories, in the settings file's order. */
-      repositories: RepositoryAddress[];
+      /**
+       * The Repositories section: the tracked repositories, in the settings
+       * file's order.
+       */
+      repositories: RepositoryEntry[];
     }
+  | { status: "failed"; message: string };
+
+/** A tracked repository as the sidebar lists it. */
+export interface RepositoryEntry {
+  /** Its address, as the settings file names it. */
+  repository: RepositoryAddress;
+  openIssues: OpenIssueCount;
+}
+
+/**
+ * How many open issues a tracked repository has: known once GitHub has said,
+ * and unknown while it is being asked or when asking failed.
+ */
+export type OpenIssueCount =
+  | { status: "loading" }
+  | { status: "known"; count: number }
   | { status: "failed"; message: string };
 
 /** What a list in the main area shows: so far, a tracked repository. */
@@ -143,7 +162,12 @@ export interface IssueList {
 export interface CoreRequests {
   /** Which account Verdandi reads GitHub as. */
   getAccount: () => Promise<AccountStatus>;
-  /** What the sidebar lists. It sends no GitHub requests. */
+  /**
+   * What the sidebar lists, read from the settings file. Open-issue counts
+   * the core does not know yet are asked for in one request for all of them,
+   * without reading any issues, and arrive as `sidebarChanged`. A count that
+   * could not be read is asked for again the next time.
+   */
   getSidebar: () => Promise<SidebarEntries>;
   /**
    * Opens a scope's list. Its current state is pushed as `listChanged` at
@@ -175,6 +199,11 @@ export interface CoreEvents {
   accountChanged: Account;
   /** A list's state, when it is opened and whenever it changes. */
   listChanged: IssueList;
+  /**
+   * The sidebar as last read, whenever an open-issue count changes: when
+   * counts arrive, and when a repository's list loads with a new count.
+   */
+  sidebarChanged: SidebarEntries;
 }
 
 export type CoreEventName = keyof CoreEvents;
@@ -198,6 +227,7 @@ const requests: Record<keyof CoreRequests, true> = {
 const events: Record<CoreEventName, true> = {
   accountChanged: true,
   listChanged: true,
+  sidebarChanged: true,
 };
 
 /** Every request name, for wiring the contract to a transport. */

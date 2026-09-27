@@ -5,6 +5,7 @@ import type {
   GitHubResult,
   Issue,
   IssueReference,
+  RepositorySummary,
 } from "../github/port.ts";
 
 /**
@@ -34,17 +35,23 @@ export interface FakeGitHub extends GitHubAccess {
   signInAs(login: string): void;
   /**
    * Adds a repository, `owner/name`, with its issues, open and closed,
-   * newest first.
+   * newest first. Adding it again replaces its issues.
    */
   addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
   /** Every request fails with this error from now on. */
   failWith(error: GitHubError): void;
-  /** Requests stay unanswered until `resume`. */
-  pause(): void;
-  /** Answers every paused request, and later ones at once. */
+  /**
+   * Answers stay undelivered until `resume`: those of every request, or only
+   * of requests to one method. GitHub still answers from what it holds when
+   * a request arrives.
+   */
+  pause(method?: keyof GitHubAccess): void;
+  /** Delivers every paused answer, and later ones at once. */
   resume(): void;
   /** How many requests GitHub has received but not yet answered. */
   readonly requestsInFlight: number;
+  /** How many requests GitHub has received so far, of any kind. */
+  readonly requestsReceived: number;
   /**
    * How many requests so far asked about a repository, `owner/name`: for its
    * open issues, or for issues including one of its own.
@@ -68,17 +75,30 @@ export function createFakeGitHub({
   const repositories = new Map<string, FakeIssue[]>();
   let failure: GitHubError | undefined;
   let paused: PromiseWithResolvers<void> | undefined;
+  /** The one method whose answers are paused, or none for all. */
+  let pausedMethod: keyof GitHubAccess | undefined;
   let requestsInFlight = 0;
+  let requestsReceived = 0;
+  /** Each repository's numeric ID, by `owner/name`. */
+  const repositoryIds = new Map<string, number>();
   const repositoryRequests = new Map<string, number>();
 
-  /** Receives one request and answers it once GitHub is not paused. */
+  /**
+   * Receives one request to a method and answers it as of now, delivering the
+   * answer once that method is not paused.
+   */
   async function answer<T>(
+    method: keyof GitHubAccess,
     respond: () => GitHubResult<T>,
   ): Promise<GitHubResult<T>> {
+    requestsReceived++;
     requestsInFlight++;
-    await paused?.promise;
+    const answered: GitHubResult<T> = failure
+      ? { ok: false, error: failure }
+      : respond();
+    if ((pausedMethod ?? method) === method) await paused?.promise;
     requestsInFlight--;
-    return failure ? { ok: false, error: failure } : respond();
+    return answered;
   }
 
   function countRequestFor(nameWithOwner: string) {
@@ -152,12 +172,16 @@ export function createFakeGitHub({
     },
     addRepository(nameWithOwner, issues) {
       repositories.set(nameWithOwner, issues);
+      if (!repositoryIds.has(nameWithOwner)) {
+        repositoryIds.set(nameWithOwner, 1000001 + repositoryIds.size);
+      }
     },
     failWith(error) {
       failure = error;
     },
-    pause() {
+    pause(method) {
       paused ??= Promise.withResolvers();
+      pausedMethod = method;
     },
     resume() {
       paused?.resolve();
@@ -166,16 +190,22 @@ export function createFakeGitHub({
     get requestsInFlight() {
       return requestsInFlight;
     },
+    get requestsReceived() {
+      return requestsReceived;
+    },
     requestsFor(nameWithOwner) {
       return repositoryRequests.get(nameWithOwner) ?? 0;
     },
     fetchViewer() {
-      return answer(() => ({ ok: true, value: { login: viewer } }));
+      return answer("fetchViewer", () => ({
+        ok: true,
+        value: { login: viewer },
+      }));
     },
     fetchOpenIssues({ owner, name }, after) {
       const nameWithOwner = `${owner}/${name}`;
       countRequestFor(nameWithOwner);
-      return answer(() => {
+      return answer("fetchOpenIssues", () => {
         const issues = repositories.get(nameWithOwner);
         if (!issues) {
           return {
@@ -211,7 +241,7 @@ export function createFakeGitHub({
       )) {
         if (nameWithOwner) countRequestFor(nameWithOwner);
       }
-      return answer(() => {
+      return answer("fetchIssues", () => {
         if (ids.length > 100) {
           return {
             ok: false,
@@ -238,6 +268,52 @@ export function createFakeGitHub({
           issues.push(read(ref.split("#")[0] ?? "", issue));
         }
         return { ok: true, value: issues };
+      });
+    },
+    fetchRepositorySummaries(addresses) {
+      return answer("fetchRepositorySummaries", () => {
+        if (addresses.length > 100) {
+          return {
+            ok: false,
+            error: {
+              kind: "graphql",
+              messages: ["The fake GitHub reads at most 100 repositories."],
+            },
+          };
+        }
+        return {
+          ok: true,
+          value: addresses.map(
+            ({ owner, name }): GitHubResult<RepositorySummary> => {
+              const nameWithOwner = `${owner}/${name}`;
+              const issues = repositories.get(nameWithOwner);
+              const id = repositoryIds.get(nameWithOwner);
+              if (!issues || id === undefined) {
+                return {
+                  ok: false,
+                  error: {
+                    kind: "graphql",
+                    messages: [
+                      `Could not resolve to a Repository with the name '${nameWithOwner}'.`,
+                    ],
+                  },
+                };
+              }
+              return {
+                ok: true,
+                value: {
+                  id,
+                  repository: { owner, name },
+                  openIssueCount: issues.filter(
+                    (issue) => issue.state !== "closed",
+                  ).length,
+                  hasIssuesEnabled: true,
+                  isArchived: false,
+                },
+              };
+            },
+          ),
+        };
       });
     },
   };

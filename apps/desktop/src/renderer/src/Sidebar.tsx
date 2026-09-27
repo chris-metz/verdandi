@@ -3,26 +3,55 @@ import type {
   Scope,
   SidebarEntries,
 } from "@verdandi/core/contract";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
+import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
 import { repositoryLabel, sameScope } from "./scope";
+import { countLabel, type SidebarItem } from "./sidebar-entries";
 
-/** The tracked repositories, in the settings file's order, and the account. */
+/**
+ * The sidebar's sections, Repositories and Views, then the account. Entries
+ * are selected by click or by the keys the window handles; the sidebar pane
+ * itself holds the keyboard, not its entries.
+ */
 export function Sidebar({
+  sidebar,
+  items,
   selected,
   onSelect,
+  focused,
+  shortcutsShown,
+  modifier,
 }: {
+  sidebar: SidebarEntries | undefined;
+  /** The sidebar's entries, in visual order. */
+  items: readonly SidebarItem[];
   selected: Scope | undefined;
   onSelect: (scope: Scope) => void;
+  /** Whether the sidebar has the keyboard. */
+  focused: boolean;
+  /** Whether entries show their ⌘/Ctrl+1…9 shortcut instead of the count. */
+  shortcutsShown: boolean;
+  modifier: ShortcutModifier;
 }) {
-  const sidebar = useSidebar();
+  const nav = useRef<HTMLElement>(null);
+
+  // A selection moved by keyboard stays in sight.
+  useLayoutEffect(() => {
+    nav.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      <nav aria-label="Sidebar" className="min-h-0 flex-1 overflow-y-auto p-2">
-        <h2 className="px-2 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">
-          Repositories
-        </h2>
+    <>
+      <nav
+        ref={nav}
+        aria-label="Sidebar"
+        className="min-h-0 flex-1 overflow-y-auto p-2"
+      >
+        <SectionHeading>Repositories</SectionHeading>
         {sidebar === undefined ? null : sidebar.status === "failed" ? (
           <p
             role="alert"
@@ -30,40 +59,108 @@ export function Sidebar({
           >
             {sidebar.message}
           </p>
-        ) : sidebar.repositories.length === 0 ? (
+        ) : items.length === 0 ? (
           <p className="px-2 py-1 text-muted-foreground">
             No tracked repositories
           </p>
         ) : (
-          <ul className="flex flex-col gap-px">
-            {sidebar.repositories.map((repository, index) => {
-              const scope: Scope = { kind: "repository", repository };
-              const isSelected =
-                selected !== undefined && sameScope(scope, selected);
-              return (
-                <li key={`${String(index)}:${repositoryLabel(repository)}`}>
-                  <button
-                    type="button"
-                    aria-current={isSelected ? "true" : undefined}
-                    onClick={() => {
-                      onSelect(scope);
-                    }}
-                    className={cn(
-                      "w-full truncate rounded-md px-2 py-1 text-left hover:bg-sidebar-accent",
-                      isSelected &&
-                        "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
-                    )}
-                  >
-                    {repositoryLabel(repository)}
-                  </button>
-                </li>
-              );
-            })}
+          <ul
+            role="listbox"
+            aria-label="Repositories"
+            className="flex flex-col gap-px"
+          >
+            {items.map((item, position) => (
+              <RepositoryItem
+                key={`${String(position)}:${repositoryLabel(item.scope.repository)}`}
+                item={item}
+                selected={
+                  selected !== undefined && sameScope(item.scope, selected)
+                }
+                focused={focused}
+                shortcut={
+                  shortcutsShown ? entryShortcut(position, modifier) : undefined
+                }
+                onSelect={() => {
+                  onSelect(item.scope);
+                }}
+              />
+            ))}
           </ul>
         )}
+        {/* Empty until views arrive. */}
+        <SectionHeading>Views</SectionHeading>
       </nav>
       <Account />
-    </aside>
+    </>
+  );
+}
+
+function SectionHeading({ children }: { children: string }) {
+  return (
+    <h2 className="px-2 pt-3 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase first:pt-1">
+      {children}
+    </h2>
+  );
+}
+
+/**
+ * A tracked repository: its name, the owner on a second line, and the
+ * open-issue count, or the entry's shortcut while the modifier is held.
+ */
+function RepositoryItem({
+  item: {
+    scope: { repository },
+    openIssues,
+  },
+  selected,
+  focused,
+  shortcut,
+  onSelect,
+}: {
+  item: SidebarItem;
+  selected: boolean;
+  focused: boolean;
+  shortcut: string | undefined;
+  onSelect: () => void;
+}) {
+  return (
+    <li
+      role="option"
+      aria-selected={selected}
+      title={repositoryLabel(repository)}
+      onClick={onSelect}
+      className={cn(
+        "flex min-h-10 items-center gap-2 rounded-md px-2 py-1 select-none",
+        selected
+          ? focused
+            ? "bg-selection shadow-[inset_2px_0_0_var(--selection-edge)]"
+            : "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "hover:bg-sidebar-accent",
+      )}
+    >
+      <span className="flex min-w-0 flex-1 flex-col leading-tight">
+        <span className={cn("truncate", selected && "font-medium")}>
+          {repository.name}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {repository.owner}
+        </span>
+      </span>
+      {shortcut ? (
+        <kbd className="shrink-0 rounded border border-b-2 bg-background px-1 font-mono text-[11px] text-muted-foreground">
+          {shortcut}
+        </kbd>
+      ) : (
+        <span
+          title={
+            openIssues.status === "failed" ? openIssues.message : undefined
+          }
+          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+        >
+          {countLabel(openIssues)}
+        </span>
+      )}
+    </li>
   );
 }
 
@@ -90,14 +187,23 @@ function Account() {
   );
 }
 
-/** What the sidebar lists, once the core has read the settings file. */
-function useSidebar(): SidebarEntries | undefined {
+/**
+ * What the sidebar lists, as the core last read or pushed it. Counts arrive
+ * as pushes after the first read.
+ */
+export function useSidebar(): SidebarEntries | undefined {
   const [sidebar, setSidebar] = useState<SidebarEntries>();
   useEffect(() => {
     let current = true;
+    // A push is newer than the answer to a read that started before it.
+    let pushed = false;
+    const unsubscribe = window.verdandi.on("sidebarChanged", (changed) => {
+      pushed = true;
+      setSidebar(changed);
+    });
     window.verdandi.getSidebar().then(
       (read) => {
-        if (current) setSidebar(read);
+        if (current && !pushed) setSidebar(read);
       },
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -106,6 +212,7 @@ function useSidebar(): SidebarEntries | undefined {
     );
     return () => {
       current = false;
+      unsubscribe();
     };
   }, []);
   return sidebar;

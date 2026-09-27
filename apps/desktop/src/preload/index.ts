@@ -34,6 +34,11 @@ const desktop: DesktopApi = {
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
   },
+  // Other Unix systems, which Electron does not ship for, count as Linux.
+  platform:
+    process.platform === "darwin" || process.platform === "win32"
+      ? process.platform
+      : "linux",
 };
 
 contextBridge.exposeInMainWorld("desktop", desktop);

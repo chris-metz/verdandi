@@ -22,7 +22,24 @@ export interface GitHubAccess {
    * sub-issues or the parent issue of an issue already read.
    */
   fetchIssues(ids: readonly string[]): Promise<GitHubResult<Issue[]>>;
+  /**
+   * Reads what the sidebar shows of up to 100 repositories, without reading
+   * any issues. GitHub follows renames and transfers. A repository GitHub
+   * cannot resolve or read gets its own error, in its place among the
+   * others, which are still read.
+   */
+  fetchRepositorySummaries(
+    repositories: readonly RepositoryAddress[],
+  ): Promise<GitHubResult<GitHubResult<RepositorySummary>[]>>;
 }
+
+/**
+ * Sends one GitHub request through the core's request queue, which schedules
+ * them all. The core's modules take this instead of the port itself.
+ */
+export type SendRequest = <T>(
+  send: (github: GitHubAccess) => Promise<T>,
+) => Promise<T>;
 
 export interface Viewer {
   login: string;
@@ -66,6 +83,20 @@ export interface IssueReference {
   number: number;
   title: string;
   state: "open" | "closed";
+}
+
+/** A repository as the sidebar needs it, read without its issues. */
+export interface RepositorySummary {
+  /** GitHub's numeric ID (`databaseId`), which survives renames. */
+  id: number;
+  /**
+   * Its current address, which differs from the one asked for once it has
+   * been renamed or transferred.
+   */
+  repository: RepositoryAddress;
+  openIssueCount: number;
+  hasIssuesEnabled: boolean;
+  isArchived: boolean;
 }
 
 export interface IssuePage {

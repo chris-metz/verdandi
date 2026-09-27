@@ -25,7 +25,17 @@ import { repositoryLabel, sameScope } from "./scope";
  * the core pushes it, driven by keyboard and mouse. The selection and scroll
  * position are remembered per scope for the session.
  */
-export function IssueListPane({ scope }: { scope: Scope }) {
+export function IssueListPane({
+  scope,
+  hasKeyboard,
+}: {
+  scope: Scope;
+  /**
+   * Whether the main area has the keyboard. The list then holds it, also
+   * when it opens in place of another list.
+   */
+  hasKeyboard: boolean;
+}) {
   const list = useList(scope);
   const [place] = useState(() => rememberedPlace(scope));
   const [selectedId, setSelectedId] = useState(place.selectedId);
@@ -83,10 +93,11 @@ export function IssueListPane({ scope }: { scope: Scope }) {
     run(command);
   }
 
-  // The list takes the keyboard when it opens.
+  // Opened while the sidebar has the keyboard, e.g. by its ↑/↓, the list
+  // leaves it there.
   useEffect(() => {
-    scroller.current?.focus({ preventScroll: true });
-  }, []);
+    if (hasKeyboard) scroller.current?.focus({ preventScroll: true });
+  }, [hasKeyboard]);
 
   // Back where the user left this list, once it is there to scroll.
   const restored = useRef(false);
@@ -118,6 +129,7 @@ export function IssueListPane({ scope }: { scope: Scope }) {
         role="tree"
         aria-label={`Issues of ${repositoryLabel(scope.repository)}`}
         tabIndex={0}
+        data-pane-focus
         onKeyDown={onKeyDown}
         onScroll={(event) => {
           rememberPlace(scope, {

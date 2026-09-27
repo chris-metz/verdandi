@@ -1,11 +1,12 @@
 import type { Account, Contract, CoreEvents } from "./contract.ts";
 import { createEmitter } from "./emitter.ts";
 import { describeGitHubError } from "./github/error-message.ts";
-import type { GitHubAccess } from "./github/port.ts";
+import type { GitHubAccess, SendRequest } from "./github/port.ts";
 import { createIssueLists } from "./issue-lists.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createRequestQueue } from "./request-queue.ts";
 import type { SettingsStorage } from "./settings/port.ts";
+import { createSidebar } from "./sidebar.ts";
 
 /** At most this many `gh` processes run at once. */
 const maxConcurrentRequests = 4;
@@ -21,10 +22,15 @@ export function createCore({ github, settings }: CoreOptions): Contract {
   const queue = createRequestQueue({ concurrency: maxConcurrentRequests });
   let knownAccount: Account | undefined;
 
-  /** Sends one GitHub request through the request queue. */
-  function request<T>(send: (github: GitHubAccess) => Promise<T>): Promise<T> {
-    return queue.run(() => send(github));
-  }
+  const request: SendRequest = (send) => queue.run(() => send(github));
+
+  const sidebar = createSidebar({
+    settings,
+    request,
+    push: (entries) => {
+      events.emit("sidebarChanged", entries);
+    },
+  });
 
   const lists = createIssueLists({
     store: createIssueStore(),
@@ -35,6 +41,10 @@ export function createCore({ github, settings }: CoreOptions): Contract {
     },
     push: (list) => {
       events.emit("listChanged", list);
+      // The sidebar's count follows the list each time it has loaded.
+      if (list.loading.status === "loaded") {
+        sidebar.listLoaded(list.scope.repository, list.loading.openIssues);
+      }
     },
   });
 
@@ -57,10 +67,8 @@ export function createCore({ github, settings }: CoreOptions): Contract {
       }
       return { status: "known", account: observeAccount(result.value.login) };
     },
-    async getSidebar() {
-      const result = await settings.read();
-      if (!result.ok) return { status: "failed", message: result.message };
-      return { status: "read", repositories: result.value.repositories };
+    getSidebar() {
+      return sidebar.read();
     },
     openList(scope) {
       lists.open(scope);

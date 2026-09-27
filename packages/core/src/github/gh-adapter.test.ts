@@ -659,3 +659,223 @@ describe("gh adapter", () => {
     ).toEqual({ ok: false, error: { kind: "unexpected-response" } });
   });
 });
+
+describe("gh adapter: repository summaries", () => {
+  /** A repository as GitHub returns it for the fields the sidebar reads. */
+  function repositoryNode({
+    databaseId,
+    nameWithOwner,
+    openIssues,
+    hasIssuesEnabled = true,
+    isArchived = false,
+  }: {
+    databaseId: number;
+    nameWithOwner: string;
+    openIssues: number;
+    hasIssuesEnabled?: boolean;
+    isArchived?: boolean;
+  }) {
+    return {
+      databaseId,
+      nameWithOwner,
+      hasIssuesEnabled,
+      isArchived,
+      issues: { totalCount: openIssues },
+    };
+  }
+
+  it("reads several repositories in one request", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                r0: repositoryNode({
+                  databaseId: 1234567,
+                  nameWithOwner: "acme/api",
+                  openIssues: 12,
+                }),
+                // Renamed since it was tracked; GitHub follows the rename.
+                r1: repositoryNode({
+                  databaseId: 7654321,
+                  nameWithOwner: "newco/web",
+                  openIssues: 0,
+                  hasIssuesEnabled: false,
+                  isArchived: true,
+                }),
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    expect(
+      await github.fetchRepositorySummaries([
+        { owner: "acme", name: "api" },
+        { owner: "acme", name: "web" },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          ok: true,
+          value: {
+            id: 1234567,
+            repository: { owner: "acme", name: "api" },
+            openIssueCount: 12,
+            hasIssuesEnabled: true,
+            isArchived: false,
+          },
+        },
+        {
+          ok: true,
+          value: {
+            id: 7654321,
+            repository: { owner: "newco", name: "web" },
+            openIssueCount: 0,
+            hasIssuesEnabled: false,
+            isArchived: true,
+          },
+        },
+      ],
+    });
+    expect(requests.map((request) => request.variables)).toEqual([
+      { owner0: "acme", name0: "api", owner1: "acme", name1: "web" },
+    ]);
+  });
+
+  it("reads the others when GitHub cannot resolve one repository", async () => {
+    const message =
+      "Could not resolve to a Repository with the name 'acme/gone'.";
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: {
+              viewer: { login: "octo-reader" },
+              r0: repositoryNode({
+                databaseId: 1234567,
+                nameWithOwner: "acme/api",
+                openIssues: 12,
+              }),
+              r1: null,
+              r2: repositoryNode({
+                databaseId: 2345678,
+                nameWithOwner: "acme/web",
+                openIssues: 3,
+              }),
+            },
+            errors: [
+              {
+                type: "NOT_FOUND",
+                path: ["r1"],
+                locations: [{ line: 1, column: 211 }],
+                message,
+              },
+            ],
+          }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    const read = await github.fetchRepositorySummaries([
+      { owner: "acme", name: "api" },
+      { owner: "acme", name: "gone" },
+      { owner: "acme", name: "web" },
+    ]);
+
+    expect(
+      read.ok &&
+        read.value.map((one) =>
+          one.ok ? one.value.openIssueCount : one.error,
+        ),
+    ).toEqual([12, { kind: "graphql", messages: [message] }, 3]);
+  });
+
+  it("reports a repository it cannot read, and reads the others", async () => {
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 0,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: {
+              viewer: { login: "octo-reader" },
+              r0: {
+                ...repositoryNode({
+                  databaseId: 1234567,
+                  nameWithOwner: "acme/api",
+                  openIssues: 12,
+                }),
+                issues: null,
+              },
+              r1: repositoryNode({
+                databaseId: 2345678,
+                nameWithOwner: "acme/web",
+                openIssues: 3,
+              }),
+            },
+          }),
+        ),
+        stderr: "",
+      }),
+    });
+
+    const read = await github.fetchRepositorySummaries([
+      { owner: "acme", name: "api" },
+      { owner: "acme", name: "web" },
+    ]);
+
+    expect(
+      read.ok &&
+        read.value.map((one) =>
+          one.ok ? one.value.openIssueCount : one.error,
+        ),
+    ).toEqual([{ kind: "unexpected-response" }, 3]);
+  });
+
+  it("reports a query GitHub rejected as a whole", async () => {
+    const message = "API rate limit already exceeded for user ID 1234567.";
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: null,
+            errors: [
+              { type: "RATE_LIMIT", code: "graphql_rate_limit", message },
+            ],
+          }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    expect(
+      await github.fetchRepositorySummaries([
+        { owner: "acme", name: "api" },
+        { owner: "acme", name: "web" },
+      ]),
+    ).toEqual({ ok: false, error: { kind: "graphql", messages: [message] } });
+  });
+});

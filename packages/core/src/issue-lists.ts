@@ -4,9 +4,10 @@ import type {
   RepositoryAddress,
   Scope,
 } from "./contract.ts";
+import { inBatches } from "./batches.ts";
 import { buildRepositoryForest } from "./forest.ts";
 import { describeGitHubError } from "./github/error-message.ts";
-import type { GitHubAccess } from "./github/port.ts";
+import type { SendRequest } from "./github/port.ts";
 import type { IssueStore } from "./issue-store.ts";
 import { repositoryKey, sameRepository } from "./repository-address.ts";
 
@@ -29,8 +30,7 @@ export interface IssueLists {
 
 export interface IssueListsOptions {
   store: IssueStore;
-  /** Sends one GitHub request through the request queue. */
-  request: <T>(send: (github: GitHubAccess) => Promise<T>) => Promise<T>;
+  request: SendRequest;
   /** The tracked repositories, to tell external issues apart. */
   trackedRepositories: () => Promise<RepositoryAddress[]>;
   /** Pushes a list's current state to the interfaces. */
@@ -104,12 +104,8 @@ export function createIssueLists({
               !sameRepository(reference.repository, repository)),
         )
         .map((reference) => reference.id);
-      for (let start = 0; start < wanted.length; start += issuesPerRequest) {
-        void readIssues(
-          scope,
-          list,
-          wanted.slice(start, start + issuesPerRequest),
-        );
+      for (const ids of inBatches(wanted, issuesPerRequest)) {
+        void readIssues(scope, list, ids);
       }
     }
     push({

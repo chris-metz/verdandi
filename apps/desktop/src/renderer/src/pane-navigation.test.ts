@@ -1,0 +1,198 @@
+import type { Scope } from "@verdandi/core/contract";
+import { describe, expect, it } from "vitest";
+import {
+  commandForWindowKey,
+  entryShortcut,
+  shortcutModifier,
+  type KeyPress,
+  type Pane,
+  type ShortcutModifier,
+  type WindowCommand,
+} from "./pane-navigation";
+
+function repository(name: string): Scope {
+  return { kind: "repository", repository: { owner: "acme", name } };
+}
+
+/** The sidebar's entries, in visual order. */
+const entries = [repository("api"), repository("web"), repository("infra")];
+
+const macOS = shortcutModifier("darwin");
+const linux = shortcutModifier("linux");
+
+/** A key pressed without modifiers unless given. */
+function key(
+  name: string,
+  modifiers: Partial<Omit<KeyPress, "key">> = {},
+): KeyPress {
+  return {
+    key: name,
+    code: /^\d$/.test(name) ? `Digit${name}` : name,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...modifiers,
+  };
+}
+
+/** What a key does with one pane focused and an entry selected, by name. */
+function press(
+  pressed: KeyPress,
+  {
+    focused = "sidebar",
+    selected,
+    modifier = macOS,
+  }: { focused?: Pane; selected?: string; modifier?: ShortcutModifier } = {},
+): WindowCommand | undefined {
+  return commandForWindowKey(pressed, {
+    focused,
+    entries,
+    selected: selected === undefined ? undefined : repository(selected),
+    modifier,
+  });
+}
+
+function select(name: string): WindowCommand {
+  return { kind: "select", scope: repository(name) };
+}
+
+describe("Tab", () => {
+  it("moves the keyboard from the sidebar to the main area and back", () => {
+    expect(press(key("Tab"), { focused: "sidebar" })).toEqual({
+      kind: "focus",
+      pane: "main",
+    });
+    expect(press(key("Tab"), { focused: "main" })).toEqual({
+      kind: "focus",
+      pane: "sidebar",
+    });
+  });
+
+  it("does the same with ⇧, as there are only two panes", () => {
+    expect(press(key("Tab", { shiftKey: true }), { focused: "main" })).toEqual({
+      kind: "focus",
+      pane: "sidebar",
+    });
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt", () => {
+    expect(press(key("Tab", { ctrlKey: true }))).toBeUndefined();
+    expect(press(key("Tab", { metaKey: true }))).toBeUndefined();
+    expect(press(key("Tab", { altKey: true }))).toBeUndefined();
+  });
+});
+
+describe("sidebar keys", () => {
+  it("select the entry below with j and ↓, stopping at the last", () => {
+    expect(press(key("j"), { selected: "api" })).toEqual(select("web"));
+    expect(press(key("ArrowDown"), { selected: "web" })).toEqual(
+      select("infra"),
+    );
+    expect(press(key("j"), { selected: "infra" })).toBeUndefined();
+  });
+
+  it("select the entry above with k and ↑, stopping at the first", () => {
+    expect(press(key("k"), { selected: "infra" })).toEqual(select("web"));
+    expect(press(key("ArrowUp"), { selected: "web" })).toEqual(select("api"));
+    expect(press(key("k"), { selected: "api" })).toBeUndefined();
+  });
+
+  it("select the first entry when none is selected", () => {
+    expect(press(key("j"))).toEqual(select("api"));
+    expect(press(key("ArrowUp"))).toEqual(select("api"));
+  });
+
+  it("are the list's keys while the main area has the keyboard", () => {
+    for (const name of ["j", "k", "ArrowDown", "ArrowUp"]) {
+      expect(
+        press(key(name), { focused: "main", selected: "web" }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("are left alone with ⌘, Ctrl or Alt", () => {
+    expect(
+      press(key("ArrowDown", { altKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("ArrowDown", { metaKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("j", { ctrlKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+  });
+
+  it("do nothing in an empty sidebar", () => {
+    expect(
+      commandForWindowKey(key("j"), {
+        focused: "sidebar",
+        entries: [],
+        selected: undefined,
+        modifier: macOS,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("ignore other keys", () => {
+    expect(press(key("x"), { selected: "api" })).toBeUndefined();
+    expect(press(key("Enter"), { selected: "api" })).toBeUndefined();
+  });
+});
+
+describe("entry shortcuts", () => {
+  it("select entries in visual order with ⌘1…9 on macOS, from either pane", () => {
+    expect(press(key("1", { metaKey: true }), { focused: "main" })).toEqual(
+      select("api"),
+    );
+    expect(press(key("3", { metaKey: true }), { focused: "sidebar" })).toEqual(
+      select("infra"),
+    );
+  });
+
+  it("select entries with Ctrl+1…9 on Linux and Windows", () => {
+    expect(press(key("2", { ctrlKey: true }), { modifier: linux })).toEqual(
+      select("web"),
+    );
+    expect(
+      press(key("2", { metaKey: true }), { modifier: linux }),
+    ).toBeUndefined();
+    expect(
+      press(key("2", { ctrlKey: true }), { modifier: macOS }),
+    ).toBeUndefined();
+  });
+
+  it("go by the key's place, whatever the keyboard layout prints on it", () => {
+    // On a French keyboard, the key for 1 types "&".
+    expect(
+      press(
+        { ...key("&", { metaKey: true }), code: "Digit1" },
+        { modifier: macOS },
+      ),
+    ).toEqual(select("api"));
+  });
+
+  it("select nothing past the last entry", () => {
+    expect(press(key("4", { metaKey: true }))).toBeUndefined();
+    expect(press(key("0", { metaKey: true }))).toBeUndefined();
+  });
+
+  it("are left alone with ⇧ or Alt as well", () => {
+    expect(press(key("1", { metaKey: true, shiftKey: true }))).toBeUndefined();
+    expect(press(key("1", { metaKey: true, altKey: true }))).toBeUndefined();
+  });
+
+  it("are shown while ⌘ is held on macOS, and Ctrl elsewhere", () => {
+    expect(macOS.isHeld({ metaKey: true, ctrlKey: false })).toBe(true);
+    expect(macOS.isHeld({ metaKey: false, ctrlKey: true })).toBe(false);
+    expect(linux.isHeld({ metaKey: false, ctrlKey: true })).toBe(true);
+    expect(linux.isHeld({ metaKey: true, ctrlKey: false })).toBe(false);
+  });
+
+  it("are named for the first nine entries", () => {
+    expect(entryShortcut(0, macOS)).toBe("⌘1");
+    expect(entryShortcut(8, macOS)).toBe("⌘9");
+    expect(entryShortcut(0, linux)).toBe("Ctrl+1");
+    expect(entryShortcut(9, macOS)).toBeUndefined();
+  });
+});

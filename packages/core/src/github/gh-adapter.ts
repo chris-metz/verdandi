@@ -4,10 +4,12 @@ import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandRunner } from "./command-runner.ts";
 import type {
   GitHubAccess,
+  GitHubError,
   GitHubResult,
   Issue,
   IssuePage,
   IssueReference,
+  RepositorySummary,
 } from "./port.ts";
 
 export interface GhAdapterOptions {
@@ -34,18 +36,43 @@ const issueFields = `
   subIssues(first: 100) { nodes { ${referenceFields} } }
 `;
 
+/** What Verdandi reads of a repository for the sidebar, without its issues. */
+const repositorySummaryFields = `
+  databaseId nameWithOwner hasIssuesEnabled isArchived
+  issues(states: OPEN) { totalCount }
+`;
+
 /** The GitHub-access port implemented with `gh api`. */
 export function createGhAdapter({
   runCommand,
 }: GhAdapterOptions): GitHubAccess {
   /**
-   * Runs one GraphQL query. Every query also reads `viewer { login }`.
-   * Values reach GitHub as typed variables, never spliced into the query.
+   * Runs one GraphQL query, failing on any error GitHub reports. Every query
+   * also reads `viewer { login }`. Values reach GitHub as typed variables,
+   * never spliced into the query.
    */
   async function graphql(
     selection: string,
-    variables: Record<string, { type: string; value: unknown }> = {},
+    variables: Variables = {},
   ): Promise<GitHubResult<{ viewerLogin: string; data: unknown }>> {
+    const result = await graphqlWithErrors(selection, variables);
+    if (!result.ok) return result;
+    const { viewerLogin, data, errors } = result.value;
+    if (errors.length > 0) return { ok: false, error: graphqlError(errors) };
+    return { ok: true, value: { viewerLogin, data } };
+  }
+
+  /**
+   * Runs one GraphQL query like `graphql`, but keeps the data GitHub sends at
+   * HTTP 200 alongside errors about parts of the query, such as a repository
+   * it cannot resolve. Errors fail it only when there is no data.
+   */
+  async function graphqlWithErrors(
+    selection: string,
+    variables: Variables,
+  ): Promise<
+    GitHubResult<{ viewerLogin: string; data: unknown; errors: GraphqlError[] }>
+  > {
     const entries = Object.entries(variables);
     const declarations = entries.map(([name, { type }]) => `$${name}: ${type}`);
     const operation = entries.length
@@ -93,20 +120,13 @@ export function createGhAdapter({
       };
     }
     const body = parseJson(response.body) as GraphqlBody | undefined;
-    if (body?.errors?.length) {
-      return {
-        ok: false,
-        error: {
-          kind: "graphql",
-          messages: body.errors.map((error) => error.message),
-        },
-      };
-    }
+    const errors = body?.errors ?? [];
     const viewerLogin = body?.data?.viewer?.login;
     if (typeof viewerLogin !== "string") {
+      if (errors.length > 0) return { ok: false, error: graphqlError(errors) };
       return { ok: false, error: { kind: "unexpected-response" } };
     }
-    return { ok: true, value: { viewerLogin, data: body?.data } };
+    return { ok: true, value: { viewerLogin, data: body?.data, errors } };
   }
 
   return {
@@ -154,6 +174,71 @@ export function createGhAdapter({
       if (!issues) return { ok: false, error: { kind: "unexpected-response" } };
       return { ok: true, value: issues };
     },
+    async fetchRepositorySummaries(repositories) {
+      // One aliased `repository` per repository, so GitHub reports a missing
+      // one on its own path and still answers for the others.
+      const variables: Variables = {};
+      const selections = repositories.map(({ owner, name }, index) => {
+        const n = String(index);
+        variables[`owner${n}`] = { type: "String!", value: owner };
+        variables[`name${n}`] = { type: "String!", value: name };
+        return `r${n}: repository(owner: $owner${n}, name: $name${n}) {
+          ${repositorySummaryFields}
+        }`;
+      });
+      const result = await graphqlWithErrors(selections.join("\n"), variables);
+      if (!result.ok) return result;
+      const { data, errors } = result.value;
+      return {
+        ok: true,
+        value: repositories.map((_, index) => {
+          const alias = `r${String(index)}`;
+          const summary = isObject(data)
+            ? readRepositorySummary(data[alias])
+            : undefined;
+          if (summary) return { ok: true, value: summary };
+          const aboutIt = errors.filter((error) => error.path?.[0] === alias);
+          return {
+            ok: false,
+            error:
+              aboutIt.length > 0
+                ? graphqlError(aboutIt)
+                : { kind: "unexpected-response" },
+          };
+        }),
+      };
+    },
+  };
+}
+
+/** GraphQL variables by name, each with its GraphQL type. */
+type Variables = Record<string, { type: string; value: unknown }>;
+
+/** Reads a repository's summary, or `undefined` if it is not one. */
+function readRepositorySummary(node: unknown): RepositorySummary | undefined {
+  if (!isObject(node)) return undefined;
+  const { databaseId, nameWithOwner, hasIssuesEnabled, isArchived, issues } =
+    node;
+  const repository =
+    typeof nameWithOwner === "string"
+      ? parseRepositoryAddress(nameWithOwner)
+      : undefined;
+  const openIssueCount = isObject(issues) ? issues.totalCount : undefined;
+  if (
+    typeof databaseId !== "number" ||
+    !repository ||
+    typeof hasIssuesEnabled !== "boolean" ||
+    typeof isArchived !== "boolean" ||
+    typeof openIssueCount !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    id: databaseId,
+    repository,
+    openIssueCount,
+    hasIssuesEnabled,
+    isArchived,
   };
 }
 
@@ -315,7 +400,21 @@ function readCounts<K extends string>(
 /** A GraphQL response body, as far as it can be trusted. */
 interface GraphqlBody {
   data?: { viewer?: { login?: unknown } } | null;
-  errors?: { message: string }[];
+  errors?: GraphqlError[];
+}
+
+/** The domain error for errors GitHub reported with a GraphQL response. */
+function graphqlError(errors: readonly GraphqlError[]): GitHubError {
+  return { kind: "graphql", messages: errors.map((error) => error.message) };
+}
+
+/**
+ * An error GitHub reports with a GraphQL response. Its `path` names the part
+ * of the query it concerns, e.g. an alias.
+ */
+interface GraphqlError {
+  message: string;
+  path?: (string | number)[];
 }
 
 interface HttpResponse {
