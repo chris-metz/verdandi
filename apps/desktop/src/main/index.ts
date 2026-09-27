@@ -3,8 +3,10 @@ import { join } from "node:path";
 import {
   createCore,
   createGhAdapter,
+  createSettingsFile,
   desktopStateDirectory,
   runCommand,
+  type HostEnvironment,
 } from "@verdandi/core";
 import {
   eventNames,
@@ -15,18 +17,20 @@ import {
 import { app, BrowserWindow, ipcMain, nativeTheme, shell } from "electron";
 import { ipcChannels } from "../shared/ipc";
 
+const host: HostEnvironment = {
+  platform: process.platform,
+  env: process.env,
+  homedir: homedir(),
+};
+
 // Before anything touches it: keep Chromium's data out of ~/.config on Linux
 // and out of the roaming profile on Windows.
-app.setPath(
-  "userData",
-  desktopStateDirectory({
-    platform: process.platform,
-    env: process.env,
-    homedir: homedir(),
-  }),
-);
+app.setPath("userData", desktopStateDirectory(host));
 
-const core = createCore({ github: createGhAdapter({ runCommand }) });
+const core = createCore({
+  github: createGhAdapter({ runCommand }),
+  settings: createSettingsFile(host),
+});
 
 wireContract(core);
 

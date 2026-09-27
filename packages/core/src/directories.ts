@@ -7,6 +7,38 @@ export interface HostEnvironment {
 }
 
 /**
+ * Where the core keeps user data (`settings.json`): private, portable and
+ * outside `~/.config` (ADR 0002). It roams with a Windows profile, and
+ * `VERDANDI_HOME` relocates it for tests and portable use.
+ */
+export function userDataDirectory({
+  platform,
+  env,
+  homedir,
+}: HostEnvironment): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  const join = (...segments: string[]) => paths.join(...segments);
+  if (env.VERDANDI_HOME) return env.VERDANDI_HOME;
+  switch (platform) {
+    case "darwin":
+      return join(homedir, "Library/Application Support/Verdandi");
+    case "win32":
+      return join(
+        env.APPDATA || join(homedir, "AppData", "Roaming"),
+        "Verdandi",
+      );
+    default: {
+      // The XDG spec says to ignore relative paths.
+      const dataHome =
+        env.XDG_DATA_HOME && paths.isAbsolute(env.XDG_DATA_HOME)
+          ? env.XDG_DATA_HOME
+          : join(homedir, ".local/share");
+      return join(dataHome, "verdandi");
+    }
+  }
+}
+
+/**
  * Where the desktop app keeps machine-local state; Electron's `userData` is
  * redirected here. It never roams with a Windows profile, and
  * `VERDANDI_HOME` relocates it for tests and portable use.

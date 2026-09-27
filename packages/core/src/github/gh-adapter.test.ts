@@ -2,12 +2,22 @@ import { describe, expect, it } from "vitest";
 import type { CommandResult, CommandRunner } from "./command-runner.ts";
 import { createGhAdapter } from "./gh-adapter.ts";
 
+/** A GraphQL request as gh reads it from its input. */
+interface GraphqlRequest {
+  query: string;
+  variables?: Record<string, unknown>;
+}
+
 /**
  * A `gh` that answers every `gh api --include` call for github.com with the
- * same result. Without `--hostname`, gh would follow an inherited `GH_HOST`.
+ * same result, and records the GraphQL requests it is given. Without
+ * `--hostname`, gh would follow an inherited `GH_HOST`.
  */
-function ghAnswering(result: CommandResult): CommandRunner {
-  return (command, args) => {
+function ghAnswering(
+  result: CommandResult,
+  requests: GraphqlRequest[] = [],
+): CommandRunner {
+  return (command, args, options) => {
     const hostname = args[args.indexOf("--hostname") + 1];
     if (
       command !== "gh" ||
@@ -16,6 +26,9 @@ function ghAnswering(result: CommandResult): CommandRunner {
       hostname !== "github.com"
     ) {
       throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    }
+    if (options?.input) {
+      requests.push(JSON.parse(options.input) as GraphqlRequest);
     }
     return Promise.resolve(result);
   };
@@ -186,6 +199,199 @@ describe("gh adapter", () => {
     });
 
     expect(await github.fetchViewer()).toEqual({
+      ok: false,
+      error: { kind: "unexpected-response" },
+    });
+  });
+
+  it("reads a page of a repository's open issues", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                repository: {
+                  issues: {
+                    pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjI=" },
+                    nodes: [
+                      {
+                        id: "I_kwDOAbCdEs4AAAAM",
+                        number: 12,
+                        title: "Retry failed webhooks",
+                        state: "OPEN",
+                      },
+                      {
+                        id: "I_kwDOAbCdEs4AAAAH",
+                        number: 7,
+                        title: "Crash on start",
+                        state: "OPEN",
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "api" }),
+    ).toEqual({
+      ok: true,
+      value: {
+        issues: [
+          {
+            id: "I_kwDOAbCdEs4AAAAM",
+            number: 12,
+            title: "Retry failed webhooks",
+            state: "open",
+          },
+          {
+            id: "I_kwDOAbCdEs4AAAAH",
+            number: 7,
+            title: "Crash on start",
+            state: "open",
+          },
+        ],
+        nextPage: "Y3Vyc29yOjI=",
+      },
+    });
+    expect(requests.map((request) => request.variables)).toEqual([
+      { owner: "acme", name: "api" },
+    ]);
+  });
+
+  it("reads the page after a cursor, up to the last one", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                repository: {
+                  issues: {
+                    pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjM=" },
+                    nodes: [
+                      {
+                        id: "I_kwDOAbCdEs4AAAAC",
+                        number: 2,
+                        title: "Empty state for new users",
+                        state: "OPEN",
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    expect(
+      await github.fetchOpenIssues(
+        { owner: "acme", name: "api" },
+        "Y3Vyc29yOjI=",
+      ),
+    ).toEqual({
+      ok: true,
+      value: {
+        issues: [
+          {
+            id: "I_kwDOAbCdEs4AAAAC",
+            number: 2,
+            title: "Empty state for new users",
+            state: "open",
+          },
+        ],
+        nextPage: undefined,
+      },
+    });
+    expect(requests.map((request) => request.variables)).toEqual([
+      { owner: "acme", name: "api", after: "Y3Vyc29yOjI=" },
+    ]);
+  });
+
+  it("reports a repository GitHub cannot resolve", async () => {
+    const message =
+      "Could not resolve to a Repository with the name 'acme/gone'.";
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: { viewer: { login: "octo-reader" }, repository: null },
+            errors: [
+              {
+                type: "NOT_FOUND",
+                path: ["repository"],
+                locations: [{ line: 1, column: 83 }],
+                message,
+              },
+            ],
+          }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "gone" }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "graphql", messages: [message] },
+    });
+  });
+
+  it("reports an issue page it cannot read", async () => {
+    const github = createGhAdapter({
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 0,
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: {
+              viewer: { login: "octo-reader" },
+              repository: {
+                issues: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [{ id: "I_kwDOAbCdEs4AAAAB", number: "1" }],
+                },
+              },
+            },
+          }),
+        ),
+        stderr: "",
+      }),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "api" }),
+    ).toEqual({
       ok: false,
       error: { kind: "unexpected-response" },
     });

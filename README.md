@@ -20,6 +20,20 @@ pnpm dev
 
 Set `VERDANDI_HOME` to keep all of Verdandi's files under one directory, e.g. for a throwaway profile.
 
+## Track repositories
+
+Until Verdandi can add repositories itself, list them by hand in `settings.json` in the user data directory: `~/Library/Application Support/Verdandi/` on macOS, `%APPDATA%\Verdandi\` on Windows, `$XDG_DATA_HOME/verdandi/` (by default `~/.local/share/verdandi/`) on Linux, or `VERDANDI_HOME` when it is set.
+
+```json
+{
+  "version": 1,
+  "repositories": [{ "name": "owner/repo" }],
+  "views": []
+}
+```
+
+The sidebar lists them in this order. Verdandi reads the file when its window opens.
+
 ## Check before pushing
 
 ```sh
