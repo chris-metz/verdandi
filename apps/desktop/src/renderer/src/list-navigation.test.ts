@@ -189,6 +189,12 @@ describe("keys", () => {
 
   it("ignore other keys", () => {
     expect(press("x", 1)).toBeUndefined();
-    expect(press("Enter", 1)).toBeUndefined();
+  });
+});
+
+it("opens the selected issue in the app on Enter", () => {
+  expect(press("Enter", 3)).toEqual({
+    kind: "openIssue",
+    issue: { id: "I_3", reference: "#3", title: "Issue 3" },
   });
 });

@@ -4,6 +4,8 @@ import type {
   ParentIssue,
 } from "@verdandi/core/contract";
 
+import type { IssueDestination } from "./issue-navigation";
+
 /** A row of a list as it shows, top to bottom. */
 export interface ListRow {
   node: IssueNode;
@@ -17,6 +19,7 @@ export interface ListRow {
 
 /** What a key asks for. */
 export type ListCommand =
+  | { kind: "openIssue"; issue: IssueDestination }
   | { kind: "select"; issueId: string }
   | { kind: "setExpanded"; issueId: string; expanded: boolean }
   | { kind: "setAllExpanded"; expanded: boolean }
@@ -106,6 +109,10 @@ export function commandForKey(
         kind: "setAllExpanded",
         expanded: nodes.some((other) => !other.expanded),
       };
+    }
+    case "Enter": {
+      const { id, reference, title } = node.issue;
+      return { kind: "openIssue", issue: { id, reference, title } };
     }
     case "o":
       return { kind: "openOnGitHub", url: node.issue.url };

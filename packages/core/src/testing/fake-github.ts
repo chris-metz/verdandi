@@ -1,4 +1,4 @@
-import type { Label, RelationshipCount } from "../contract.ts";
+import type { IssueMetadata, Label, RelationshipCount } from "../contract.ts";
 import type {
   GitHubAccess,
   GitHubError,
@@ -13,6 +13,7 @@ import type {
  * `owner/name#number`, e.g. `I_acme/api#3`.
  */
 export interface FakeIssue {
+  metadata?: Partial<IssueMetadata>;
   number: number;
   title: string;
   /** Open unless said otherwise. */
@@ -38,8 +39,8 @@ export interface FakeGitHub extends GitHubAccess {
    * newest first. Adding it again replaces its issues.
    */
   addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
-  /** Every request fails with this error from now on. */
-  failWith(error: GitHubError): void;
+  /** Every request fails with this error from now on, or succeeds again. */
+  failWith(error: GitHubError | undefined): void;
   /**
    * Answers stay undelivered until `resume`: those of every request, or only
    * of requests to one method. GitHub still answers from what it holds when
@@ -195,6 +196,30 @@ export function createFakeGitHub({
     },
     requestsFor(nameWithOwner) {
       return repositoryRequests.get(nameWithOwner) ?? 0;
+    },
+    fetchIssueDetails(id) {
+      return answer("fetchIssueDetails", () => {
+        const ref = id.replace(/^I_/, "");
+        const issue = find(ref);
+        if (!issue)
+          return {
+            ok: false,
+            error: { kind: "http", status: 404, message: "Issue not found" },
+          };
+        return {
+          ok: true,
+          value: {
+            ...read(ref.split("#")[0] ?? "", issue),
+            stateReason: issue.state === "closed" ? "completed" : undefined,
+            createdAt: defaultUpdatedAt,
+            author: undefined,
+            assignees: [],
+            milestone: undefined,
+            commentCount: 0,
+            ...issue.metadata,
+          },
+        };
+      });
     },
     fetchViewer() {
       return answer("fetchViewer", () => ({

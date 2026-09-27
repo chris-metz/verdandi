@@ -3,6 +3,7 @@ import { createEmitter } from "./emitter.ts";
 import { describeGitHubError } from "./github/error-message.ts";
 import type { GitHubAccess, SendRequest } from "./github/port.ts";
 import { createIssueLists } from "./issue-lists.ts";
+import { createIssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createRequestQueue } from "./request-queue.ts";
 import type { SettingsStorage } from "./settings/port.ts";
@@ -32,8 +33,10 @@ export function createCore({ github, settings }: CoreOptions): Contract {
     },
   });
 
+  const store = createIssueStore();
+  const pages = createIssuePages({ store, request, settings });
   const lists = createIssueLists({
-    store: createIssueStore(),
+    store,
     request,
     settings,
     push: (list) => {
@@ -58,6 +61,9 @@ export function createCore({ github, settings }: CoreOptions): Contract {
   }
 
   return {
+    getIssuePage(issueId) {
+      return pages.get(issueId);
+    },
     async getAccount() {
       const result = await request((github) => github.fetchViewer());
       if (!result.ok) {

@@ -9,7 +9,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import { cn } from "@/lib/utils";
-import { columnClasses, IssueRow } from "./IssueRow";
+import type { IssueDestination } from "./issue-navigation";
+import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import {
   commandForKey,
   selectionIndex,
@@ -28,8 +29,10 @@ import { presentScope, sameScope } from "./scope";
 export function IssueListPane({
   scope,
   hasKeyboard,
+  onOpen,
 }: {
   scope: Scope;
+  onOpen: (issue: IssueDestination) => void;
   /**
    * Whether the main area has the keyboard. The list then holds it, also
    * when it opens in place of another list.
@@ -68,6 +71,10 @@ export function IssueListPane({
 
   function run(command: ListCommand) {
     switch (command.kind) {
+      case "openIssue":
+        select(command.issue.id);
+        onOpen(command.issue);
+        break;
       case "select":
         revealSelection.current = true;
         select(command.issueId);
@@ -140,25 +147,14 @@ export function IssueListPane({
       >
         {list && (
           <>
-            <div
-              aria-hidden
-              className="sticky top-0 z-10 flex h-7 items-center gap-1.5 border-b bg-background pr-4 pl-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase"
-            >
-              <span className="flex-1">Issue</span>
-              <span className={cn("flex", columnClasses.progress)}>
-                Sub-issues
-              </span>
-              <span className={cn("flex", columnClasses.blockedBy)}>
-                Blocked by
-              </span>
-              <span className={cn("flex", columnClasses.blocking)}>Blocks</span>
-            </div>
+            <IssueColumnHeader sticky />
             {rows.map((row, index) => (
               <IssueRow
                 key={row.node.issue.id}
                 row={row}
                 withRepository={repositoryChips}
                 selected={index === selected}
+                onOpen={onOpen}
                 onSelect={select}
                 onToggle={toggle}
               />

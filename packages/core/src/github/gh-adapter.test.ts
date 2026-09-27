@@ -879,3 +879,53 @@ describe("gh adapter: repository summaries", () => {
     ).toEqual({ ok: false, error: { kind: "graphql", messages: [message] } });
   });
 });
+
+it("reads issue page metadata, including nullable authors and milestones", async () => {
+  const node = {
+    ...issueNode({ number: 7, state: "CLOSED" }),
+    stateReason: "NOT_PLANNED",
+    createdAt: "2026-08-01T12:00:00Z",
+    author: null,
+    assignees: {
+      nodes: [
+        {
+          login: "octo-dev",
+          avatarUrl: "https://avatars.githubusercontent.com/u/2",
+        },
+      ],
+    },
+    milestone: null,
+    comments: { totalCount: 12 },
+  };
+  const github = createGhAdapter({
+    runCommand: ghAnswering({
+      kind: "exited",
+      exitCode: 0,
+      stderr: "",
+      stdout: transcript(
+        "200 OK",
+        graphqlHeaders,
+        JSON.stringify({ data: { viewer: { login: "octo-reader" }, node } }),
+      ),
+    }),
+  });
+
+  expect(await github.fetchIssueDetails(node.id)).toMatchObject({
+    ok: true,
+    value: {
+      id: node.id,
+      state: "closed",
+      stateReason: "not-planned",
+      createdAt: "2026-08-01T12:00:00Z",
+      author: undefined,
+      milestone: undefined,
+      assignees: [
+        {
+          login: "octo-dev",
+          avatarUrl: "https://avatars.githubusercontent.com/u/2",
+        },
+      ],
+      commentCount: 12,
+    },
+  });
+});

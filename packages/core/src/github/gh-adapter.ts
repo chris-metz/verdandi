@@ -1,4 +1,4 @@
-import type { Label } from "../contract.ts";
+import type { IssueActor, IssueMetadata, Label } from "../contract.ts";
 import { isObject } from "../json.ts";
 import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandRunner } from "./command-runner.ts";
@@ -130,6 +130,36 @@ export function createGhAdapter({
   }
 
   return {
+    async fetchIssueDetails(id) {
+      const result = await graphql(
+        `node(id: $id) { ... on Issue {
+          ${issueFields}
+          stateReason createdAt
+          author { login avatarUrl }
+          assignees(first: 100) { nodes { login avatarUrl } }
+          milestone { title }
+          comments { totalCount }
+        } }`,
+        { id: { type: "ID!", value: id } },
+      );
+      if (!result.ok) return result;
+      const data = result.value.data;
+      const node = isObject(data) ? data.node : undefined;
+      if (node === null)
+        return {
+          ok: false,
+          error: {
+            kind: "http",
+            status: 404,
+            message: "Issue unavailable or not accessible with this account.",
+          },
+        };
+      const issue = readIssue(node);
+      const metadata = readMetadata(node);
+      if (!issue || !metadata)
+        return { ok: false, error: { kind: "unexpected-response" } };
+      return { ok: true, value: { ...issue, ...metadata } };
+    },
     async fetchViewer() {
       const result = await graphql("");
       if (!result.ok) return result;
@@ -457,4 +487,58 @@ function parseJson(body: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+function readActor(node: unknown): IssueActor | undefined {
+  if (
+    !isObject(node) ||
+    typeof node.login !== "string" ||
+    typeof node.avatarUrl !== "string"
+  )
+    return undefined;
+  return { login: node.login, avatarUrl: node.avatarUrl };
+}
+
+function readMetadata(node: unknown): IssueMetadata | undefined {
+  if (!isObject(node)) return undefined;
+  const { stateReason, createdAt, author, milestone, comments } = node;
+  const reasons = {
+    COMPLETED: "completed",
+    NOT_PLANNED: "not-planned",
+    REOPENED: "reopened",
+    DUPLICATE: "duplicate",
+  } as const;
+  if (
+    stateReason !== null &&
+    !(typeof stateReason === "string" && Object.hasOwn(reasons, stateReason))
+  )
+    return undefined;
+  const assignees = readNodes(node.assignees, readActor);
+  const readAuthor = author === null ? null : readActor(author);
+  const milestoneTitle =
+    milestone === null
+      ? null
+      : isObject(milestone)
+        ? milestone.title
+        : undefined;
+  if (
+    typeof createdAt !== "string" ||
+    !assignees ||
+    readAuthor === undefined ||
+    (milestoneTitle !== null && typeof milestoneTitle !== "string") ||
+    !isObject(comments) ||
+    typeof comments.totalCount !== "number"
+  )
+    return undefined;
+  return {
+    stateReason:
+      stateReason === null
+        ? undefined
+        : reasons[stateReason as keyof typeof reasons],
+    createdAt,
+    author: readAuthor ?? undefined,
+    assignees,
+    milestone: milestoneTitle ?? undefined,
+    commentCount: comments.totalCount,
+  };
 }

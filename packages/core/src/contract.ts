@@ -128,7 +128,7 @@ export interface IssueNode {
   issue: IssueSummary;
   /** Its sub-issues in GitHub's order, as far as they have loaded. */
   subIssues: IssueNode[];
-  /** Whether its sub-issues show. Trees start fully expanded. */
+  /** Whether its sub-issues show: initially expanded in lists, collapsed on pages. */
   expanded: boolean;
 }
 
@@ -193,8 +193,42 @@ export interface IssueList {
   loading: ListLoading;
 }
 
+/** Metadata read when an issue page is opened. */
+export interface IssueMetadata {
+  stateReason:
+    "completed" | "not-planned" | "reopened" | "duplicate" | undefined;
+  createdAt: string;
+  author: IssueActor | undefined;
+  assignees: IssueActor[];
+  milestone: string | undefined;
+  commentCount: number;
+}
+
+export interface IssueActor {
+  login: string;
+  avatarUrl: string;
+}
+
+/** An issue page, including relationships outside tracked repositories. */
+export interface IssuePage {
+  issueId: string;
+  issue: (IssueSummary & IssueMetadata) | undefined;
+  /** Top-most parent first, excluding the issue itself. */
+  ancestry: (ParentIssue & { url: string })[];
+  /** The list's outline rows, in GitHub order, initially collapsed. */
+  subIssues: IssueTree[];
+  /** A failed or incomplete read; available content remains usable. */
+  failure: string | undefined;
+}
+
 /** Request/response calls. */
 export interface CoreRequests {
+  /**
+   * Reads an issue, its ancestry and sub-issues without tracking repositories.
+   * Successful pages are reused for the session; failed reads can be retried.
+   * The renderer keeps each visit's cursor, expansion and scroll position.
+   */
+  getIssuePage: (issueId: string) => Promise<IssuePage>;
   /** Which account Verdandi reads GitHub as. */
   getAccount: () => Promise<AccountStatus>;
   /**
@@ -255,6 +289,7 @@ export interface Contract extends CoreRequests {
 }
 
 const requests: Record<keyof CoreRequests, true> = {
+  getIssuePage: true,
   getAccount: true,
   getSidebar: true,
   openList: true,

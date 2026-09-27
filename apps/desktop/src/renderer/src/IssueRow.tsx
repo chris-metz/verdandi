@@ -6,6 +6,7 @@ import type {
 } from "@verdandi/core/contract";
 import { memo } from "react";
 import { cn } from "@/lib/utils";
+import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
 import type { ListRow } from "./list-navigation";
 import {
@@ -24,6 +25,24 @@ export const columnClasses = {
   blocking: "w-16 shrink-0 justify-end",
 } as const;
 
+/** The same columns above both a scope's list and a page's sub-issues. */
+export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        "flex h-7 items-center gap-1.5 border-b bg-background pr-4 pl-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase",
+        sticky && "sticky top-0 z-10",
+      )}
+    >
+      <span className="flex-1">Issue</span>
+      <span className={cn("flex", columnClasses.progress)}>Sub-issues</span>
+      <span className={cn("flex", columnClasses.blockedBy)}>Blocked by</span>
+      <span className={cn("flex", columnClasses.blocking)}>Blocks</span>
+    </div>
+  );
+}
+
 /**
  * One issue in a list: chevron, state, repository chip in All, reference,
  * title, labels and tags, then the sub-issue progress, "Blocked by" and
@@ -35,6 +54,7 @@ export const IssueRow = memo(function IssueRow({
   selected,
   onSelect,
   onToggle,
+  onOpen,
 }: {
   row: ListRow;
   /** Whether the row names its repository with a chip, as in All. */
@@ -42,6 +62,7 @@ export const IssueRow = memo(function IssueRow({
   selected: boolean;
   onSelect: (issueId: string) => void;
   onToggle: (issueId: string, expanded: boolean) => void;
+  onOpen: (issue: IssueDestination) => void;
 }) {
   const { node, depth, parent } = row;
   const { issue } = node;
@@ -55,6 +76,7 @@ export const IssueRow = memo(function IssueRow({
       data-issue-id={issue.id}
       onClick={() => {
         onSelect(issue.id);
+        onOpen(issue);
       }}
       className={cn(
         "flex h-8 scroll-mt-7 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap select-none",
@@ -110,7 +132,15 @@ export const IssueRow = memo(function IssueRow({
           </span>
         )}
       </span>
-      {parent && <ParentChip parent={parent} />}
+      {parent && (
+        <ParentChip
+          parent={parent}
+          onOpen={() => {
+            onSelect(issue.id);
+            onOpen(parent);
+          }}
+        />
+      )}
       <span className="flex-1" />
       <span
         className={cn(
@@ -178,9 +208,21 @@ function RepositoryChip({ issue }: { issue: IssueSummary }) {
 }
 
 /** The ↑ chip naming a parent issue the list does not show above. */
-function ParentChip({ parent }: { parent: ParentIssue }) {
+function ParentChip({
+  parent,
+  onOpen,
+}: {
+  parent: ParentIssue;
+  onOpen: () => void;
+}) {
   return (
-    <span
+    <button
+      type="button"
+      tabIndex={-1}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
       title={`Sub-issue of ${parent.reference}: ${parent.title}`}
       className="flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground"
     >
@@ -193,7 +235,7 @@ function ParentChip({ parent }: { parent: ParentIssue }) {
       </svg>
       {parent.reference}
       {parent.external && " · external"}
-    </span>
+    </button>
   );
 }
 

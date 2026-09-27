@@ -1859,3 +1859,136 @@ describe("All", () => {
     });
   });
 });
+
+describe("issue pages", () => {
+  it("returns page metadata, including the closing reason and all labels", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const metadata = {
+      stateReason: "not-planned" as const,
+      createdAt: "2026-08-01T12:00:00Z",
+      author: {
+        login: "octo-author",
+        avatarUrl: "https://avatars.githubusercontent.com/u/1",
+      },
+      assignees: [
+        {
+          login: "octo-dev",
+          avatarUrl: "https://avatars.githubusercontent.com/u/2",
+        },
+      ],
+      milestone: "MVP",
+      commentCount: 12,
+    };
+    const labels = ["one", "two", "three", "four"].map((name) => ({
+      name,
+      color: "ff0000",
+    }));
+    github.addRepository("other/work", [
+      {
+        number: 1,
+        title: "Done",
+        state: "closed",
+        labels,
+        metadata,
+        blockedBy: { open: 2, total: 3 },
+        blocking: { open: 1, total: 4 },
+      },
+    ]);
+    const core = createTestCore(github);
+
+    const page = await core.getIssuePage("I_other/work#1");
+
+    expect(page.issue).toMatchObject({
+      ...metadata,
+      state: "closed",
+      labels,
+      blockedBy: { open: 2, total: 3 },
+      blocking: { open: 1, total: 4 },
+    });
+  });
+
+  it("loads an external issue's ancestry and nested sub-issues without tracking repositories", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }],
+      views: [],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [
+      { number: 2, title: "Parent", subIssues: ["other/work#3"] },
+      { number: 3, title: "Page", subIssues: ["other/work#4", "acme/api#6"] },
+      { number: 4, title: "Sub-issue", subIssues: ["other/work#5"] },
+      { number: 5, title: "Nested", state: "closed" },
+    ]);
+    github.addRepository("acme/api", [
+      { number: 1, title: "Root", subIssues: ["other/work#2"] },
+      { number: 6, title: "Second sub-issue" },
+    ]);
+    const core = createTestCore(github);
+
+    const page = await core.getIssuePage("I_other/work#3");
+
+    expect(page.failure).toBeUndefined();
+    expect(page.issue).toMatchObject({ id: "I_other/work#3", external: true });
+    expect(page.ancestry.map(({ reference }) => reference)).toEqual([
+      "acme/api#1",
+      "other/work#2",
+    ]);
+    expect(page.subIssues.map(({ issue }) => issue.reference)).toEqual([
+      "#4",
+      "acme/api#6",
+    ]);
+    expect(page.subIssues[0]).toMatchObject({
+      expanded: false,
+      subIssues: [
+        { issue: { reference: "#5", state: "closed" }, expanded: false },
+      ],
+    });
+    expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api 2"]);
+  });
+});
+
+it("keeps the issue visible when relationships fail, and retries the missing content", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    { number: 1, title: "Parent", subIssues: ["acme/api#2"] },
+    { number: 2, title: "Page", subIssues: ["acme/api#3"] },
+    { number: 3, title: "Sub-issue" },
+  ]);
+  github.pause("fetchIssueDetails");
+  const core = createTestCore(github);
+  const loading = core.getIssuePage("I_acme/api#2");
+  await vi.waitFor(() => {
+    expect(github.requestsInFlight).toBe(1);
+  });
+  github.failWith({
+    kind: "http",
+    status: 503,
+    message: "Service unavailable",
+  });
+  github.resume();
+  const failed = await loading;
+  expect(failed.issue?.title).toBe("Page");
+  expect(failed.failure).toContain("Service unavailable");
+
+  github.failWith(undefined);
+  const retried = await core.getIssuePage("I_acme/api#2");
+  expect(retried.failure).toBeUndefined();
+  expect(retried.ancestry.map(({ title }) => title)).toEqual(["Parent"]);
+  expect(retried.subIssues.map(({ issue }) => issue.title)).toEqual([
+    "Sub-issue",
+  ]);
+  github.failWith({
+    kind: "http",
+    status: 503,
+    message: "Service unavailable",
+  });
+  expect(await core.getIssuePage("I_acme/api#2")).toEqual(retried);
+});
+
+it("reports an inaccessible issue without presenting it as an empty page", async () => {
+  const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
+  const page = await core.getIssuePage("I_other/work#404");
+  expect(page.issue).toBeUndefined();
+  expect(page.failure).toBeTruthy();
+});

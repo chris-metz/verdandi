@@ -1,7 +1,7 @@
 import type { Scope } from "@verdandi/core/contract";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { IssueListPane } from "./IssueListPane";
+import { MainArea } from "./MainArea";
 import {
   commandForWindowKey,
   shortcutModifier,
@@ -106,7 +106,7 @@ export function App() {
       >
         {selected ? (
           // A new scope starts from a fresh list, never the previous one's.
-          <IssueListPane
+          <MainArea
             key={scopeLabel(selected)}
             scope={selected}
             hasKeyboard={focused === "main"}

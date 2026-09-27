@@ -1,4 +1,4 @@
-import type { Label, RepositoryAddress } from "../contract.ts";
+import type { IssueMetadata, Label, RepositoryAddress } from "../contract.ts";
 
 /**
  * The GitHub-access port. Every GitHub read the core makes goes through it,
@@ -6,6 +6,8 @@ import type { Label, RepositoryAddress } from "../contract.ts";
  * can schedule and count them.
  */
 export interface GitHubAccess {
+  /** Reads a single issue with the metadata shown on its page. */
+  fetchIssueDetails(id: string): Promise<GitHubResult<Issue & IssueMetadata>>;
   /** Reads the account GitHub answers as. */
   fetchViewer(): Promise<GitHubResult<Viewer>>;
   /**

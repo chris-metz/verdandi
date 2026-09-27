@@ -1,11 +1,11 @@
 import type {
   IssueNode,
-  IssueSummary,
   IssueTree,
   ParentIssue,
   RepositoryAddress,
   Scope,
 } from "./contract.ts";
+import { summarizeIssue } from "./issue-summary.ts";
 import type { Issue, IssueReference } from "./github/port.ts";
 import { nameWithOwner, sameRepository } from "./repository-address.ts";
 
@@ -84,27 +84,6 @@ export function buildForest({
   }
   for (const issue of listed.values()) markNested(issue);
 
-  function summarize(issue: Issue): IssueSummary {
-    const { blockedBy, totalBlockedBy, blocking, totalBlocking } =
-      issue.issueDependenciesSummary;
-    return {
-      id: issue.id,
-      repository: issue.repository,
-      reference: referenceTo(issue, "row"),
-      title: issue.title,
-      state: issue.state,
-      url: issue.url,
-      labels: issue.labels,
-      external: isExternal(issue.repository),
-      subIssueProgress: {
-        closed: issue.subIssuesSummary.completed,
-        total: issue.subIssuesSummary.total,
-      },
-      blockedBy: { open: blockedBy, total: totalBlockedBy },
-      blocking: { open: blocking, total: totalBlocking },
-    };
-  }
-
   /**
    * `#12` where the repository goes without saying: beside a row's
    * repository chip in All, or in a repository's own list for its own
@@ -142,7 +121,10 @@ export function buildForest({
       else missing.set(reference.id, reference);
     }
     return {
-      issue: summarize(issue),
+      issue: summarizeIssue(issue, {
+        reference: referenceTo(issue, "row"),
+        external: isExternal(issue.repository),
+      }),
       subIssues,
       expanded: isExpanded(issue.id),
     };
