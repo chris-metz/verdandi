@@ -20,6 +20,14 @@ _Avoid_: foreign issue, remote issue
 A named, saved GitHub issue search whose scope is defined by its search text, independently of tracked repositories.
 _Avoid_: dashboard, workspace, smart folder
 
+**Match**:
+An issue returned by a view's search.
+_Avoid_: hit, result
+
+**Context issue**:
+An issue shown in a view's tree only as an ancestor or sub-issue of a match, not because the search returned it. It is known not to match only when the view's search results are complete; otherwise its match status is unknown.
+_Avoid_: nonmatch, filler issue
+
 ### Issue relationships
 
 **Sub-issue**:
