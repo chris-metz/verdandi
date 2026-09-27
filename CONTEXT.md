@@ -7,7 +7,7 @@ A desktop client for reading GitHub issues across many repositories at once, foc
 ### Repositories
 
 **Tracked repository**:
-A GitHub repository the user has explicitly added for direct browsing in Verdandi. Tracked repositories define the scope of All, independently of views.
+A GitHub repository the user has explicitly added for direct browsing in Verdandi. Tracked repositories define the scope of All, independently of views. It is the repository itself, not its `owner/name`: it stays the same tracked repository through renames and transfers, and a new repository that takes over its old name is a different one.
 _Avoid_: watched repository, subscribed repository, starred repository
 
 **External issue**:
