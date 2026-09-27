@@ -73,6 +73,10 @@ export type OpenIssueCount =
 export type Scope =
   { kind: "all" } | { kind: "repository"; repository: RepositoryAddress };
 
+/** What the main area shows: a scope's list, or an issue page. */
+export type Screen =
+  { kind: "list"; scope: Scope } | { kind: "issue"; issueId: string };
+
 /** A GitHub label. */
 export interface Label {
   name: string;
@@ -157,13 +161,50 @@ export interface IssueTree extends IssueNode {
 }
 
 /**
- * How far a list has loaded. Issues loaded before a failure stay listed. The
- * counts are known only once everything has loaded.
+ * How far a part of a screen has loaded, such as a repository within All, and
+ * how current it is.
+ *
+ * - `loading`: it has not loaded yet.
+ * - `refreshing`: it is being read again, and shows what it has meanwhile.
+ * - `current`: it has loaded.
+ * - `failed`: it could not be read.
+ */
+export type LoadingState =
+  | { status: "loading" }
+  | {
+      status: "refreshing" | "current";
+      /**
+       * When GitHub was asked for the oldest of what it shows, in
+       * milliseconds since the epoch.
+       */
+      updatedAt: number;
+    }
+  | { status: "failed"; message: string };
+
+/** A repository within a list, and how far its open issues have loaded. */
+export interface RepositoryLoading {
+  repository: RepositoryAddress;
+  loading: LoadingState;
+}
+
+/**
+ * How far a list has loaded, and how current it is. Issues loaded before a
+ * failure stay listed. The counts are known only once everything has loaded.
+ *
+ * - `loading`: it has not loaded yet; issues fill in as they arrive.
+ * - `refreshing`: it is being read again, and shows what it has meanwhile.
+ * - `current`: everything it shows has loaded.
+ * - `failed`: something it shows could not be read.
  */
 export type ListLoading =
   | { status: "loading" }
   | {
-      status: "loaded";
+      status: "refreshing" | "current";
+      /**
+       * When GitHub was asked for the oldest of what it shows, in
+       * milliseconds since the epoch.
+       */
+      updatedAt: number;
       /**
        * How many open issues the repository has, or in All every tracked
        * repository together.
@@ -191,6 +232,12 @@ export interface IssueList {
   scope: Scope;
   trees: IssueTree[];
   loading: ListLoading;
+  /**
+   * The repositories All merges, once they are known, in the settings file's
+   * order, each with how far its open issues have loaded. None in a
+   * repository's list, whose loading is the list's own.
+   */
+  repositories: RepositoryLoading[];
 }
 
 /** Metadata read when an issue page is opened. */
@@ -217,18 +264,25 @@ export interface IssuePage {
   ancestry: (ParentIssue & { url: string })[];
   /** The list's outline rows, in GitHub order, initially collapsed. */
   subIssues: IssueTree[];
-  /** A failed or incomplete read; available content remains usable. */
-  failure: string | undefined;
+  /**
+   * How far the page has loaded, and how current it is. What loaded before a
+   * failure stays usable.
+   */
+  loading: LoadingState;
 }
 
 /** Request/response calls. */
 export interface CoreRequests {
   /**
-   * Reads an issue, its ancestry and sub-issues without tracking repositories.
-   * Successful pages are reused for the session; failed reads can be retried.
-   * The renderer keeps each visit's cursor, expansion and scroll position.
+   * Opens an issue page: an issue with its ancestry and sub-issues, from any
+   * repository, tracked or not. Its current state is pushed as
+   * `issuePageChanged` at once, and again when it has loaded. A page opened
+   * again shows what it has, and is read again in the background when it is
+   * older than five minutes, or at once if it failed. The sidebar's counts
+   * are read again too if they are older than five minutes. The renderer
+   * keeps each visit's cursor, expansion and scroll position.
    */
-  getIssuePage: (issueId: string) => Promise<IssuePage>;
+  openIssuePage: (issueId: string) => Promise<void>;
   /** Which account Verdandi reads GitHub as. */
   getAccount: () => Promise<AccountStatus>;
   /**
@@ -241,11 +295,13 @@ export interface CoreRequests {
   /**
    * Opens a scope's list. Its current state is pushed as `listChanged` at
    * once, then again as each page of open issues and each batch of the other
-   * issues it shows arrives. Only the opened scope is loaded, once per
-   * session: opening it again reuses what is loaded or loading, and loads it
-   * again only if it failed. All loads every tracked repository side by side,
-   * and shares each repository's open issues with that repository's list, so
-   * neither reads again what the other has read.
+   * issues it shows arrives. Only the opened scope is loaded: opening it again
+   * shows what is loaded or loading, and reads it again in the background
+   * when it is older than five minutes, or at once if it failed. All loads
+   * every tracked repository side by side, and shares each repository's open
+   * issues with that repository's list, so neither reads again what the
+   * other has read in the last five minutes. The sidebar's counts are read
+   * again too if they are older than five minutes.
    */
   openList: (scope: Scope) => Promise<void>;
   /**
@@ -262,6 +318,21 @@ export interface CoreRequests {
    * issues that load later, then pushes the list.
    */
   setAllExpanded: (scope: Scope, expanded: boolean) => Promise<void>;
+  /**
+   * Reads everything on screen again now, however recently it was read: the
+   * sidebar's counts, and the screen the main area shows, if any, pushing
+   * them as they change. What they have shows meanwhile. A list reads its
+   * repositories' open issues and the other issues it shows, with the
+   * sub-issues of expanded ones; those of collapsed ones are read again once
+   * they show.
+   */
+  refresh: (screen: Screen | undefined) => Promise<void>;
+  /**
+   * What is on screen is shown again, e.g. as the window regains focus: the sidebar's counts, and the screen the main area shows, if any,
+   * once opened. What is older than five minutes is read again in the
+   * background, as opening a screen would.
+   */
+  revalidate: (screen: Screen | undefined) => Promise<void>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -270,6 +341,8 @@ export interface CoreEvents {
   accountChanged: Account;
   /** A list's state, when it is opened and whenever it changes. */
   listChanged: IssueList;
+  /** An issue page's state, when it is opened and whenever it changes. */
+  issuePageChanged: IssuePage;
   /**
    * The sidebar as last read, whenever an open-issue count changes: when
    * counts arrive, and when a repository's list loads with a new count.
@@ -289,16 +362,19 @@ export interface Contract extends CoreRequests {
 }
 
 const requests: Record<keyof CoreRequests, true> = {
-  getIssuePage: true,
+  openIssuePage: true,
   getAccount: true,
   getSidebar: true,
   openList: true,
   setExpanded: true,
   setAllExpanded: true,
+  refresh: true,
+  revalidate: true,
 };
 const events: Record<CoreEventName, true> = {
   accountChanged: true,
   listChanged: true,
+  issuePageChanged: true,
   sidebarChanged: true,
 };
 

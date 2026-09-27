@@ -1,5 +1,9 @@
-import { expect, it } from "vitest";
-import { commandForIssuePageKey } from "./issue-page-navigation";
+import { describe, expect, it } from "vitest";
+import {
+  commandForIssuePageKey,
+  followCursor,
+  type CursorPlace,
+} from "./issue-page-navigation";
 
 const current = {
   id: "issue",
@@ -59,4 +63,37 @@ it("moves between the issue and its breadcrumb and opens the focused destination
       [],
     ),
   ).toEqual({ kind: "openOnGitHub", url: current.url });
+});
+
+describe("the cursor as the page changes under it", () => {
+  /** The cursor placed on an issue, among a page's targets. */
+  function placed(targets: string[], cursor: string): CursorPlace {
+    return { targets, placed: cursor, shownOn: cursor };
+  }
+
+  it("stays on its issue wherever it moves", () => {
+    const moved = followCursor(
+      placed(["a", "b", "c"], "b"),
+      ["b", "a", "c"],
+      "b",
+    );
+    expect(moved.shownOn).toBe("b");
+  });
+
+  it("moves to the nearest issue below one that disappeared, and stays there", () => {
+    const gone = followCursor(placed(["a", "b", "c"], "b"), ["a", "c"], "b");
+    expect(gone.shownOn).toBe("c");
+    expect(followCursor(gone, ["x", "a", "c"], "b").shownOn).toBe("c");
+  });
+
+  it("stays on an issue that has not loaded yet", () => {
+    expect(
+      followCursor(placed(["page"], "b"), ["page", "a", "b"], "b").shownOn,
+    ).toBe("b");
+  });
+
+  it("goes where the user moves it", () => {
+    const gone = followCursor(placed(["a", "b", "c"], "b"), ["a", "c"], "b");
+    expect(followCursor(gone, gone.targets, "a").shownOn).toBe("a");
+  });
 });

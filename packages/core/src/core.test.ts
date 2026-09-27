@@ -8,6 +8,7 @@ import type {
   Contract,
   IssueList,
   IssueNode,
+  IssuePage,
   Scope,
   SidebarEntries,
 } from "./contract.ts";
@@ -31,8 +32,36 @@ async function writeSettings(settings: unknown) {
   await writeFile(join(home, "settings.json"), JSON.stringify(settings));
 }
 
-/** The core on a fake GitHub, with the real settings file below `home`. */
-function createTestCore(github: FakeGitHub): Contract {
+/** When every test starts, by its clock. */
+const startTime = Date.parse("2026-09-27T12:00:00Z");
+
+/** One minute, in the clock's milliseconds. */
+const minute = 60 * 1000;
+
+/** A clock that stands still until the test moves it on. */
+interface TestClock {
+  now: () => number;
+  advance: (milliseconds: number) => void;
+}
+
+function createClock(): TestClock {
+  let time = startTime;
+  return {
+    now: () => time,
+    advance(milliseconds) {
+      time += milliseconds;
+    },
+  };
+}
+
+/**
+ * The core on a fake GitHub, with the real settings file below `home`, and a
+ * clock that stands still unless the test moves it on.
+ */
+function createTestCore(
+  github: FakeGitHub,
+  clock: TestClock = createClock(),
+): Contract {
   return createCore({
     github,
     settings: createSettingsFile({
@@ -40,26 +69,79 @@ function createTestCore(github: FakeGitHub): Contract {
       env: { VERDANDI_HOME: home },
       homedir: join(home, "no-such-home"),
     }),
+    now: clock.now,
   });
 }
 
-/** Opens a scope's list and waits until it has stopped loading. */
+/**
+ * Opens a scope's list and waits until nothing it shows is being read any
+ * more.
+ */
 async function openUntilLoaded(
   core: Contract,
   scope: Scope,
+): Promise<IssueList> {
+  return untilSettled(core, scope, () => core.openList(scope));
+}
+
+/**
+ * The list pushed for a scope once nothing it shows is being read any more,
+ * after `act`.
+ */
+async function untilSettled(
+  core: Contract,
+  scope: Scope,
+  act: () => Promise<void>,
 ): Promise<IssueList> {
   const settled = new Promise<IssueList>((resolve) => {
     const unsubscribe = core.on("listChanged", (list) => {
       if (
         isDeepStrictEqual(list.scope, scope) &&
-        list.loading.status !== "loading"
+        list.loading.status !== "loading" &&
+        list.loading.status !== "refreshing"
       ) {
         unsubscribe();
         resolve(list);
       }
     });
   });
-  await core.openList(scope);
+  await act();
+  return settled;
+}
+
+/**
+ * Opens an issue page and waits until nothing it shows is being read any
+ * more.
+ */
+async function openPageUntilLoaded(
+  core: Contract,
+  issueId: string,
+): Promise<IssuePage> {
+  return pageUntilSettled(core, issueId, () => core.openIssuePage(issueId));
+}
+
+/**
+ * The issue page pushed once nothing it shows is being read any more, after
+ * `act`.
+ */
+async function pageUntilSettled(
+  core: Contract,
+  issueId: string,
+  act: () => Promise<void>,
+): Promise<IssuePage> {
+  const settled = new Promise<IssuePage>((resolve) => {
+    const unsubscribe = core.on("issuePageChanged", (page) => {
+      if (
+        page.issueId === issueId &&
+        page.loading.status !== "loading" &&
+        page.loading.status !== "refreshing"
+      ) {
+        unsubscribe();
+        resolve(page);
+      }
+    });
+  });
+  await act();
   return settled;
 }
 
@@ -709,6 +791,72 @@ describe("sidebar counts", () => {
     });
   });
 
+  it("reads the counts again, showing them meanwhile, when a screen opens more than five minutes after they were read", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await readUntilCounted(core);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+
+    github.addRepository("acme/web", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    clock.advance(5 * minute);
+    await openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+    expect(pushed).toEqual([]);
+
+    clock.advance(1);
+    await openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(pushed.map(sidebarLines)).toEqual([["acme/api 1", "acme/web 2"]]);
+    });
+  });
+
+  it("reads the counts again when the window regains focus more than five minutes after they were read", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await readUntilCounted(core);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    clock.advance(5 * minute + 1);
+    const pushed = await nextSidebar(core, () => core.revalidate(undefined));
+
+    expect(sidebarLines(pushed)).toEqual(["acme/api 2"]);
+  });
+
+  it("reads the counts again on a refresh, however recently they were read", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const pushed = await nextSidebar(core, () => core.refresh(undefined));
+
+    expect(sidebarLines(pushed)).toEqual(["acme/api 2"]);
+  });
+
   it("asks GitHub nothing while no repository is tracked", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     const core = createTestCore(github);
@@ -758,7 +906,7 @@ describe("repository list", () => {
       { outline: ["#5 Dark mode", "#4 Audit trail"], loading: "loading" },
       {
         outline: ["#5 Dark mode", "#4 Audit trail", "#2 CSV import"],
-        loading: "loaded",
+        loading: "current",
       },
     ]);
   });
@@ -809,6 +957,7 @@ describe("repository list", () => {
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
       trees: [],
+      repositories: [],
       loading: {
         status: "failed",
         message:
@@ -826,7 +975,7 @@ describe("repository list", () => {
     const reopened = await openUntilLoaded(core, acmeApi);
 
     expect(outline(reopened)).toEqual(["#1 Crash on start"]);
-    expect(reopened.loading.status).toBe("loaded");
+    expect(reopened.loading.status).toBe("current");
   });
 
   it("does not load a repository twice when it is reopened mid-load", async () => {
@@ -973,7 +1122,8 @@ describe("sub-issue forest", () => {
       "  #2 Meter requests · closed",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 1,
       closedNotListed: 3,
     });
@@ -1009,7 +1159,8 @@ describe("sub-issue forest", () => {
       "  #5 Rate cards",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 2,
       closedNotListed: 0,
     });
@@ -1043,7 +1194,8 @@ describe("sub-issue forest", () => {
       "    #7 Usage endpoint",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 1,
       closedNotListed: 1,
     });
@@ -1360,7 +1512,8 @@ describe("All", () => {
       "acme/api #1 Crash on start",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 3,
       closedNotListed: 0,
     });
@@ -1538,7 +1691,8 @@ describe("All", () => {
       "acme/web #6 Broken footer",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 2,
       closedNotListed: 3,
     });
@@ -1571,7 +1725,8 @@ describe("All", () => {
       "  acme/api #7 Usage endpoint",
     ]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 1,
       closedNotListed: 2,
     });
@@ -1785,7 +1940,7 @@ describe("All", () => {
       "acme/gone #4 Found again",
       "acme/api #1 Crash on start",
     ]);
-    expect(reopened.loading.status).toBe("loaded");
+    expect(reopened.loading.status).toBe("current");
     expect(github.requestsFor("acme/api")).toBe(1);
   });
 
@@ -1797,6 +1952,7 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       trees: [],
+      repositories: [],
       loading: {
         status: "failed",
         message: expect.stringContaining(
@@ -1814,7 +1970,13 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       trees: [],
-      loading: { status: "loaded", openIssues: 0, closedNotListed: 0 },
+      repositories: [],
+      loading: {
+        status: "current",
+        updatedAt: startTime,
+        openIssues: 0,
+        closedNotListed: 0,
+      },
     });
     expect(github.requestsReceived).toBe(0);
   });
@@ -1853,10 +2015,385 @@ describe("All", () => {
 
     expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
     expect(list.loading).toEqual({
-      status: "loaded",
+      status: "current",
+      updatedAt: startTime,
       openIssues: 1,
       closedNotListed: 0,
     });
+  });
+});
+
+describe("freshness", () => {
+  it("says a loaded list is current as of when GitHub was read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+
+    expect((await openUntilLoaded(core, acmeApi)).loading).toEqual({
+      status: "current",
+      updatedAt: startTime,
+      openIssues: 1,
+      closedNotListed: 0,
+    });
+  });
+
+  it("reads a list again in the background when it is opened more than five minutes after it was read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, acmeApi);
+    await openUntilLoaded(core, acmeWeb);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start, again" },
+    ]);
+    clock.advance(5 * minute + 1);
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+    const reread = await openUntilLoaded(core, acmeApi);
+
+    // What it had shows at once, while it is read again.
+    expect(pushed[0] && outline(pushed[0])).toEqual(["#1 Crash on start"]);
+    expect(pushed[0]?.loading).toMatchObject({
+      status: "refreshing",
+      updatedAt: startTime,
+    });
+    expect(outline(reread)).toEqual([
+      "#2 Dark mode",
+      "#1 Crash on start, again",
+    ]);
+    expect(reread.loading).toMatchObject({
+      status: "current",
+      updatedAt: startTime + 5 * minute + 1,
+      openIssues: 2,
+    });
+  });
+
+  it("shows a list opened again within five minutes of being read without asking GitHub", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, acmeApi);
+    const requestsBefore = github.requestsReceived;
+
+    clock.advance(5 * minute);
+    const reopened = await openUntilLoaded(core, acmeApi);
+
+    expect(reopened.loading).toMatchObject({
+      status: "current",
+      updatedAt: startTime,
+    });
+    expect(github.requestsReceived).toBe(requestsBefore);
+  });
+
+  it("reads the list on screen again when the window regains focus more than five minutes after it was read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, acmeApi);
+    const requestsBefore = github.requestsReceived;
+
+    github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
+    clock.advance(5 * minute);
+    await core.revalidate({ kind: "list", scope: acmeApi });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(github.requestsReceived).toBe(requestsBefore);
+
+    clock.advance(1);
+    const reread = await untilSettled(core, acmeApi, () =>
+      core.revalidate({ kind: "list", scope: acmeApi }),
+    );
+    expect(outline(reread)).toEqual(["#1 Crash at start"]);
+    expect(reread.loading).toMatchObject({
+      status: "current",
+      updatedAt: startTime + 5 * minute + 1,
+    });
+  });
+});
+
+describe("loading states", () => {
+  it("shows at once what another list read when a list opens for the first time, reading it again if it is older than five minutes", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, all);
+
+    github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
+    clock.advance(6 * minute);
+    github.pause();
+    const shown = new Promise<IssueList>((resolve) => {
+      core.on("listChanged", (list) => {
+        if (list.scope.kind === "repository" && list.trees.length > 0) {
+          resolve(list);
+        }
+      });
+    });
+    const reread = openUntilLoaded(core, acmeApi);
+
+    const cached = await shown;
+    expect(outline(cached)).toEqual(["#1 Crash on start"]);
+    expect(cached.loading).toMatchObject({
+      status: "refreshing",
+      updatedAt: startTime,
+    });
+    github.resume();
+    expect(outline(await reread)).toEqual(["#1 Crash at start"]);
+  });
+
+  it("says a list is empty only once every request for it has succeeded", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Old crash", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+    github.pause();
+
+    const loaded = openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    expect(pushed.map((list) => list.loading)).toEqual([{ status: "loading" }]);
+    github.resume();
+
+    expect((await loaded).loading).toEqual({
+      status: "current",
+      updatedAt: startTime,
+      openIssues: 0,
+      closedNotListed: 1,
+    });
+  });
+
+  it("never asks GitHub anything while time passes on its own", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await readUntilCounted(core);
+    await openUntilLoaded(core, acmeApi);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    const requestsBefore = github.requestsReceived;
+
+    vi.useFakeTimers();
+    try {
+      clock.advance(24 * 60 * minute);
+      await vi.advanceTimersByTimeAsync(24 * 60 * minute);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(github.requestsReceived).toBe(requestsBefore);
+  });
+
+  it("says how far each of All's repositories has loaded", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, acmeApi);
+    clock.advance(minute);
+    github.pause("fetchOpenIssues");
+
+    const loading = new Promise<IssueList>((resolve) => {
+      core.on("listChanged", (list) => {
+        if (list.scope.kind === "all" && list.repositories.length > 0) {
+          resolve(list);
+        }
+      });
+    });
+    const loaded = openUntilLoaded(core, all);
+    expect(await loading).toMatchObject({
+      loading: { status: "loading" },
+      repositories: [
+        {
+          repository: { owner: "acme", name: "api" },
+          loading: { status: "current", updatedAt: startTime },
+        },
+        {
+          repository: { owner: "acme", name: "web" },
+          loading: { status: "loading" },
+        },
+      ],
+    });
+    github.resume();
+
+    expect((await loaded).repositories).toEqual([
+      {
+        repository: { owner: "acme", name: "api" },
+        loading: { status: "current", updatedAt: startTime },
+      },
+      {
+        repository: { owner: "acme", name: "web" },
+        loading: { status: "current", updatedAt: startTime + minute },
+      },
+    ]);
+  });
+});
+
+describe("refresh", () => {
+  /** acme/api, tracked, with a closed sub-issue and an external one. */
+  async function billing(github: FakeGitHub, version = "") {
+    github.addRepository("acme/api", [
+      {
+        number: 2,
+        title: `Launch billing${version}`,
+        subIssues: ["acme/api#1", "other/lib#1"],
+      },
+      { number: 1, title: `Meter requests${version}`, state: "closed" },
+    ]);
+    github.addRepository("other/lib", [
+      { number: 1, title: `Shared client${version}` },
+    ]);
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+  }
+
+  it("reads everything a list shows again at once, however recently it was read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    await billing(github);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    await billing(github, " v2");
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(refreshed)).toEqual([
+      "#2 Launch billing v2",
+      "  #1 Meter requests v2 · closed",
+      "  other/lib#1 Shared client v2 · external",
+    ]);
+    expect(refreshed.loading).toMatchObject({
+      status: "current",
+      updatedAt: startTime,
+    });
+  });
+
+  it("reads the sub-issues of a collapsed issue again only once they show", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    await billing(github);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await core.setExpanded(acmeApi, "I_acme/api#2", false);
+
+    await billing(github, " v2");
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+    expect(outline(refreshed)).toEqual([
+      "#2 Launch billing v2",
+      "  #1 Meter requests · closed",
+      "  other/lib#1 Shared client · external",
+    ]);
+    expect(collapsedIssues(refreshed)).toEqual(["#2"]);
+    expect(github.requestsFor("other/lib")).toBe(1);
+
+    const expanded = await untilSettled(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#2", true),
+    );
+    expect(outline(expanded)).toEqual([
+      "#2 Launch billing v2",
+      "  #1 Meter requests v2 · closed",
+      "  other/lib#1 Shared client v2 · external",
+    ]);
+  });
+
+  it("keeps showing every issue while it reads a list's pages again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+
+    github.addRepository("acme/api", [
+      { number: 3, title: "Audit trail" },
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    for (const list of pushed) {
+      expect(outline(list)).toEqual(
+        expect.arrayContaining(["#2 Dark mode", "#1 Crash on start"]),
+      );
+    }
+    expect(pushed.slice(0, -1).map((list) => list.loading.status)).toEqual(
+      pushed.slice(0, -1).map(() => "refreshing"),
+    );
+    expect(outline(refreshed)).toEqual([
+      "#3 Audit trail",
+      "#2 Dark mode",
+      "#1 Crash on start",
+    ]);
+  });
+
+  it("leaves out an issue closed meanwhile once its repository has been read again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start", state: "closed" },
+    ]);
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(refreshed)).toEqual(["#2 Dark mode"]);
+    expect(refreshed.loading).toMatchObject({
+      openIssues: 1,
+      closedNotListed: 1,
+    });
+  });
+
+  it("shows an issue read again for one list in every other list that shows it", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [
+      { number: 1, title: "Broken footer", subIssues: ["acme/api#1"] },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await openUntilLoaded(core, all);
+
+    github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
+    await untilSettled(core, all, () =>
+      core.refresh({ kind: "list", scope: all }),
+    );
+    const requestsBefore = github.requestsReceived;
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Crash at start · ↑ acme/web#1",
+    ]);
+    expect(github.requestsReceived).toBe(requestsBefore);
   });
 });
 
@@ -1896,7 +2433,7 @@ describe("issue pages", () => {
     ]);
     const core = createTestCore(github);
 
-    const page = await core.getIssuePage("I_other/work#1");
+    const page = await openPageUntilLoaded(core, "I_other/work#1");
 
     expect(page.issue).toMatchObject({
       ...metadata,
@@ -1926,9 +2463,9 @@ describe("issue pages", () => {
     ]);
     const core = createTestCore(github);
 
-    const page = await core.getIssuePage("I_other/work#3");
+    const page = await openPageUntilLoaded(core, "I_other/work#3");
 
-    expect(page.failure).toBeUndefined();
+    expect(page.loading).toEqual({ status: "current", updatedAt: startTime });
     expect(page.issue).toMatchObject({ id: "I_other/work#3", external: true });
     expect(page.ancestry.map(({ reference }) => reference)).toEqual([
       "acme/api#1",
@@ -1946,6 +2483,173 @@ describe("issue pages", () => {
     });
     expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api 2"]);
   });
+
+  /** An issue with a parent issue and a sub-issue, all in other/work. */
+  function workIssues(github: FakeGitHub, version = "") {
+    github.addRepository("other/work", [
+      { number: 1, title: `Parent${version}`, subIssues: ["other/work#2"] },
+      { number: 2, title: `Page${version}`, subIssues: ["other/work#3"] },
+      { number: 3, title: `Sub-issue${version}` },
+    ]);
+  }
+
+  /** A page as a user reads it: its ancestry, title and sub-issues. */
+  function pageOutline(page: IssuePage): string[] {
+    return [
+      ...page.ancestry.map(({ title }) => `/ ${title}`),
+      `# ${page.issue?.title ?? "?"}`,
+      ...page.subIssues.map(({ issue }) => `- ${issue.title}`),
+    ];
+  }
+
+  it("shows a page opened again at once, and reads it again in the background when it is older than five minutes", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    workIssues(github);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openPageUntilLoaded(core, "I_other/work#2");
+
+    workIssues(github, " v2");
+    clock.advance(5 * minute);
+    const requestsBefore = github.requestsReceived;
+    const recent = await openPageUntilLoaded(core, "I_other/work#2");
+    expect(pageOutline(recent)).toEqual(["/ Parent", "# Page", "- Sub-issue"]);
+    expect(github.requestsReceived).toBe(requestsBefore);
+
+    clock.advance(1);
+    const pushed: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pushed.push(page));
+    const reread = await openPageUntilLoaded(core, "I_other/work#2");
+
+    expect(pushed[0] && pageOutline(pushed[0])).toEqual([
+      "/ Parent",
+      "# Page",
+      "- Sub-issue",
+    ]);
+    expect(pushed[0]?.loading).toEqual({
+      status: "refreshing",
+      updatedAt: startTime,
+    });
+    expect(pageOutline(reread)).toEqual([
+      "/ Parent v2",
+      "# Page v2",
+      "- Sub-issue v2",
+    ]);
+    expect(reread.loading).toEqual({
+      status: "current",
+      updatedAt: startTime + 5 * minute + 1,
+    });
+  });
+
+  it("reads a page on screen again when the window regains focus more than five minutes after it was read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    workIssues(github);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openPageUntilLoaded(core, "I_other/work#2");
+
+    workIssues(github, " v2");
+    clock.advance(5 * minute + 1);
+    const reread = await pageUntilSettled(core, "I_other/work#2", () =>
+      core.revalidate({ kind: "issue", issueId: "I_other/work#2" }),
+    );
+
+    expect(pageOutline(reread)).toEqual([
+      "/ Parent v2",
+      "# Page v2",
+      "- Sub-issue v2",
+    ]);
+  });
+
+  it("reads a page's metadata, ancestry and sub-issues again on a refresh, however recently they were read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    workIssues(github);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_other/work#2");
+
+    workIssues(github, " v2");
+    const refreshed = await pageUntilSettled(core, "I_other/work#2", () =>
+      core.refresh({ kind: "issue", issueId: "I_other/work#2" }),
+    );
+
+    expect(pageOutline(refreshed)).toEqual([
+      "/ Parent v2",
+      "# Page v2",
+      "- Sub-issue v2",
+    ]);
+    expect(refreshed.loading).toEqual({
+      status: "current",
+      updatedAt: startTime,
+    });
+  });
+
+  it("reads a page again on a refresh while it is being read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+      { number: 2, title: "Meter requests", state: "closed" },
+    ]);
+    const clock = createClock();
+    const core = createTestCore(github, clock);
+    await openUntilLoaded(core, acmeApi);
+
+    github.addRepository("acme/api", [
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+      { number: 2, title: "Meter usage", state: "closed" },
+    ]);
+    clock.advance(4 * minute);
+    github.pause("fetchIssueDetails");
+    const refreshed = pageUntilSettled(core, "I_acme/api#1", async () => {
+      await core.openIssuePage("I_acme/api#1");
+      await vi.waitFor(() => {
+        expect(github.requestsInFlight).toBe(1);
+      });
+      await core.refresh({ kind: "issue", issueId: "I_acme/api#1" });
+      github.resume();
+    });
+
+    expect((await refreshed).subIssues.map(({ issue }) => issue.title)).toEqual(
+      ["Meter usage"],
+    );
+  });
+
+  it("shows a page's issue as soon as it has arrived, while the rest loads", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    workIssues(github);
+    const core = createTestCore(github);
+    github.pause("fetchIssues");
+    const pushed: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pushed.push(page));
+
+    const loaded = openPageUntilLoaded(core, "I_other/work#2");
+    await vi.waitFor(() => {
+      expect(pushed.some((page) => page.issue !== undefined)).toBe(true);
+    });
+    const early = pushed.find((page) => page.issue !== undefined);
+    expect(early && pageOutline(early)).toEqual(["# Page"]);
+    expect(early?.loading).toEqual({ status: "loading" });
+    github.resume();
+
+    expect((await loaded).loading.status).toBe("current");
+  });
+
+  it("shows an issue read again for a list on its page", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
+    await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+    const requestsBefore = github.requestsReceived;
+
+    const page = await openPageUntilLoaded(core, "I_acme/api#1");
+    expect(page.issue?.title).toBe("Crash at start");
+    expect(github.requestsReceived).toBe(requestsBefore);
+  });
 });
 
 it("keeps the issue visible when relationships fail, and retries the missing content", async () => {
@@ -1957,7 +2661,7 @@ it("keeps the issue visible when relationships fail, and retries the missing con
   ]);
   github.pause("fetchIssueDetails");
   const core = createTestCore(github);
-  const loading = core.getIssuePage("I_acme/api#2");
+  const loading = openPageUntilLoaded(core, "I_acme/api#2");
   await vi.waitFor(() => {
     expect(github.requestsInFlight).toBe(1);
   });
@@ -1969,11 +2673,14 @@ it("keeps the issue visible when relationships fail, and retries the missing con
   github.resume();
   const failed = await loading;
   expect(failed.issue?.title).toBe("Page");
-  expect(failed.failure).toContain("Service unavailable");
+  expect(failed.loading).toEqual({
+    status: "failed",
+    message: expect.stringContaining("Service unavailable") as unknown,
+  });
 
   github.failWith(undefined);
-  const retried = await core.getIssuePage("I_acme/api#2");
-  expect(retried.failure).toBeUndefined();
+  const retried = await openPageUntilLoaded(core, "I_acme/api#2");
+  expect(retried.loading.status).toBe("current");
   expect(retried.ancestry.map(({ title }) => title)).toEqual(["Parent"]);
   expect(retried.subIssues.map(({ issue }) => issue.title)).toEqual([
     "Sub-issue",
@@ -1983,12 +2690,12 @@ it("keeps the issue visible when relationships fail, and retries the missing con
     status: 503,
     message: "Service unavailable",
   });
-  expect(await core.getIssuePage("I_acme/api#2")).toEqual(retried);
+  expect(await openPageUntilLoaded(core, "I_acme/api#2")).toEqual(retried);
 });
 
 it("reports an inaccessible issue without presenting it as an empty page", async () => {
   const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
-  const page = await core.getIssuePage("I_other/work#404");
+  const page = await openPageUntilLoaded(core, "I_other/work#404");
   expect(page.issue).toBeUndefined();
-  expect(page.failure).toBeTruthy();
+  expect(page.loading.status).toBe("failed");
 });

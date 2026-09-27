@@ -2,6 +2,7 @@ import type { IssueNode, IssueTree } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
   commandForKey,
+  followSelection,
   selectionIndex,
   visibleRows,
   type ListCommand,
@@ -107,6 +108,56 @@ describe("selection", () => {
 
   it("is nowhere in an empty list", () => {
     expect(selectionIndex([], [], "I_1")).toBe(-1);
+  });
+});
+
+describe("selection as the list changes under it", () => {
+  /** Where the selection goes when the list changes, by number. */
+  function follow(
+    before: IssueTree[],
+    after: IssueTree[],
+    selected: number,
+  ): string | undefined {
+    return followSelection(before, after, `I_${String(selected)}`);
+  }
+
+  it("stays on the same issue wherever it moves", () => {
+    expect(
+      follow(forest, [tree(issue(5)), tree(issue(1)), tree(issue(6))], 5),
+    ).toBe("I_5");
+  });
+
+  it("stays on an issue collapsed away, which shows on its parent issue", () => {
+    expect(
+      follow(forest, [tree(issue(1, [issue(2, [issue(3)], false)]))], 3),
+    ).toBe("I_3");
+  });
+
+  it("stays on an issue that has not loaded yet", () => {
+    expect(follow([], forest, 9)).toBe("I_9");
+    expect(follow(forest, forest, 9)).toBe("I_9");
+  });
+
+  it("moves to the issue below one that disappeared", () => {
+    expect(
+      follow(forest, [tree(issue(1, [issue(2), issue(4)])), tree(issue(5))], 3),
+    ).toBe("I_4");
+  });
+
+  it("moves to the issue above one that disappeared at the end", () => {
+    expect(follow(forest, [tree(issue(1)), tree(issue(5))], 6)).toBe("I_5");
+  });
+
+  it("passes over neighbours that disappeared as well", () => {
+    expect(follow(forest, [tree(issue(1)), tree(issue(6))], 3)).toBe("I_1");
+  });
+
+  it("moves to the parent issue it showed on when it disappears collapsed away", () => {
+    expect(follow(forest, [tree(issue(6)), tree(issue(5))], 7)).toBe("I_6");
+  });
+
+  it("is on no issue when none that showed is left", () => {
+    expect(follow(forest, [tree(issue(9))], 3)).toBeUndefined();
   });
 });
 

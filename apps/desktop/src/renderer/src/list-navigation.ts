@@ -66,6 +66,63 @@ export function selectionIndex(
 }
 
 /**
+ * Which issue the selection is on once a list has changed under it, e.g.
+ * after it was read again. It stays on the same issue while the list has it,
+ * even collapsed away, or has not loaded it yet. If the issue disappeared, it
+ * goes to the row the selection showed on, if that remains, else to the
+ * nearest row that still shows, below it first, else to none.
+ */
+export function followSelection(
+  previous: readonly IssueTree[],
+  trees: readonly IssueTree[],
+  selectedId: string | undefined,
+): string | undefined {
+  const has = (forest: readonly IssueTree[], id: string) =>
+    allNodes(forest).some((node) => node.issue.id === id);
+  if (
+    selectedId === undefined ||
+    has(trees, selectedId) ||
+    !has(previous, selectedId)
+  ) {
+    return selectedId;
+  }
+  const before = visibleRows(previous);
+  const shownOn =
+    before[selectionIndex(previous, before, selectedId)]?.node.issue.id;
+  if (shownOn === undefined) return undefined;
+  if (shownOn !== selectedId && has(trees, shownOn)) return shownOn;
+  return nearestRemaining(
+    before.map((row) => row.node.issue.id),
+    visibleRows(trees).map((row) => row.node.issue.id),
+    shownOn,
+  );
+}
+
+/**
+ * The nearest neighbour of an item that is gone, among those that were
+ * around it and remain: the one after it first, then the one before it, then
+ * further away.
+ */
+export function nearestRemaining(
+  before: readonly string[],
+  after: readonly string[],
+  gone: string,
+): string | undefined {
+  const index = before.indexOf(gone);
+  if (index < 0) return undefined;
+  const remaining = new Set(after);
+  for (let distance = 1; distance < before.length; distance++) {
+    for (const neighbour of [
+      before[index + distance],
+      before[index - distance],
+    ]) {
+      if (neighbour !== undefined && remaining.has(neighbour)) return neighbour;
+    }
+  }
+  return undefined;
+}
+
+/**
  * What a key does in a list, with the selection on the row at `index`:
  * `j`/`k`/↑/↓ move it, ←/→ collapse and expand (← on a sub-issue jumps to its
  * parent issue, → on an expanded issue steps into its sub-issues), `e`

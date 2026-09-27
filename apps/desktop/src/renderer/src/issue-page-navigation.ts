@@ -2,6 +2,7 @@ import type { IssueTree } from "@verdandi/core/contract";
 import type { IssueDestination } from "./issue-navigation";
 import {
   commandForKey,
+  nearestRemaining,
   visibleRows,
   type ListCommand,
 } from "./list-navigation";
@@ -75,4 +76,33 @@ export function issuePageTrees(
     };
   }
   return trees.map(visit);
+}
+
+/**
+ * Where the cursor is on a page: the page's targets as they last showed, the
+ * issue the cursor was placed on, and the one it shows on.
+ */
+export interface CursorPlace {
+  targets: readonly string[];
+  placed: string;
+  shownOn: string;
+}
+
+/**
+ * Where the cursor goes once the page's targets have changed, e.g. after it
+ * was read again, or the user placed it anew. It stays on its issue while the
+ * page shows it, or has not loaded it yet. If the issue disappeared, it goes
+ * to the nearest target that still shows, below it first.
+ */
+export function followCursor(
+  was: CursorPlace,
+  targets: readonly string[],
+  placed: string,
+): CursorPlace {
+  if (placed !== was.placed) return { targets, placed, shownOn: placed };
+  if (targets === was.targets) return was;
+  const shownOn = targets.includes(was.shownOn)
+    ? was.shownOn
+    : (nearestRemaining(was.targets, targets, was.shownOn) ?? was.shownOn);
+  return { targets, placed, shownOn };
 }

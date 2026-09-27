@@ -18,7 +18,9 @@ export interface KeyPress {
 
 /** What a key asks of the window. */
 export type WindowCommand =
-  { kind: "focus"; pane: Pane } | { kind: "select"; scope: Scope };
+  | { kind: "focus"; pane: Pane }
+  | { kind: "select"; scope: Scope }
+  | { kind: "refresh" };
 
 export interface WindowState {
   /** The pane that has the keyboard. */
@@ -46,10 +48,11 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
 
 /**
  * What a key does in the window before the focused pane gets it: Tab moves
- * the keyboard to the other pane, ⌘/Ctrl+1…9 select the sidebar's entries in
- * visual order, and in the sidebar ↑/↓ or `j`/`k` select the entry above or
- * below at once. Every other key is the focused pane's, so a list's keys work
- * only while the main area has the keyboard.
+ * the keyboard to the other pane, `r` refreshes what is on screen, ⌘/Ctrl+1…9
+ * select the sidebar's entries in visual order, and in the sidebar ↑/↓ or
+ * `j`/`k` select the entry above or below at once. Every other key is the
+ * focused pane's, so a list's keys work only while the main area has the
+ * keyboard.
  */
 export function commandForWindowKey(
   press: KeyPress,
@@ -68,6 +71,7 @@ export function commandForWindowKey(
   if (key === "Tab") {
     return { kind: "focus", pane: focused === "sidebar" ? "main" : "sidebar" };
   }
+  if (key === "r") return { kind: "refresh" };
   if (focused !== "sidebar") return undefined;
   const index =
     selected === undefined

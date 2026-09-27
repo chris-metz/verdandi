@@ -11,6 +11,12 @@ import type {
   SendRequest,
 } from "./github/port.ts";
 import {
+  atOrAfter,
+  fiveMinutesAgo,
+  type Clock,
+  type Moment,
+} from "./moments.ts";
+import {
   distinctRepositories,
   nameWithOwner,
   repositoryKey,
@@ -20,24 +26,42 @@ import type { SettingsStorage } from "./settings/port.ts";
 
 /**
  * The sidebar: the tracked repositories from the settings file, with their
- * open-issue counts. A count is read once per session, or again after reading
- * it failed, many repositories at a time and without their issues. It then
- * follows the repository's open issues each time they load, for its list or
- * for All.
+ * open-issue counts. Counts are read many repositories at a time and without
+ * their issues: when the sidebar is read, again when it is refreshed, when
+ * they are older than five minutes as a screen opens or is shown again,
+ * and after reading them failed. A count also follows the repository's open
+ * issues each time they load, for its list or for All. A known count stays
+ * shown while it is read again.
  */
 export interface Sidebar {
   /**
    * Reads the sidebar from the settings file, and asks GitHub for the counts
-   * it does not know and is not already asking for.
+   * it does not know or that are older than five minutes, unless it is
+   * already asking for them.
    */
   read(): Promise<SidebarEntries>;
-  /** Takes a repository's open-issue count from its open issues, just loaded. */
-  openIssuesLoaded(repository: RepositoryAddress, openIssues: number): void;
+  /**
+   * Asks GitHub again for the known counts that are older than five minutes,
+   * of the sidebar as last read.
+   */
+  revalidate(): void;
+  /** Asks GitHub again for every count of the sidebar as last read. */
+  refresh(): void;
+  /**
+   * Takes a repository's open-issue count from its open issues, just loaded,
+   * with when their read started.
+   */
+  openIssuesLoaded(
+    repository: RepositoryAddress,
+    openIssues: number,
+    readAt: Moment,
+  ): void;
 }
 
 export interface SidebarOptions {
   settings: SettingsStorage;
   request: SendRequest;
+  clock: Clock;
   /** Pushes the sidebar to the interfaces. */
   push: (sidebar: SidebarEntries) => void;
 }
@@ -54,18 +78,30 @@ const unanswered: GitHubResult<RepositorySummary> = {
   error: { kind: "unexpected-response" },
 };
 
+/** A repository's count, and how it was read. */
+interface Count {
+  count: OpenIssueCount;
+  /** When GitHub was asked for the count, once it is known. */
+  readAt: Moment | undefined;
+  /** Whether GitHub is being asked for it. */
+  asking: boolean;
+}
+
 export function createSidebar({
   settings,
   request,
+  clock,
   push,
 }: SidebarOptions): Sidebar {
   /** Each repository's count, by `repositoryKey`. */
-  const counts = new Map<string, OpenIssueCount>();
+  const counts = new Map<string, Count>();
   /** The tracked repositories as last read: what a push lists. */
   let tracked: RepositoryAddress[] | undefined;
 
   function countOf(repository: RepositoryAddress): OpenIssueCount {
-    return counts.get(repositoryKey(repository)) ?? { status: "loading" };
+    return (
+      counts.get(repositoryKey(repository))?.count ?? { status: "loading" }
+    );
   }
 
   function entries(repositories: RepositoryAddress[]): SidebarEntries {
@@ -83,27 +119,69 @@ export function createSidebar({
     if (tracked) push(entries(tracked));
   }
 
+  /** Whether a count is known, but older than five minutes. */
+  function outdated(repository: RepositoryAddress): boolean {
+    const readAt = counts.get(repositoryKey(repository))?.readAt;
+    return readAt !== undefined && !atOrAfter(readAt, fiveMinutesAgo(clock));
+  }
+
+  /** Whether a count is unknown, or older than five minutes. */
+  function unknownOrOutdated(repository: RepositoryAddress): boolean {
+    return countOf(repository).status !== "known" || outdated(repository);
+  }
+
+  /**
+   * Asks GitHub for repositories' counts that it is not already asking for,
+   * and says whether any count shown changed: an unknown one is now loading.
+   */
+  function ask(repositories: readonly RepositoryAddress[]): boolean {
+    const asked: RepositoryAddress[] = [];
+    let changed = false;
+    for (const repository of distinctRepositories(repositories)) {
+      const key = repositoryKey(repository);
+      const count = counts.get(key) ?? {
+        count: { status: "loading" },
+        readAt: undefined,
+        asking: false,
+      };
+      counts.set(key, count);
+      if (count.asking) continue;
+      count.asking = true;
+      if (count.count.status === "failed") {
+        count.count = { status: "loading" };
+        changed = true;
+      }
+      asked.push(repository);
+    }
+    for (const batch of inBatches(asked, repositoriesPerRequest)) {
+      void requestCounts(batch);
+    }
+    return changed;
+  }
+
   /** Asks GitHub for some repositories' counts in one request. */
   async function requestCounts(repositories: RepositoryAddress[]) {
+    const askedAt = clock();
     const result = await request((github) =>
       github.fetchRepositorySummaries(repositories),
     );
     let changed = false;
     for (const [index, repository] of repositories.entries()) {
-      const key = repositoryKey(repository);
+      const count = counts.get(repositoryKey(repository));
+      if (!count) continue;
+      count.asking = false;
       // Open issues that loaded meanwhile gave a count at least as recent.
-      if (counts.get(key)?.status !== "loading") continue;
+      if (count.readAt && atOrAfter(count.readAt, askedAt)) continue;
       // Each repository fails on its own, unless the whole request did.
       const summary: GitHubResult<RepositorySummary> = result.ok
         ? (result.value[index] ?? unanswered)
         : result;
-      counts.set(
-        key,
-        summary.ok
-          ? { status: "known", count: summary.value.openIssueCount }
-          : { status: "failed", message: describeGitHubError(summary.error) },
-      );
-      changed = true;
+      const answer: OpenIssueCount = summary.ok
+        ? { status: "known", count: summary.value.openIssueCount }
+        : { status: "failed", message: describeGitHubError(summary.error) };
+      if (!sameCount(count.count, answer)) changed = true;
+      count.count = answer;
+      count.readAt = summary.ok ? askedAt : undefined;
     }
     if (changed) pushTracked();
   }
@@ -116,33 +194,40 @@ export function createSidebar({
         return { status: "failed", message: result.message };
       }
       tracked = result.value.repositories;
-      const unknown = new Map<string, RepositoryAddress>();
-      for (const repository of tracked) {
-        const key = repositoryKey(repository);
-        const count = counts.get(key);
-        if (count === undefined || count.status === "failed") {
-          unknown.set(key, repository);
-          counts.set(key, { status: "loading" });
-        }
-      }
-      for (const batch of inBatches(
-        [...unknown.values()],
-        repositoriesPerRequest,
-      )) {
-        void requestCounts(batch);
-      }
+      ask(tracked.filter(unknownOrOutdated));
       return entries(tracked);
     },
-    openIssuesLoaded(repository, openIssues) {
+    revalidate() {
+      if (tracked && ask(tracked.filter(outdated))) pushTracked();
+    },
+    refresh() {
+      if (tracked && ask(tracked)) pushTracked();
+    },
+    openIssuesLoaded(repository, openIssues, readAt) {
       const key = repositoryKey(repository);
-      const count = counts.get(key);
-      if (count?.status === "known" && count.count === openIssues) return;
-      counts.set(key, { status: "known", count: openIssues });
-      if (tracked?.some((entry) => sameRepository(entry, repository))) {
+      const known = counts.get(key);
+      // A count GitHub was asked for later is at least as recent.
+      if (known?.readAt && atOrAfter(known.readAt, readAt)) return;
+      const count: OpenIssueCount = { status: "known", count: openIssues };
+      const changed = !known || !sameCount(known.count, count);
+      counts.set(key, { count, readAt, asking: known?.asking ?? false });
+      if (
+        changed &&
+        tracked?.some((entry) => sameRepository(entry, repository))
+      ) {
         pushTracked();
       }
     },
   };
+}
+
+/** Whether two counts show the same, so that the sidebar need not be pushed. */
+function sameCount(a: OpenIssueCount, b: OpenIssueCount): boolean {
+  if (a.status === "known" && b.status === "known") return a.count === b.count;
+  if (a.status === "failed" && b.status === "failed") {
+    return a.message === b.message;
+  }
+  return a.status === b.status;
 }
 
 /**

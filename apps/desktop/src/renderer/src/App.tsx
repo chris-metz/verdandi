@@ -1,13 +1,14 @@
-import type { Scope } from "@verdandi/core/contract";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { Scope, Screen } from "@verdandi/core/contract";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { navigateIssues } from "./issue-navigation";
 import { MainArea } from "./MainArea";
 import {
   commandForWindowKey,
   shortcutModifier,
   type Pane,
 } from "./pane-navigation";
-import { scopeLabel } from "./scope";
+import { sameScope, scopeLabel } from "./scope";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder } from "./sidebar-entries";
 
@@ -20,22 +21,50 @@ const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
 /**
  * The window: the sidebar and the main area, which have the keyboard in turn.
  * The pane that has it follows the DOM focus, and survives the main area's
- * list being replaced when another entry is selected.
+ * list being replaced when another entry is selected. What is on screen is
+ * read again with `r`, and when it is old as the window regains focus.
  */
 export function App() {
   const sidebar = useSidebar();
   const items = useMemo(() => entryOrder(sidebar), [sidebar]);
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
   const [selected, setSelected] = useState<Scope>();
+  // The issue pages opened from the selected entry's list, the last on top.
+  const [stack, navigate] = useReducer(navigateIssues, []);
+  const shownIssueId = stack.at(-1)?.issue.id;
+  const screen = useMemo((): Screen | undefined => {
+    if (shownIssueId !== undefined) {
+      return { kind: "issue", issueId: shownIssueId };
+    }
+    return selected && { kind: "list", scope: selected };
+  }, [selected, shownIssueId]);
   const [focused, setFocused] = useState<Pane>("sidebar");
   const shortcutsShown = useShortcutsShown();
   const sidebarPane = useRef<HTMLElement>(null);
   const mainPane = useRef<HTMLElement>(null);
 
+  /** Selects an entry, whose list starts without issue pages on top. */
+  function select(scope: Scope) {
+    if (selected && sameScope(scope, selected)) return;
+    setSelected(scope);
+    navigate({ kind: "list" });
+  }
+
   // Nothing is selected at first, so the sidebar has the keyboard.
   useEffect(() => {
     focusPane(sidebarPane.current);
   }, []);
+
+  // Back in the window, what is on screen is read again if it is old.
+  useEffect(() => {
+    function revalidate() {
+      void window.verdandi.revalidate(screen);
+    }
+    window.addEventListener("focus", revalidate);
+    return () => {
+      window.removeEventListener("focus", revalidate);
+    };
+  }, [screen]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -56,7 +85,10 @@ export function App() {
           );
           break;
         case "select":
-          setSelected(command.scope);
+          select(command.scope);
+          break;
+        case "refresh":
+          void window.verdandi.refresh(screen);
           break;
       }
     }
@@ -64,7 +96,7 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [focused, entries, selected]);
+  });
 
   return (
     <div className="flex h-screen text-sm">
@@ -83,7 +115,7 @@ export function App() {
           sidebar={sidebar}
           items={items}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={select}
           focused={focused === "sidebar"}
           shortcutsShown={shortcutsShown}
           modifier={modifier}
@@ -109,6 +141,8 @@ export function App() {
           <MainArea
             key={scopeLabel(selected)}
             scope={selected}
+            stack={stack}
+            onNavigate={navigate}
             hasKeyboard={focused === "main"}
           />
         ) : (

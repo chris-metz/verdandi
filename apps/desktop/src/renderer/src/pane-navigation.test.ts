@@ -83,6 +83,21 @@ describe("Tab", () => {
   });
 });
 
+describe("r", () => {
+  it("refreshes what is on screen, whichever pane has the keyboard", () => {
+    expect(press(key("r"), { focused: "sidebar" })).toEqual({
+      kind: "refresh",
+    });
+    expect(press(key("r"), { focused: "main" })).toEqual({ kind: "refresh" });
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt", () => {
+    expect(press(key("r", { metaKey: true }))).toBeUndefined();
+    expect(press(key("r", { ctrlKey: true }))).toBeUndefined();
+    expect(press(key("r", { altKey: true }))).toBeUndefined();
+  });
+});
+
 describe("sidebar keys", () => {
   it("select the entry below with j and ↓, stopping at the last", () => {
     expect(press(key("j"), { selected: "api" })).toEqual(select("web"));

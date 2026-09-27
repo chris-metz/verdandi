@@ -10,7 +10,8 @@ export function listStatus(loading: ListLoading): string {
       return "Loading…";
     case "failed":
       return loading.message;
-    case "loaded": {
+    case "refreshing":
+    case "current": {
       const { openIssues, closedNotListed } = loading;
       const open =
         openIssues === 0

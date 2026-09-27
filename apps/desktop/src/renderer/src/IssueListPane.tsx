@@ -9,22 +9,31 @@ import {
   type KeyboardEvent,
 } from "react";
 import { cn } from "@/lib/utils";
+import { listFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import {
   commandForKey,
+  followSelection,
   selectionIndex,
   visibleRows,
   type ListCommand,
 } from "./list-navigation";
 import { rememberedPlace, rememberPlace } from "./list-places";
 import { listStatus } from "./list-status";
+import { RefreshControl } from "./RefreshControl";
 import { presentScope, sameScope } from "./scope";
+import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
+
+/** The row the selection is on. */
+const selectedRow = '[aria-selected="true"]';
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
  * the core pushes it, driven by keyboard and mouse. The selection and scroll
- * position are remembered per scope for the session.
+ * position are remembered per scope for the session. When the list is read
+ * again, the selection stays on its issue, or moves to a neighbour if the
+ * issue disappeared, and stays where it is on screen.
  */
 export function IssueListPane({
   scope,
@@ -47,21 +56,21 @@ export function IssueListPane({
 
   const trees = useMemo(() => list?.trees ?? [], [list]);
   const rows = useMemo(() => visibleRows(trees), [trees]);
+  // The selection follows its issue as the list changes under it.
+  const [shownTrees, setShownTrees] = useState(trees);
+  if (trees !== shownTrees) {
+    setShownTrees(trees);
+    const followed = followSelection(shownTrees, trees, selectedId);
+    if (followed !== selectedId) setSelectedId(followed);
+  }
   const selected = useMemo(
     () => selectionIndex(trees, rows, selectedId),
     [trees, rows, selectedId],
   );
 
-  const select = useCallback(
-    (issueId: string) => {
-      setSelectedId(issueId);
-      rememberPlace(scope, {
-        selectedId: issueId,
-        scrollTop: scroller.current?.scrollTop ?? 0,
-      });
-    },
-    [scope],
-  );
+  const select = useCallback((issueId: string) => {
+    setSelectedId(issueId);
+  }, []);
   const toggle = useCallback(
     (issueId: string, expanded: boolean) => {
       void window.verdandi.setExpanded(scope, issueId, expanded);
@@ -114,21 +123,55 @@ export function IssueListPane({
     scroller.current.scrollTop = place.scrollTop;
   }, [list, place]);
 
+  // The selection is remembered wherever it goes, also when it follows its
+  // issue to a neighbour.
+  useEffect(() => {
+    rememberPlace(scope, {
+      selectedId,
+      scrollTop:
+        restored.current && scroller.current
+          ? scroller.current.scrollTop
+          : place.scrollTop,
+    });
+  }, [scope, selectedId, place]);
+
   // A selection moved by keyboard is scrolled into sight.
   useLayoutEffect(() => {
     if (!revealSelection.current) return;
     revealSelection.current = false;
     scroller.current
-      ?.querySelector('[aria-selected="true"]')
+      ?.querySelector(selectedRow)
       ?.scrollIntoView({ block: "nearest" });
   });
+
+  // What the cursor is on stays where it is on screen as the content changes
+  // under it; where it is is noted after every render and scroll.
+  const anchor = useRef<ScrollAnchor>(undefined);
+  useLayoutEffect(() => {
+    if (scroller.current)
+      keepAnchored(scroller.current, anchor.current, selectedRow);
+  }, [list]);
+  useLayoutEffect(noteScroll);
+  function noteScroll() {
+    anchor.current = scroller.current
+      ? noteAnchor(scroller.current, selectedRow)
+      : undefined;
+  }
 
   const { label, repositoryChips } = presentScope(scope);
   const failed = list?.loading.status === "failed";
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center border-b px-4">
-        <h1 className="truncate font-medium">{label}</h1>
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-4">
+        <h1 className="min-w-0 flex-1 truncate font-medium">{label}</h1>
+        {list && (
+          <RefreshControl
+            freshness={(now) => listFreshness(list, now)}
+            onRefresh={() => {
+              void window.verdandi.refresh({ kind: "list", scope });
+            }}
+          />
+        )}
       </header>
       <div
         ref={scroller}
@@ -138,6 +181,7 @@ export function IssueListPane({
         data-pane-focus
         onKeyDown={onKeyDown}
         onScroll={(event) => {
+          noteScroll();
           rememberPlace(scope, {
             selectedId,
             scrollTop: event.currentTarget.scrollTop,
@@ -187,7 +231,12 @@ function useList(scope: Scope): IssueList | undefined {
     window.verdandi.openList(scope).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       if (current) {
-        setList({ scope, trees: [], loading: { status: "failed", message } });
+        setList({
+          scope,
+          trees: [],
+          loading: { status: "failed", message },
+          repositories: [],
+        });
       }
     });
     return () => {

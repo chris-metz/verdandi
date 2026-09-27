@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { cn } from "@/lib/utils";
+import { loadingFreshness } from "./freshness";
 import { IssueMetadataLine } from "./IssueMetadataLine";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import type {
@@ -18,15 +19,26 @@ import type {
 } from "./issue-navigation";
 import {
   commandForIssuePageKey,
+  followCursor,
   issuePageTrees,
+  type CursorPlace,
   type IssuePageCommand,
 } from "./issue-page-navigation";
 import { visibleRows } from "./list-navigation";
+import { RefreshControl } from "./RefreshControl";
+import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
 const buttonClass =
   "rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring";
 
-/** The issue page replaces the list; each visit has its own saved place. */
+/** What the cursor is on: an ancestor, the issue itself, or a sub-issue. */
+const cursorTarget = '[data-page-cursor="true"], [aria-selected="true"]';
+
+/**
+ * The issue page replaces the list; each visit has its own saved place. When
+ * the page is read again, the cursor stays on its issue, or moves to a
+ * neighbour if the issue disappeared, and stays where it is on screen.
+ */
 export function IssuePagePane({
   visit,
   previous,
@@ -40,7 +52,8 @@ export function IssuePagePane({
   hasKeyboard: boolean;
   onNavigate: (action: IssueNavigation) => void;
 }) {
-  const { page, retry } = useIssuePage(visit.issue.id);
+  const page = useIssuePage(visit.issue.id);
+  const screen = { kind: "issue", issueId: visit.issue.id } as const;
   const scroller = useRef<HTMLDivElement>(null);
   const [initialPlace] = useState(visit.place);
   const restored = useRef(false);
@@ -58,8 +71,18 @@ export function IssuePagePane({
     ],
     [page, rows, visit.issue],
   );
-  const cursor = targets.some(({ id }) => id === visit.place.cursor)
-    ? visit.place.cursor
+  // The cursor follows its issue as the page changes under it, or a
+  // neighbour if the issue disappeared.
+  const targetIds = useMemo(() => targets.map(({ id }) => id), [targets]);
+  const [cursorPlace, setCursorPlace] = useState<CursorPlace>({
+    targets: targetIds,
+    placed: visit.place.cursor,
+    shownOn: visit.place.cursor,
+  });
+  const followed = followCursor(cursorPlace, targetIds, visit.place.cursor);
+  if (followed !== cursorPlace) setCursorPlace(followed);
+  const cursor = targetIds.includes(followed.shownOn)
+    ? followed.shownOn
     : visit.issue.id;
 
   function remember(change: Partial<IssuePlace>) {
@@ -141,8 +164,9 @@ export function IssuePagePane({
   useEffect(() => {
     if (hasKeyboard) scroller.current?.focus({ preventScroll: true });
   }, [hasKeyboard]);
+  // Back where the user left this visit, once the page is there to scroll.
   useLayoutEffect(() => {
-    if (!page || restored.current || !scroller.current) return;
+    if (!page?.issue || restored.current || !scroller.current) return;
     restored.current = true;
     scroller.current.scrollTop = initialPlace.scrollTop;
   }, [page, initialPlace]);
@@ -150,9 +174,22 @@ export function IssuePagePane({
     if (!reveal.current) return;
     reveal.current = false;
     scroller.current
-      ?.querySelector('[data-page-cursor="true"], [aria-selected="true"]')
+      ?.querySelector(cursorTarget)
       ?.scrollIntoView({ block: "nearest" });
   });
+  // What the cursor is on stays where it is on screen as the content changes
+  // under it; where it is is noted after every render and scroll.
+  const anchor = useRef<ScrollAnchor>(undefined);
+  useLayoutEffect(() => {
+    if (scroller.current)
+      keepAnchored(scroller.current, anchor.current, cursorTarget);
+  }, [page]);
+  useLayoutEffect(noteScroll);
+  function noteScroll() {
+    anchor.current = scroller.current
+      ? noteAnchor(scroller.current, cursorTarget)
+      : undefined;
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
@@ -179,6 +216,14 @@ export function IssuePagePane({
           </button>
         )}
         <span className="flex-1" />
+        <RefreshControl
+          freshness={(now) =>
+            loadingFreshness(page?.loading ?? { status: "loading" }, now)
+          }
+          onRefresh={() => {
+            void window.verdandi.refresh(screen);
+          }}
+        />
         {page?.issue && (
           <button
             type="button"
@@ -197,6 +242,7 @@ export function IssuePagePane({
         data-pane-focus
         aria-label={`Issue page: ${visit.issue.title}`}
         onScroll={(event) => {
+          noteScroll();
           if (restored.current)
             remember({ scrollTop: event.currentTarget.scrollTop });
         }}
@@ -216,6 +262,7 @@ export function IssuePagePane({
                   {index > 0 && <span aria-hidden>/</span>}
                   <button
                     type="button"
+                    data-issue-id={ancestor.id}
                     data-page-cursor={cursor === ancestor.id}
                     className={cn(
                       buttonClass,
@@ -235,6 +282,7 @@ export function IssuePagePane({
             </nav>
           )}
           <div
+            data-issue-id={visit.issue.id}
             data-page-cursor={cursor === visit.issue.id}
             className={cn(
               "rounded border-l-2 border-transparent pl-3",
@@ -252,15 +300,21 @@ export function IssuePagePane({
             </h1>
           </div>
           {page?.issue && <IssueMetadataLine issue={page.issue} />}
-          {!page && (
+          {!page?.issue && page?.loading.status !== "failed" && (
             <p role="status" className="text-muted-foreground">
               Loading issue…
             </p>
           )}
-          {page?.failure && (
+          {page?.loading.status === "failed" && (
             <p role="alert" className="text-destructive">
-              {page.failure}{" "}
-              <button type="button" className="underline" onClick={retry}>
+              {page.loading.message}{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  void window.verdandi.refresh(screen);
+                }}
+              >
                 Retry
               </button>
             </p>
@@ -294,9 +348,11 @@ export function IssuePagePane({
               </div>
             ) : (
               <p className="px-6 pb-5 text-muted-foreground">
-                {page.failure
+                {page.loading.status === "failed"
                   ? "Sub-issues could not be loaded."
-                  : "No sub-issues"}
+                  : page.loading.status === "loading"
+                    ? "Loading sub-issues…"
+                    : "No sub-issues"}
               </p>
             )}
           </section>
@@ -306,35 +362,34 @@ export function IssuePagePane({
   );
 }
 
-/** An abandoned request can fill the core cache but never replace this page. */
-function useIssuePage(issueId: string) {
+/**
+ * The issue page as the core pushes it, from the moment it is opened: at
+ * once with what it has, then again once it has been read.
+ */
+function useIssuePage(issueId: string): IssuePage | undefined {
   const [page, setPage] = useState<IssuePage>();
-  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
-    window.verdandi.getIssuePage(issueId).then(
-      (loaded) => {
-        if (current) setPage(loaded);
-      },
-      (error: unknown) => {
-        if (current)
-          setPage({
-            issueId,
-            issue: undefined,
-            ancestry: [],
-            subIssues: [],
-            failure: error instanceof Error ? error.message : String(error),
-          });
-      },
-    );
+    // The core pushes every page that changes, not only this one.
+    const unsubscribe = window.verdandi.on("issuePageChanged", (changed) => {
+      if (changed.issueId === issueId) setPage(changed);
+    });
+    window.verdandi.openIssuePage(issueId).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (current) {
+        setPage({
+          issueId,
+          issue: undefined,
+          ancestry: [],
+          subIssues: [],
+          loading: { status: "failed", message },
+        });
+      }
+    });
     return () => {
       current = false;
+      unsubscribe();
     };
-  }, [issueId, attempt]);
-  return {
-    page,
-    retry: () => {
-      setAttempt((value) => value + 1);
-    },
-  };
+  }, [issueId]);
+  return page;
 }

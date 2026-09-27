@@ -1,19 +1,22 @@
 import type { Scope } from "@verdandi/core/contract";
-import { useReducer } from "react";
 import { IssueListPane } from "./IssueListPane";
 import { IssuePagePane } from "./IssuePagePane";
-import { navigateIssues } from "./issue-navigation";
+import type { IssueNavigation, IssueVisit } from "./issue-navigation";
 import { scopeLabel } from "./scope";
 
 /** One sidebar entry's list and the issue pages opened from it. */
 export function MainArea({
   scope,
+  stack,
+  onNavigate,
   hasKeyboard,
 }: {
   scope: Scope;
+  /** The issue pages opened from the list, the one shown last. */
+  stack: readonly IssueVisit[];
+  onNavigate: (action: IssueNavigation) => void;
   hasKeyboard: boolean;
 }) {
-  const [stack, navigate] = useReducer(navigateIssues, []);
   const current = stack.at(-1);
   if (!current)
     return (
@@ -21,7 +24,7 @@ export function MainArea({
         scope={scope}
         hasKeyboard={hasKeyboard}
         onOpen={(issue) => {
-          navigate({ kind: "open", issue });
+          onNavigate({ kind: "open", issue });
         }}
       />
     );
@@ -32,7 +35,7 @@ export function MainArea({
       previous={stack.at(-2)?.issue}
       listLabel={scopeLabel(scope)}
       hasKeyboard={hasKeyboard}
-      onNavigate={navigate}
+      onNavigate={onNavigate}
     />
   );
 }
