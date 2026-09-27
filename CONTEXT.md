@@ -45,3 +45,21 @@ _Avoid_: dependency, link
 **Blocking chain**:
 The sequence of issues reached from an issue by following blocking relationships in one direction, possibly across repositories.
 _Avoid_: dependency tree, blocking order
+
+### Browsing
+
+**Sidebar entry**:
+One of the places the user opens from the sidebar: All, a tracked repository, or a view. Each has its own list.
+_Avoid_: tab, folder, source
+
+**All**:
+The sidebar entry that shows every tracked repository at once, as one list. It is always there, always first, and is not a view.
+_Avoid_: everything, overview, home, inbox
+
+**Scope**:
+The issues a sidebar entry stands for: a tracked repository's open issues, the open issues of every tracked repository for All, or a view's matches.
+_Avoid_: filter, source
+
+**List**:
+What the main area shows for a sidebar entry: the issues of its scope, each under its parent issue, together with the parent issues and sub-issues needed to place them.
+_Avoid_: tree view, feed, board
