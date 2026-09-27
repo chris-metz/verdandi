@@ -1,0 +1,1753 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Do not build on this code.
+
+  Question ("Adapt the blocking-map prototype to partial graph loading", issue #16 under "Map: Verdandi
+  MVP spec"): how should the accepted blocking map behave when only part of the blocking graph has been
+  fetched? The issue page loads the visible two steps each way and fetches farther only when the user
+  explores ("Decide between live GitHub queries and a local mirror"); "More…" is allowed while the total
+  is unknown, and "+N more" is exact only when the whole chain is known.
+
+  Plan: the decided issue page (variant B of the issue-page prototype) inside the decided shell, with a
+  simulated GitHub behind the map. Three structurally different maps, switchable via ?variant=A|B|C
+  (bottom bar, or Shift+Left/Right). The "Simulated GitHub" panel slows loading down, delivers one
+  response at a time, hits the rate limit, fails a request, changes GitHub under the page, and can follow
+  closed issues on the "Blocks" side. The issue menu jumps to the showcases.
+
+                        A  Live                        B  Pinned                      C  Settle
+    placement           longest known route, redrawn   where a card first appeared;   longest known route, applied
+                          as relationships arrive;       never moves; relationships     once loading stops; new
+                          cards glide                    that run back arc over         cards wait at the bottom
+    two steps           columns 1-2 by longest route;  the first two steps as         every loaded card, by
+                          farther loaded cards fold      found; nothing folds           longest route; nothing folds
+                          into the edge card
+    branch states       a badge on each incomplete     a stub card per incomplete     one edge card per side
+                          card                           branch                         listing everything open
+    "More…"             the rest of the chain,         one more step of that branch   two more steps for the
+                          progressively; pauses after    (m: of every branch on         whole side
+                          40 issues                      that side)
+    stopping            Stop on the edge card          nothing runs on its own        Stop on the edge card
+
+  Common to all three, and up for review too: the cursor stays on its card while the map changes and this
+  issue's card holds still on screen; closed issues are shown but not followed on either side; a cycle is
+  a red dotted loop, drawn once the relationship that closes it has loaded.
+
+  Synthetic data only; nothing is persisted. The shell, the list and the rest of the issue page are
+  decided and not up for review here.
+
+  Run: open this file in a browser. Optional URL parameters: ?variant=A|B|C, ?show=0..8 (a showcase),
+  ?speed=instant|normal|slow|step.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdandi partial blocking map prototype</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2; --fg: #1f2328; --fg2: #59636e; --fg3: #818b98;
+  --line: #d1d9e0; --accent: #0969da; --accent-bg: #ddf4ff; --sel: #e6eefb; --open: #1a7f37;
+  --closed: #8250df; --np: #59636e; --blocked: #cf222e; --blocked-bg: #ffebe9; --warn: #9a6700; --warn-bg: #fff8c5;
+  --ready: #1a7f37; --ready-bg: #dafbe1;
+  --scrim: rgba(31, 35, 40, .28); --shadow: 0 8px 28px rgba(66, 74, 83, .28);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --bg2: #151b23; --bg3: #212830; --fg: #e6edf3; --fg2: #9198a1; --fg3: #6e7681;
+    --line: #30363d; --accent: #4493f8; --accent-bg: #132a47; --sel: #1a2638; --open: #3fb950;
+    --closed: #ab7df8; --np: #9198a1; --blocked: #f85149; --blocked-bg: rgba(248, 81, 73, .13); --warn: #d29922; --warn-bg: rgba(187, 128, 9, .15);
+    --ready: #3fb950; --ready-bg: rgba(46, 160, 67, .15);
+    --scrim: rgba(1, 4, 9, .55); --shadow: 0 8px 28px rgba(1, 4, 9, .85);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, sans-serif;
+  background: var(--bg); color: var(--fg); overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+button, select { font: inherit; color: inherit; }
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg2); white-space: nowrap;
+}
+.muted { color: var(--fg3); font-weight: 400; }
+.sp { flex: 1; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- shell (kept from the app-shell prototype, variant A) ---------- */
+#app { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 100vh; }
+.sidebar { width: 256px; background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidebar.focused { box-shadow: inset 0 2px 0 var(--accent); }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.main.focused > .mainbar { box-shadow: inset 0 2px 0 var(--accent); }
+.brand { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; font-weight: 600; white-space: nowrap; }
+.logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #8250df, #0969da); flex: none; }
+.sb-scroll { flex: 1; overflow: auto; padding: 2px 8px 16px; }
+.sb-foot { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg3); font-size: 11px; line-height: 1.8; }
+.iconbtn { border: 0; background: none; color: var(--fg2); width: 22px; height: 22px; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.iconbtn:hover { background: var(--bg3); color: var(--fg); }
+.iconbtn:disabled { opacity: .35; cursor: not-allowed; }
+.sec { display: flex; align-items: center; justify-content: space-between; padding: 16px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); }
+.entry { display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 30px; border-radius: 6px; cursor: default; user-select: none; white-space: nowrap; }
+.entry.tall { min-height: 40px; }
+.entry:hover { background: var(--bg3); }
+.entry.active { background: var(--sel); font-weight: 600; }
+.sidebar.focused .entry.active { background: var(--accent-bg); outline: 1px solid var(--accent); outline-offset: -1px; }
+.entry .ic { color: var(--fg2); }
+.entry.active .ic { color: var(--accent); }
+.entry .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.entry .count { color: var(--fg3); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.name2 { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.name2 .n1, .name2 .n2 { overflow: hidden; text-overflow: ellipsis; }
+.name2 .n2 { font-size: 11px; color: var(--fg3); font-weight: 400; }
+.owner { color: var(--fg3); font-weight: 400; }
+.mainbar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); flex: none; min-width: 0; white-space: nowrap; }
+.mainbar h2 { font-size: 14px; margin: 0; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+.mainbar .sub { color: var(--fg3); }
+.hint { color: var(--fg3); font-size: 12px; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; overflow: hidden; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.scroll.split { overflow: hidden; display: flex; }
+.btn { border: 1px solid var(--line); background: var(--bg2); border-radius: 6px; padding: 3px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 28px; }
+.btn:hover { background: var(--bg3); }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--bg2); }
+.sep { color: var(--line); }
+
+/* ---------- issue list (decided: variant A of the issue-list prototype) ---------- */
+.chev { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg3); border-radius: 4px; flex: none; }
+.chev[data-act]:hover { background: var(--bg3); color: var(--fg); }
+.chev .ic { width: 12px; height: 12px; stroke-width: 1.8; }
+.num { color: var(--fg3); font-variant-numeric: tabular-nums; flex: none; }
+.st { display: inline-flex; flex: none; }
+.st-open { color: var(--open); } .st-closed { color: var(--closed); } .st-np { color: var(--np); } .st-blocked { color: var(--blocked); }
+.title { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; white-space: nowrap; }
+.closed > .title { color: var(--fg2); }
+.ext { font-size: 10px; border: 1px dashed var(--fg3); border-radius: 10px; padding: 0 6px; color: var(--fg2); flex: none; line-height: 16px; font-weight: 400; }
+.empty { padding: 40px; color: var(--fg3); text-align: center; }
+.list-foot { padding: 14px 16px; color: var(--fg3); font-size: 12px; }
+.row-sel { background: var(--sel) !important; box-shadow: inset 2px 0 0 var(--accent); }
+.main:not(.focused) .row-sel { background: var(--bg3) !important; box-shadow: none; }
+.arow { scroll-margin: 44px 0 90px; }
+.alist { padding-bottom: 90px; }
+.colhead { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 16px 0 12px; background: var(--bg); border-bottom: 1px solid var(--line); color: var(--fg3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.colhead .c-title { flex: 1; }
+.arow { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 16px 0 12px; cursor: pointer; white-space: nowrap; }
+.arow:hover { background: var(--bg2); }
+.arow.closed .title { color: var(--fg2); }
+.arow.closed > :not(.guides) { opacity: .8; }
+.guides { flex: none; align-self: stretch; width: calc(var(--d) * 20px); margin-right: -6px; background-image: repeating-linear-gradient(to right, transparent 0 8px, var(--line) 8px 9px, transparent 9px 20px); }
+.col-prog { width: 92px; flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.col-bb, .col-bl { width: 76px; flex: none; display: inline-flex; }
+.bar { width: 44px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; flex: none; }
+.bar i { display: block; height: 100%; background: var(--closed); }
+.frac { font-size: 12px; color: var(--fg2); font-variant-numeric: tabular-nums; font-weight: 400; }
+.cnt { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px 0 5px; border-radius: 10px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cnt .ic { width: 13px; height: 13px; }
+.cnt.red { background: var(--blocked-bg); color: var(--blocked); }
+.cnt.amber { color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.cnt.mute { color: var(--fg3); font-weight: 400; }
+.rchip { font-size: 11px; padding: 0 6px; border-radius: 4px; color: #fff; background: hsl(var(--h) 42% 44%); flex: none; line-height: 17px; white-space: nowrap; font-weight: 400; }
+.rchip.x { background: none; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--fg3); }
+.lbl { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 7px; border-radius: 2em; flex: none; white-space: nowrap; }
+.lbl.more { background: var(--bg3); color: var(--fg2); }
+.pchip { font-size: 11px; color: var(--fg2); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 4px; flex: none; line-height: 17px; display: inline-flex; gap: 2px; align-items: center; }
+.pchip .ic { width: 12px; height: 12px; }
+.pchip:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- issue page: shared bits ---------- */
+.ptitle { font-size: 22px; font-weight: 600; margin: 6px 0 10px; line-height: 1.3; }
+.ptitle .muted { font-weight: 300; }
+.i-ref { display: flex; align-items: center; gap: 6px; color: var(--fg2); }
+.i-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--fg2); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 8px; border-radius: 999px; color: #fff; font-weight: 500; white-space: nowrap; }
+.pill.open { background: var(--open); } .pill.closed { background: var(--closed); } .pill.np { background: var(--np); }
+.md { font-size: 14px; line-height: 1.6; max-width: 820px; }
+.md p { margin: 0 0 12px; }
+.md h3 { font-size: 15px; margin: 18px 0 6px; }
+.md code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow: auto; margin: 0 0 12px; }
+.md pre code { background: none; padding: 0; line-height: 1.5; }
+.md ul { margin: 0 0 12px; padding-left: 22px; }
+.md ul.tasks { list-style: none; padding-left: 2px; }
+.md ul.tasks li { position: relative; padding-left: 22px; }
+.md ul.tasks li::before { content: ""; position: absolute; left: 1px; top: .42em; width: 11px; height: 11px; border: 1.5px solid var(--fg3); border-radius: 3px; }
+.md ul.tasks li.done::before { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--bg); }
+.iref, .xlink { color: var(--accent); cursor: pointer; }
+.iref:hover, .xlink:hover { text-decoration: underline; }
+.cmts { max-width: 820px; }
+.cmt { display: flex; gap: 10px; margin-top: 16px; }
+.cbox { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 6px; }
+.chd { background: var(--bg2); padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--fg2); border-radius: 6px 6px 0 0; }
+.cbd { padding: 10px 12px 0; }
+.nocmt { color: var(--fg3); margin-top: 16px; }
+.av { width: 28px; height: 28px; border-radius: 50%; background: hsl(var(--h) 40% 48%); color: #fff; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.av.sm { width: 20px; height: 20px; font-size: 10px; }
+.avs { display: inline-flex; }
+.avs .av + .av { margin-left: -5px; box-shadow: 0 0 0 2px var(--bg); }
+.dots { display: inline-flex; gap: 3px; flex: none; }
+.dots i { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .35); }
+.cycle { color: var(--blocked); font-size: 12px; display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.cycle .ic { width: 13px; height: 13px; }
+.none { color: var(--fg3); }
+.metaline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--fg2); }
+.metaline > span { display: inline-flex; align-items: center; gap: 5px; }
+[data-nav] { scroll-margin: 52px 32px 96px; }
+.navcur { outline: 2px solid var(--accent) !important; outline-offset: -2px; background-color: var(--accent-bg) !important; }
+.main:not(.focused) .navcur { outline-color: var(--fg3) !important; background-color: var(--bg3) !important; }
+/* ---------- page B: map ---------- */
+.pb { padding: 14px 28px 110px; }
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; color: var(--fg2); font-size: 12px; }
+.crumb { display: inline-flex; gap: 4px; align-items: center; padding: 2px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; max-width: 420px; }
+.crumb:hover { background: var(--bg2); }
+.crumb .ic { width: 14px; height: 14px; }
+.crumb .t { overflow: hidden; text-overflow: ellipsis; }
+.pb .metaline { margin-bottom: 4px; }
+.pb-map { margin: 14px -28px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg2); overflow-x: auto; overflow-y: hidden; }
+.pb-canvas { position: relative; margin: 0 auto; }
+.pb-colh { position: absolute; top: 9px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); text-align: center; white-space: nowrap; }
+.pb-colh.c0 { color: var(--accent); }
+.node { position: absolute; width: 150px; height: 60px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; overflow: hidden; z-index: 1; }
+.node:hover { border-color: var(--accent); }
+.node.x { border-style: dashed; border-color: var(--fg3); }
+.node.closed { opacity: .62; }
+.node.center { border: 2px solid var(--accent); padding: 4px 7px; cursor: default; box-shadow: 0 2px 10px rgba(9, 105, 218, .18); }
+.node.isblk { box-shadow: inset 3px 0 0 var(--blocked); }
+.node.center.isblk { box-shadow: inset 3px 0 0 var(--blocked), 0 2px 10px rgba(9, 105, 218, .18); }
+.node .n1 { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--fg2); white-space: nowrap; min-width: 0; }
+.node .n1 .rchip { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.node .n1 .ic { width: 14px; height: 14px; }
+.node .n2 { font-size: 12px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.node.stub { border-style: dashed; align-items: center; justify-content: center; color: var(--accent); font-weight: 600; background: none; }
+.pb-svg { position: absolute; left: 0; top: 0; pointer-events: none; }
+.pb-svg path.e { fill: none; stroke: var(--fg3); stroke-width: 1.4; }
+.pb-svg path.e.dead { stroke-dasharray: 3 3; opacity: .55; }
+.pb-svg path.e.more { stroke-dasharray: 2 3; }
+.pb-svg path.e.cyc { stroke: var(--blocked); stroke-dasharray: 2 3; }
+.pb-svg marker path { fill: var(--fg3); }
+.pb-svg marker.cyc path { fill: var(--blocked); }
+.pb-note { position: absolute; font-size: 12px; color: var(--fg3); white-space: nowrap; }
+.pb-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 6px 28px; margin: 0 -28px; color: var(--fg3); font-size: 11px; border-bottom: 1px solid var(--line); }
+.pb-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pb-subs { margin: 18px -28px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.pb-subs .colhead { position: static; padding-left: 12px; }
+.pb-subs .arow { padding-left: 12px; }
+.pb-body { margin-top: 18px; }
+/* ---------- help ---------- */
+.modal-bg { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.modal { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: 86vh; overflow: hidden; }
+.m-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
+.help { width: 760px; max-width: calc(100vw - 32px); }
+.help-body { display: grid; grid-template-columns: max-content 1fr; gap: 7px 16px; padding: 14px 16px; overflow: auto; }
+.help-body .h-k { text-align: right; }
+.help-body .h-sec { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); margin-top: 6px; }
+
+/* ---------- prototype chrome (not part of the design being evaluated) ---------- */
+#switcher {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 2px;
+  background: #111; color: #fff; border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); font-size: 12px; border: 1px solid #444;
+}
+#switcher button { background: none; border: 0; color: #fff; min-width: 28px; height: 28px; border-radius: 999px; cursor: pointer; padding: 0 8px; }
+#switcher button:hover { background: #333; }
+#switcher .swl { padding: 0 6px; white-space: nowrap; min-width: 110px; text-align: center; }
+#switcher .tag { background: #fbbf24; color: #111; border-radius: 999px; padding: 1px 7px; font-weight: 700; font-size: 10px; letter-spacing: .05em; }
+#switcher select { background: #222; color: #fff; border: 1px solid #555; border-radius: 999px; height: 26px; padding: 0 8px; margin: 0 4px; max-width: 280px; }
+#statebox {
+  position: fixed; right: 12px; bottom: 62px; z-index: 99; width: 420px; max-height: 64vh; overflow: auto; background: #111; color: #c9f7c9;
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 8px; white-space: pre; display: none; border: 1px solid #444;
+}
+#toast {
+  position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); background: #111; color: #fff; padding: 7px 14px; border-radius: 8px;
+  z-index: 101; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: min(900px, 86vw); text-align: center; border: 1px solid #444;
+}
+
+/* ---------- partial map (what this prototype is about) ---------- */
+.pb-canvas .node { transform-origin: center; }
+.node.stub, .node.edge { border-style: dashed; background: var(--bg); color: var(--fg2); font-size: 11px; line-height: 1.35; align-items: flex-start; justify-content: center; gap: 1px; padding: 5px 9px; font-weight: 400; }
+.node.stub b, .node.edge b { font-size: 12px; color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
+.node.stub span, .node.edge span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.node.stub.quiet b, .node.edge.quiet b { color: var(--fg2); }
+.node.stub.quiet, .node.edge.quiet { color: var(--fg3); }
+.node.stub.bad { border-color: var(--blocked); } .node.stub.bad b { color: var(--blocked); }
+.node.stub.pause { border-color: var(--warn); } .node.stub.pause b { color: var(--warn); }
+.node.edge .bad { color: var(--blocked); } .node.edge .pause { color: var(--warn); }
+.pb-svg path.e.more { stroke-dasharray: 2 3; }
+.tab { position: absolute; z-index: 3; height: 17px; min-width: 17px; padding: 0 5px; border-radius: 9px; font-size: 11px; font-weight: 600; line-height: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; background: var(--bg); border: 1px solid var(--fg3); color: var(--fg2); cursor: default; }
+.tab .ic { width: 11px; height: 11px; stroke-width: 1.8; }
+.tab.more { border-color: var(--accent); color: var(--accent); }
+.tab.load { border-color: var(--accent); color: var(--accent); }
+.tab.pause { border-color: var(--warn); color: var(--warn); }
+.tab.bad { border-color: var(--blocked); color: #fff; background: var(--blocked); cursor: pointer; }
+.tab.hid { border-style: dashed; }
+.tab.nf { border-style: dotted; color: var(--fg3); font-weight: 400; }
+.spin { display: inline-block; width: 10px; height: 10px; flex: none; border: 1.6px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.node.arrived::after, .node.moved::after { content: ""; position: absolute; inset: 0; border-radius: 7px; border: 2px solid var(--ready); pointer-events: none; animation: ringfade 1.8s ease-out forwards; animation-delay: var(--ad, 0ms); }
+.node.moved::after { border-color: var(--warn); }
+@keyframes ringfade { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
+.pb-legend .sum { color: var(--fg2); }
+.pb-legend .sum b { color: var(--fg); font-weight: 600; }
+.btn.mini { min-height: 20px; padding: 0 7px; font-size: 11px; border-radius: 5px; }
+.status { display: inline-flex; align-items: center; gap: 6px; color: var(--fg3); font-size: 12px; white-space: nowrap; }
+.status.warn { color: var(--warn); background: var(--warn-bg); padding: 2px 8px; border-radius: 6px; }
+.status .ic { width: 13px; height: 13px; }
+
+/* ---------- the simulated GitHub (prototype chrome) ---------- */
+#net {
+  position: fixed; left: 12px; bottom: 62px; z-index: 99; width: 264px; background: #111; color: #e8e8e8; border: 1px solid #444;
+  border-radius: 10px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+}
+#net .nh { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+#net .h { font-weight: 700; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #fbbf24; }
+#net .row { display: flex; gap: 5px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+#net button, #net select { background: #222; color: #fff; border: 1px solid #555; border-radius: 6px; height: 24px; padding: 0 7px; cursor: pointer; font-size: 11px; }
+#net button:hover { background: #333; }
+#net button:disabled { opacity: .4; cursor: not-allowed; }
+#net button.on { background: #fbbf24; color: #111; border-color: #fbbf24; }
+#net label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; font-size: 11px; color: #ccc; }
+#net kbd { background: #222; color: #ccc; border-color: #555; }
+#net .q { color: #9a9a9a; font: 10.5px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="app"><aside class="sidebar" id="sb"></aside><main class="main" id="mn"></main></div>
+<div id="switcher">
+  <span class="tag">PROTOTYPE</span>
+  <button id="sw-prev" title="Previous variant (Shift+Left)">&#8249;</button>
+  <span class="swl" id="sw-lbl"></span>
+  <button id="sw-next" title="Next variant (Shift+Right)">&#8250;</button>
+  <select id="sw-show" title="Jump to a showcase issue (clears the cache)"></select>
+  <button id="sw-help" title="What this variant decides, and its keys (?)">?</button>
+  <button id="sw-state" title="Show what the map knows (`)">state</button>
+</div>
+<div id="net"><div class="nh" data-act="netfold"><span class="h">Simulated GitHub</span><span class="sp"></span><span id="net-fold"></span></div><div id="net-ctl"></div><div id="net-log"></div></div>
+<pre id="statebox"></pre>
+<div id="toast"></div>
+<script>
+'use strict';
+// PROTOTYPE, throwaway: no tests, no error handling, globals everywhere on purpose.
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const ago = d => d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+const setHTML = (node, html) => { if (node.__h !== html) { node.innerHTML = html; node.__h = html; } };
+
+// ---------- icons ----------
+const svg = d => `<svg class="ic" viewBox="0 0 16 16">${d}</svg>`;
+const I = {
+  repo: svg('<path d="M3.5 13.3V2.9c0-.8.6-1.4 1.4-1.4h8.6v9.9H4.9c-.8 0-1.4.6-1.4 1.3s.6 1.3 1.4 1.3h8.6"/>'),
+  view: svg('<path d="M2 3h12l-4.6 5.4v4.8l-2.8 1.3V8.4z"/>'),
+  all: svg('<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/><path d="M1.8 8 8 11.2 14.2 8"/><path d="M1.8 11 8 14.2 14.2 11"/>'),
+  open: svg('<circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>'),
+  closed: svg('<circle cx="8" cy="8" r="6.2"/><path d="m5.3 8.2 1.9 1.9 3.6-3.8"/>'),
+  notplanned: svg('<circle cx="8" cy="8" r="6.2"/><path d="M5.3 8h5.4"/>'),
+  blocked: svg('<circle cx="8" cy="8" r="6.2"/><path d="m3.7 12.3 8.6-8.6"/>'),
+  right: svg('<path d="m6 3.5 4.5 4.5L6 12.5"/>'),
+  down: svg('<path d="m3.5 6 4.5 4.5L12.5 6"/>'),
+  back: svg('<path d="M13 8H3m4.5-4.5L3 8l4.5 4.5"/>'),
+  gh: svg('<path d="M9 2.5h4.5V7M13.5 2.5 7 9M11.5 9.5v3.2c0 .5-.4.8-.8.8H3.3c-.5 0-.8-.4-.8-.8V5.3c0-.5.4-.8.8-.8h3.2"/>'),
+  plus: svg('<path d="M8 2.5v11M2.5 8h11"/>'),
+  arrow: svg('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+  up: svg('<path d="M8 13V3.5M4.5 7 8 3.5 11.5 7"/>'),
+  cycle: svg('<path d="M12.6 6.2A4.8 4.8 0 0 0 3.7 5M3.4 9.8a4.8 4.8 0 0 0 8.9 1.2"/><path d="M3.4 2.4v2.9h2.9M12.6 13.6v-2.9H9.7"/>'),
+  milestone: svg('<path d="M8 1.8v12.4M8 3h4.3l1.5 1.8-1.5 1.8H8"/>'),
+  comment: svg('<path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/>'),
+  lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/>'),
+  pause: svg('<path d="M6 4v8M10 4v8"/>'),
+  refresh: svg('<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>'),
+};
+const spinner = () => `<i class="spin" style="animation-delay:-${Math.round(performance.now() % 800)}ms"></i>`;
+
+// ---------- synthetic data: the truth on "GitHub" ----------
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const pick = (a, r) => a[Math.floor(r() * a.length)];
+const rint = (lo, hi, r) => lo + Math.floor(r() * (hi - lo + 1));
+
+const ME = 'example-user';
+const PEOPLE = ['alex-k', 'sam-r', 'jo-dev', 'taylor-m', 'robin-q', 'casey-l', 'morgan-p'];
+const LABELS = ['bug', 'enhancement', 'docs', 'infra', 'good first issue', 'performance', 'security', 'ux', 'needs design', 'tech debt'];
+const MILESTONES = ['Q4 2026', 'Billing beta', 'v1.0', 'Hardening sprint'];
+const VERBS = ['Add', 'Fix', 'Remove', 'Migrate', 'Refactor', 'Document', 'Investigate', 'Support', 'Speed up', 'Split', 'Rename', 'Deprecate', 'Harden', 'Cache', 'Retry', 'Validate', 'Paginate', 'Expose', 'Backfill', 'Audit'];
+const THINGS = ['token refresh', 'webhook retries', 'invoice export', 'rate-limit handling', 'search index', 'session cookies', 'CSV import', 'dark mode', 'audit trail', 'pagination cursor', 'feature flag cleanup', 'error boundaries', 'release pipeline', 'retry budget', 'schema v2', 'timezone handling', 'bulk actions', 'health checks', 'keyboard shortcuts', 'PDF rendering', 'signup funnel', 'cache invalidation', 'SSO login', 'permissions model', 'notification digest', 'Linux packaging', 'mobile layout', 'empty states'];
+const SUFFIX = ['', '', '', '', ' for enterprise accounts', ' on slow networks', ' in the admin console', ' behind a flag', ' across regions', ' (follow-up)', ' before GA'];
+const EPIC_TITLES = ['Q4 reliability push', 'Self-serve data export', 'Public API v2', 'Accessibility audit fixes', 'Multi-region failover', 'Harden the webhook pipeline', 'Dark mode everywhere'];
+const SENTENCES = [
+  'This currently fails intermittently when the upstream service is slow to respond.',
+  'We should keep the existing behaviour behind a flag until the migration is done.',
+  'The fix itself is small, but it touches the retry logic that several other services depend on.',
+  'Once this lands we can remove the temporary workaround in the client.',
+  'There is some overlap with the work tracked in the parent issue, so coordinate before starting.',
+  'Open question: do we need to support the legacy format, or can we drop it now?',
+  'The design is agreed; what remains is implementation and rollout.',
+  'This blocks the rollout in the other repository, so it has priority this sprint.',
+];
+const TASKS = ['Covered by an integration test', 'Behind a feature flag', 'Documented in the changelog', 'Rolled out to staging', 'Metrics dashboard updated', 'The error path logs a useful message'];
+const SNIPPETS = [
+  'retry:\n  attempts: 5\n  backoff: exponential\n  max_delay: 30s',
+  'if (resp.status === 429) {\n  await sleep(Number(resp.headers.get("retry-after")) * 1000);\n}',
+  'ALTER TABLE usage_records ADD COLUMN workspace_id uuid NOT NULL;',
+  '$ make release VERSION=2.4.0 DRY_RUN=1',
+];
+const COMMENTS = ['<p>I can take this one next week.</p>', '<p>Is this still blocked, or can we start on the parts that do not depend on the API change?</p>', '<p>Moving this to the next milestone; the blocker is not resolved yet.</p>', '<p>Reproduced on staging. Logs attached in the incident channel.</p>', '<p>Looks good to me. One nit: the default should be <code>false</code>.</p>'];
+
+const ISSUES = new Map();      // "owner/repo#n" -> issue
+const REPO_ISSUES = new Map(); // "owner/repo" -> [keys]
+const repoKeys = repo => { if (!REPO_ISSUES.has(repo)) REPO_ISSUES.set(repo, []); return REPO_ISSUES.get(repo); };
+function mk(ref, title, state = 'open', o = {}) {
+  const i = ref.indexOf('#'), repo = ref.slice(0, i), r = mulberry32(hashStr(ref));
+  const updated = o.updated ?? rint(3, 80, r);
+  ISSUES.set(ref, {
+    key: ref, repo, number: +ref.slice(i + 1), title, state, author: o.author ?? pick(PEOPLE, r),
+    assignees: o.assignees ?? (r() < 0.25 ? [ME] : r() < 0.45 ? [pick(PEOPLE, r)] : r() < 0.55 ? [pick(PEOPLE, r), ME] : []),
+    labels: o.labels ?? [...new Set(r() < 0.65 ? [pick(LABELS, r), ...(r() < 0.3 ? [pick(LABELS, r)] : []), ...(r() < 0.15 ? [pick(LABELS, r)] : [])] : [])],
+    milestone: o.milestone !== undefined ? o.milestone : (r() < 0.3 ? pick(MILESTONES, r) : null),
+    reason: state === 'closed' ? (o.reason ?? (r() < 0.15 ? 'not planned' : 'completed')) : null,
+    parent: null, subs: [], blockedBy: [], blocking: [], hidden: !!o.hidden,
+    body: o.body ?? null, thread: o.thread ?? null, comments: o.thread ? o.thread.length : rint(0, 6, r),
+    updated, created: updated + rint(4, 60, r),
+  });
+  repoKeys(repo).push(ref);
+  return ref;
+}
+function attach(parentKey, childKey) {
+  const p = ISSUES.get(parentKey), c = ISSUES.get(childKey);
+  if (!p || !c || c.parent || parentKey === childKey) return;
+  for (let a = p; a; a = a.parent && ISSUES.get(a.parent)) if (a.key === childKey) return;
+  c.parent = parentKey; p.subs.push(childKey);
+}
+const tree = (p, cs) => cs.forEach(c => attach(p, c));
+function block(blockedKey, blockerKey) {
+  const a = ISSUES.get(blockedKey), b = ISSUES.get(blockerKey);
+  if (!a || !b || blockedKey === blockerKey || a.blockedBy.includes(blockerKey)) return;
+  a.blockedBy.push(blockerKey); b.blocking.push(blockedKey);
+}
+function unblock(blockedKey, blockerKey) {
+  const a = ISSUES.get(blockedKey), b = ISSUES.get(blockerKey);
+  a.blockedBy = a.blockedBy.filter(k => k !== blockerKey); b.blocking = b.blocking.filter(k => k !== blockedKey);
+}
+
+// Hub (from the issue-page prototype): acme/api#122. Two steps each way, and just beyond them a diamond:
+// partner/contracts#3 is three steps back along one route and four along the other.
+mk('acme/roadmap#4', 'Monetization 2027', 'open', { labels: ['epic'] });
+mk('acme/api#120', 'Launch usage-based billing', 'open', { labels: ['epic'], updated: 1 });
+mk('acme/infra#77', 'Provision the metering queue', 'closed', { reason: 'completed' });
+mk('acme/api#121', 'Meter API requests per workspace', 'closed', { reason: 'completed', labels: ['enhancement'] });
+mk('acme/api#122', 'Expose a usage endpoint', 'open', {
+  updated: 1, labels: ['enhancement', 'api'], assignees: [ME, 'sam-r'], milestone: 'Billing beta', author: 'jo-dev',
+  body: `<p>Expose metered usage per workspace, so the dashboard, the CSV export and invoicing all read the same numbers.</p>
+<h3>Endpoint</h3>
+<pre><code>GET /v2/workspaces/{id}/usage?from=2026-09-01&amp;to=2026-09-30
+→ 200 { "records": [ … ], "next": "&lt;cursor&gt;" }</code></pre>
+<h3>Acceptance criteria</h3>
+<ul class="tasks"><li class="done">Response schema agreed in {acme/api#127}</li><li>Records paginate with a cursor ({acme/api#128})</li><li>Rate cards from {globex/billing#40} applied to every record</li><li>The SDK exposes the endpoint ({vendor/sdk#89})</li></ul>
+<p>Until the rate cards land we can only return raw counts. The <a class="xlink" data-act="xlink">pricing design doc</a> has the record format.</p>`,
+  thread: [
+    ['sam-r', 5, '<p>Raw counts are ready behind the <code>usage_v2</code> flag. The pricing part waits on {globex/billing#40}.</p>'],
+    ['taylor-m', 3, '<p>The pricing database ({acme/infra#78}) is still waiting on the vendor approval, so rate cards will slip by at least a week.</p>'],
+    ['alex-k', 2, '<p>Could we ship raw counts first, so {acme/web#310} can start? The dashboard does not need prices on day one.</p>'],
+    ['jo-dev', 1, '<p>Fine by me. I will split the pricing part into its own sub-issue.</p>'],
+  ],
+});
+mk('acme/web#310', 'Usage dashboard page');
+mk('acme/web#311', 'Usage chart component', 'closed', { reason: 'completed' });
+mk('acme/web#312', 'Empty state for workspaces without usage');
+mk('acme/web#313', 'Export usage as CSV');
+mk('globex/billing#40', 'Rate cards for metered plans', 'open', { updated: 2 });
+mk('globex/billing#41', 'Model tiered pricing', 'closed', { reason: 'completed' });
+mk('globex/billing#42', 'Prorate mid-cycle plan changes');
+mk('globex/billing#43', 'Agree on plan tiers with sales', 'open', { labels: ['needs design'] });
+mk('vendor/sdk#88', 'Emit usage events from the SDK');
+mk('vendor/sdk#89', 'Usage client in the SDK');
+mk('acme/api#123', 'Invoice line items for usage');
+mk('acme/api#124', 'Document metered pricing', 'open', { labels: ['docs'] });
+mk('acme/api#125', 'Load-test the metering pipeline', 'closed', { reason: 'not planned' });
+mk('acme/api#127', 'Define the usage response schema', 'closed', { reason: 'completed' });
+mk('acme/api#128', 'Paginate usage records');
+mk('acme/infra#78', 'Provision the pricing database', 'open', { labels: ['infra'] });
+mk('acme/infra#79', 'Approve the database vendor', 'open', { labels: ['security'] });
+mk('partner/contracts#3', 'Sign the data processing agreement', 'open', { labels: ['legal'], assignees: ['robin-q'] });
+mk('acme/web#352', 'Usage alerts');
+mk('acme/web#353', 'Usage alert emails');
+mk('acme/handbook#30', 'Update the sales playbook for metered plans', 'open', { labels: ['docs'] });
+attach('acme/roadmap#4', 'acme/api#120');
+tree('acme/api#120', ['acme/infra#77', 'acme/api#121', 'acme/api#122', 'acme/web#310', 'globex/billing#40', 'vendor/sdk#88', 'acme/api#123', 'acme/api#124', 'acme/api#125']);
+tree('acme/api#122', ['acme/api#127', 'acme/api#128', 'vendor/sdk#89']);
+tree('acme/web#310', ['acme/web#311', 'acme/web#312', 'acme/web#313']);
+tree('globex/billing#40', ['globex/billing#41', 'globex/billing#42']);
+block('acme/api#121', 'acme/infra#77');
+block('acme/api#122', 'acme/api#121');
+block('acme/api#122', 'globex/billing#40');
+block('globex/billing#40', 'acme/infra#78');
+block('globex/billing#40', 'globex/billing#43');
+block('acme/infra#78', 'acme/infra#79');
+block('acme/infra#79', 'partner/contracts#3');
+block('globex/billing#43', 'partner/contracts#3');
+block('acme/web#310', 'acme/api#122');
+block('acme/web#313', 'acme/api#122');
+block('acme/web#312', 'vendor/sdk#88');
+block('acme/api#123', 'acme/api#122');
+block('acme/api#123', 'globex/billing#42');
+block('acme/api#124', 'acme/api#123');
+block('acme/web#352', 'acme/web#310');
+block('acme/web#353', 'acme/web#352');
+block('acme/handbook#30', 'acme/api#124');
+mk('acme/api#126', 'Rename the usage scopes', 'open', { updated: 4 });
+block('acme/api#126', 'acme/api#121');
+
+// Sub-issues of an external parent issue; acme/infra#55 has a whole chain within two steps.
+mk('upstream/protocol#7', 'Protocol v3 rollout', 'open', { labels: ['epic'], updated: 3 });
+mk('upstream/protocol#8', 'Specify the v3 handshake', 'closed', { reason: 'completed' });
+mk('acme/api#140', 'Support the v3 handshake', 'open', { updated: 3 });
+mk('oss-org/parser#19', 'Parse v3 frames');
+mk('acme/web#330', 'Show the protocol version in settings');
+tree('upstream/protocol#7', ['upstream/protocol#8', 'acme/api#140', 'oss-org/parser#19', 'acme/web#330']);
+block('acme/api#140', 'oss-org/parser#19');
+mk('acme/infra#55', 'Rotate signing keys for v3', 'open', { updated: 5 });
+block('acme/infra#55', 'acme/api#140');
+block('acme/web#330', 'acme/api#140');
+
+// A three-level tree, and an epic whose sub-issues are all closed (list context only).
+mk('example-user/verdandi#10', 'Ship the first desktop build', 'open', { labels: ['epic'], updated: 1 });
+mk('example-user/verdandi#11', 'Pick the GUI stack', 'closed', { reason: 'completed' });
+mk('example-user/verdandi#12', 'Issue list');
+mk('example-user/verdandi#13', 'Tree rows');
+mk('example-user/verdandi#14', 'Collapse state per list', 'closed', { reason: 'completed' });
+mk('example-user/verdandi#15', 'Keyboard navigation in trees');
+mk('example-user/verdandi#16', 'Blocking indicators');
+mk('example-user/verdandi#17', 'Windows installer');
+mk('example-user/verdandi#18', 'Sign the macOS build');
+mk('acme/infra#60', 'Buy a code-signing certificate', 'open', { updated: 6 });
+tree('example-user/verdandi#10', ['example-user/verdandi#11', 'example-user/verdandi#12', 'example-user/verdandi#17', 'example-user/verdandi#18']);
+tree('example-user/verdandi#12', ['example-user/verdandi#13', 'example-user/verdandi#16']);
+tree('example-user/verdandi#13', ['example-user/verdandi#14', 'example-user/verdandi#15']);
+block('example-user/verdandi#12', 'example-user/verdandi#11');
+block('example-user/verdandi#15', 'example-user/verdandi#14');
+block('example-user/verdandi#16', 'example-user/verdandi#13');
+block('example-user/verdandi#17', 'acme/infra#60');
+block('example-user/verdandi#18', 'acme/infra#60');
+mk('acme/infra#80', 'Retire the legacy importer', 'open', { labels: ['epic'], updated: 9 });
+['Freeze legacy import writes', 'Backfill imported records', 'Remove the import cron job', 'Delete the importer service'].forEach((t, i) => attach('acme/infra#80', mk(`acme/infra#${81 + i}`, t, 'closed', { reason: 'completed' })));
+
+// A sequence of sibling sub-issues, each blocked by the one before: acme/web#346 ends a chain four steps long.
+mk('acme/web#340', 'Redesign onboarding', 'open', { labels: ['epic'], updated: 2 });
+['Audit the current funnel', 'Write the new copy', 'Design the welcome screen', 'Build the welcome screen', 'Wire up analytics events', 'Roll out to 10% of signups']
+  .forEach((t, i) => { const k = mk(`acme/web#${341 + i}`, t, i < 2 ? 'closed' : 'open', i < 2 ? { reason: 'completed' } : {}); attach('acme/web#340', k); if (i) block(k, `acme/web#${340 + i}`); });
+
+// Cycles: acme/infra#95 is in one with #96 and #97; its other blocker #98 leads into a second one
+// (#98, #99, #100). Two steps show neither: both close only beyond them.
+mk('acme/infra#95', 'Upgrade the Postgres cluster', 'open', { updated: 7, labels: ['infra'] });
+mk('acme/infra#96', 'Migrate extensions to the new version');
+mk('acme/infra#97', 'Test the upgrade in staging');
+block('acme/infra#95', 'acme/infra#96');
+block('acme/infra#96', 'acme/infra#97');
+block('acme/infra#97', 'acme/infra#95');
+mk('acme/infra#98', 'Free disk space on the database hosts');
+mk('acme/infra#99', 'Archive old WAL segments');
+mk('acme/infra#100', 'Move WAL archiving to the new bucket');
+block('acme/infra#95', 'acme/infra#98');
+block('acme/infra#98', 'acme/infra#99');
+block('acme/infra#99', 'acme/infra#100');
+block('acme/infra#100', 'acme/infra#98');
+
+// A direct blocker that is also four steps back: two steps show acme/api#161 as a direct blocker only;
+// exploring finds the longer route through the docs search and the billing docs.
+mk('acme/api#160', 'Publish the usage API reference', 'open', { labels: ['docs'], updated: 2 });
+mk('acme/api#161', 'Freeze the usage API surface', 'open', { labels: ['api'] });
+mk('acme/api#162', 'Write the reference pages', 'open', { labels: ['docs'] });
+mk('acme/web#360', 'Search for the docs site');
+mk('globex/billing#70', 'Explain metered billing in the docs', 'open', { labels: ['docs'] });
+mk('acme/web#361', 'Link the reference from the dashboard');
+block('acme/api#160', 'acme/api#161');
+block('acme/api#160', 'acme/api#162');
+block('acme/api#162', 'acme/web#360');
+block('acme/web#360', 'globex/billing#70');
+block('globex/billing#70', 'acme/api#161');
+block('acme/web#361', 'acme/api#160');
+
+// A long chain: twelve steps back through five repositories, two of them external.
+mk('acme/web#420', 'Ship the new editor', 'open', { labels: ['epic'], updated: 1 });
+{
+  let prev = 'acme/web#420';
+  for (const [k, t] of [['acme/web#419', 'Editor toolbar'], ['acme/web#418', 'Keyboard shortcuts for the editor'], ['acme/api#170', 'Save drafts on the server'],
+    ['acme/api#169', 'Draft storage schema'], ['acme/infra#120', 'Provision the drafts bucket'], ['acme/infra#119', 'Lifecycle policy for draft storage'],
+    ['globex/billing#80', 'Storage quota per plan'], ['globex/billing#79', 'Pricing for quota overage'], ['vendor/sdk#120', 'Drafts in the SDK'],
+    ['vendor/sdk#119', 'Token refresh in the SDK'], ['oss-org/parser#40', 'Streaming parser API'], ['oss-org/parser#39', 'Parser benchmarks']]) { mk(k, t); block(prev, k); prev = k; }
+  mk('acme/api#171', 'Pick the storage vendor', 'closed', { reason: 'completed' });
+  block('acme/api#169', 'acme/api#171');
+  mk('acme/web#421', 'Editor launch post', 'open', { labels: ['docs'] });
+  block('acme/web#421', 'acme/web#420');
+}
+
+// A wide fan-out: about sixty issues, three steps deep, wait on a build-image upgrade.
+mk('acme/infra#200', 'Upgrade Node.js to 24 on the build image', 'open', { labels: ['infra'], updated: 1 });
+mk('acme/infra#199', 'Rebuild the base image with the new toolchain', 'open', { labels: ['infra'] });
+block('acme/infra#200', 'acme/infra#199');
+{
+  const r = mulberry32(7), nums = {}, nk = repo => `${repo}#${nums[repo] = (nums[repo] ?? 500) + 1}`;
+  const main = ['acme/api', 'acme/web', 'globex/billing', 'acme/infra'];
+  const services = ['checkout', 'search', 'notifications', 'billing worker', 'webhooks', 'admin console', 'public API', 'importer', 'reports', 'auth gateway', 'SDK', 'parser'];
+  const svcOf = new Map(), l2 = [];
+  services.forEach((s, i) => {
+    const repo = s === 'SDK' ? 'vendor/sdk' : s === 'parser' ? 'oss-org/parser' : main[i % 4], k = mk(nk(repo), `Run the ${s} on Node.js 24`);
+    svcOf.set(k, s); block(k, 'acme/infra#200');
+    for (let j = rint(1, 3, r); j > 0; j--) {
+      const c = mk(nk(repo), `${pick(['Remove', 'Replace', 'Upgrade', 'Drop'], r)} the ${pick(['fetch polyfill', 'crypto shim', 'test runner', 'ESM build step', 'buffer polyfill', 'native addon', 'coverage tool'], r)} in the ${s}`, r() < 0.15 ? 'closed' : 'open');
+      svcOf.set(c, s); block(c, k); l2.push(c);
+    }
+  });
+  for (const k of l2) if (ISSUES.get(k).state === 'open') for (let j = rint(0, 2, r); j > 0; j--) {
+    const s = svcOf.get(k), c = mk(nk(pick(main, r)), pick([`Drop Node.js 20 from the ${s} CI matrix`, `Update the ${s} runbook`, `Benchmark the ${s} on Node.js 24`, `Remove the ${s} compatibility flag`], r));
+    block(c, k); if (r() < 0.2) block(c, pick(l2, r));
+  }
+}
+
+// Closed issues on both sides of globex/billing#60.
+mk('globex/billing#60', 'Replace the invoice renderer', 'open', { updated: 2 });
+mk('globex/billing#59', 'Pick a PDF library', 'closed', { reason: 'completed' });
+mk('globex/billing#58', 'Security review of PDF libraries', 'open', { labels: ['security'] });
+mk('globex/billing#57', 'Invoice template spec', 'open', { labels: ['needs design'] });
+mk('globex/billing#56', 'Brand guidelines for invoices', 'closed', { reason: 'completed' });
+mk('globex/billing#61', 'Keep the legacy renderer as a fallback', 'closed', { reason: 'not planned' });
+mk('globex/billing#62', 'Remove the fallback flag');
+mk('acme/web#370', 'Invoice preview in the dashboard');
+mk('globex/billing#64', 'Invoice emails with the new layout');
+mk('globex/billing#65', 'QA the email templates', 'closed', { reason: 'completed' });
+mk('globex/billing#66', 'Announce the new invoices', 'open', { labels: ['docs'] });
+block('globex/billing#60', 'globex/billing#59');
+block('globex/billing#59', 'globex/billing#58');
+block('globex/billing#60', 'globex/billing#57');
+block('globex/billing#57', 'globex/billing#56');
+block('globex/billing#61', 'globex/billing#60');
+block('globex/billing#62', 'globex/billing#61');
+block('acme/web#370', 'globex/billing#61');
+block('globex/billing#64', 'globex/billing#60');
+block('globex/billing#65', 'globex/billing#64');
+block('globex/billing#66', 'globex/billing#65');
+
+// Incomplete branches around acme/api#150: an issue the user cannot see on each side, a list that fails
+// to load, and a rate limit that cuts off the rest (set up by the showcase).
+mk('acme/api#150', 'Enable SSO for enterprise accounts', 'open', { labels: ['security'], updated: 1 });
+mk('acme/infra#150', 'Configure the identity provider', 'open', { labels: ['infra'] });
+mk('acme/infra#151', 'Rotate the SAML certificates');
+mk('acme/infra#152', 'Buy a wildcard certificate');
+mk('secret-corp/idp#12', 'Partner IdP rollout', 'open', { hidden: true });
+mk('acme/api#151', 'SAML assertion parser');
+mk('vendor/saml#8', 'Support encrypted assertions');
+mk('vendor/saml#7', 'Constant-time signature checks', 'open', { labels: ['security'] });
+mk('acme/web#380', 'SSO login button', 'open', { labels: ['ux'] });
+mk('acme/web#381', 'SSO onboarding emails');
+mk('acme/api#152', 'SCIM provisioning');
+mk('acme/api#153', 'Deprovision users on SCIM delete');
+mk('secret-corp/idp#13', 'Partner directory sync', 'open', { hidden: true });
+block('acme/api#150', 'acme/infra#150');
+block('acme/infra#150', 'acme/infra#151');
+block('acme/infra#151', 'acme/infra#152');
+block('acme/api#150', 'secret-corp/idp#12');
+block('acme/api#150', 'acme/api#151');
+block('acme/api#151', 'vendor/saml#8');
+block('vendor/saml#8', 'vendor/saml#7');
+block('acme/web#380', 'acme/api#150');
+block('acme/web#381', 'acme/web#380');
+block('acme/api#152', 'acme/api#150');
+block('acme/api#153', 'acme/api#152');
+block('secret-corp/idp#13', 'acme/api#150');
+
+// Filler: loose issues and a few small trees per repository.
+const frand = mulberry32(42);
+function filler(repo, nLoose, nTrees) {
+  const used = new Set(repoKeys(repo).map(k => ISSUES.get(k).number)), made = [];
+  let n = rint(20, 50, frand);
+  const next = () => { do n += rint(1, 3, frand); while (used.has(n)); used.add(n); return `${repo}#${n}`; };
+  const title = () => pick(VERBS, frand) + ' ' + pick(THINGS, frand) + pick(SUFFIX, frand);
+  for (let t = 0; t < nTrees; t++) {
+    const p = mk(next(), pick(EPIC_TITLES, frand), 'open', { labels: ['epic'] }), kids = [];
+    for (let j = rint(2, 5, frand); j > 0; j--) { const c = mk(next(), title(), frand() < 0.35 ? 'closed' : 'open'); attach(p, c); kids.push(c); }
+    for (let j = 1; j < kids.length; j++) if (frand() < 0.3) block(kids[j], kids[j - 1]);
+    made.push(p, ...kids);
+  }
+  for (let j = 0; j < nLoose; j++) made.push(mk(next(), title(), frand() < 0.25 ? 'closed' : 'open'));
+  for (const k of made) if (frand() < 0.08) block(k, pick(made, frand));
+  return made;
+}
+const TRACKED0 = ['acme/api', 'acme/web', 'globex/billing', 'example-user/verdandi', 'acme/infra', 'example-user/dotfiles'];
+const FILL = { 'acme/api': [16, 1], 'acme/web': [13, 1], 'globex/billing': [12, 2], 'example-user/verdandi': [7, 0], 'acme/infra': [11, 1], 'example-user/dotfiles': [9, 0], 'vendor/sdk': [5, 0], 'oss-org/parser': [5, 0] };
+const FILLED = {};
+for (const [repo, [loose, trees]] of Object.entries(FILL)) FILLED[repo] = filler(repo, loose, trees);
+for (let i = 0; i < 8; i++) { const a = pick(TRACKED0, frand), b = pick(TRACKED0, frand); if (a !== b) block(pick(FILLED[a], frand), pick(FILLED[b], frand)); }
+
+const setState = (k, state, reason = null) => { const x = ISSUES.get(k); x.state = state; x.reason = reason; };
+const SHOWCASES = [
+  { key: 'acme/api#122', name: 'Hub: a diamond just beyond two steps', change() {
+    setState('globex/billing#43', 'closed', 'completed');
+    if (!ISSUES.has('acme/api#129')) { mk('acme/api#129', 'Backfill usage history'); block('acme/api#129', 'acme/api#122'); }
+    return 'globex/billing#43 was closed, and acme/api#129 now waits on this issue.';
+  } },
+  { key: 'acme/api#160', name: 'A direct blocker that is also four steps back', change() {
+    unblock('globex/billing#70', 'acme/api#161');
+    return 'The relationship "acme/api#161 blocks globex/billing#70" was removed.';
+  } },
+  { key: 'acme/web#420', name: 'Long chain: twelve steps back', change() {
+    setState('acme/infra#120', 'closed', 'completed');
+    return 'acme/infra#120, five steps back, was closed.';
+  } },
+  { key: 'acme/infra#200', name: 'Fan-out: sixty issues wait on it' },
+  { key: 'acme/infra#95', name: 'Cycles that only exploring reveals' },
+  { key: 'globex/billing#60', name: 'Closed issues on both sides', change() {
+    setState('globex/billing#61', 'open');
+    return 'globex/billing#61, closed as not planned, was reopened.';
+  } },
+  { key: 'acme/api#150', name: 'Invisible, failed and rate-limited branches', setup() { NET.failKeys.add('up:acme/api#151'); NET.pauseAfter = 4; } },
+  { key: 'acme/web#346', name: 'Short chain that ends four steps back' },
+  { key: 'acme/infra#55', name: 'Whole chain within two steps' },
+];
+
+// ---------- app state ----------
+const VIEWS = {
+  'v:blocked': { name: 'Blocked', test: it => isBlocked(it) },
+  'v:epics': { name: 'Epics' },
+  'v:mine': { name: 'Assigned to me', test: it => it.state === 'open' && it.assignees.includes(ME) },
+};
+const S = {
+  variant: 'A',        // map variant
+  order: ['r:acme/api', 'r:acme/web', 'r:globex/billing', 'r:example-user/verdandi', 'r:acme/infra', 'r:example-user/dotfiles', 'v:blocked', 'v:epics', 'v:mine'],
+  active: 'r:acme/api',
+  focus: 'main',       // 'sidebar' | 'main'
+  lists: {},           // per sidebar entry: { sel, expanded, scroll }
+  pages: [],           // stack of open issue pages; empty = the list is showing
+  modal: null,
+  scrollSel: false, scrollLink: false,
+  show: SHOWCASES[0],  // the showcase last jumped to ("Change GitHub" acts on it)
+  followClosed: false, // follow closed issues on the "Blocks" side
+  netOpen: true,
+};
+let PAGE_UID = 0;
+const newPage = k => ({
+  uid: ++PAGE_UID, key: k, cur: null, scroll: 0, sx: new Set(), mapScroll: undefined,
+  open: new Set(),                       // relationship lists this page has opened ("up:owner/repo#n")
+  pin: new Map(), parent: new Map(), seq: new Map(), seqN: 0, // per card: the step it was found at, by whom, in what order
+  win: { up: 2, down: 2 },               // A: columns shown before folding
+  run: { up: null, down: null },         // a running "More…" per side
+  frozen: null,                          // C: the layout applied when loading last stopped
+  born: new Map(), lastCol: new Map(), movedAt: new Map(), drawn: false, refreshing: null,
+});
+
+const trackedRepos = () => S.order.filter(x => x.startsWith('r:')).map(x => x.slice(2));
+const isTracked = repo => S.order.includes('r:' + repo);
+const openBlockers = it => it.blockedBy.filter(k => ISSUES.get(k).state === 'open');
+const openBlocked = it => it.state === 'open' ? it.blocking.filter(k => ISSUES.get(k).state === 'open') : [];
+const isBlocked = it => it.state === 'open' && openBlockers(it).length > 0;
+const doneSubs = it => it.subs.filter(k => ISSUES.get(k).state === 'closed').length;
+const hasOpenDesc = k => ISSUES.get(k).subs.some(c => ISSUES.get(c).state === 'open' || hasOpenDesc(c));
+const doneBranch = k => ISSUES.get(k).state === 'closed' && !hasOpenDesc(k);
+const ancestors = it => { const a = []; for (let p = it.parent; p; p = ISSUES.get(p).parent) a.unshift(p); return a; };
+function entryInfo(id) {
+  if (id === 'all') return { id, kind: 'all', name: 'All' };
+  if (id.startsWith('r:')) { const repo = id.slice(2); const [owner, name] = repo.split('/'); return { id, kind: 'repo', repo, owner, name }; }
+  return { id, kind: 'view', ...VIEWS[id] };
+}
+const icon = e => e.kind === 'all' ? I.all : e.kind === 'repo' ? I.repo : I.view;
+const titleHTML = e => e.kind === 'repo' ? `<span><span class="owner">${esc(e.owner)}/</span>${esc(e.name)}</span>` : esc(e.name);
+const ownerHue = repo => hashStr(repo.split('/')[0]) % 360;
+const refShort = (k, home) => { const it = ISSUES.get(k); return it.repo === home ? `#${it.number}` : `${it.repo}#${it.number}`; };
+const stIcon = it => it.state === 'open' ? `<span class="st st-open" title="Open">${I.open}</span>`
+  : it.reason === 'not planned' ? `<span class="st st-np" title="Closed as not planned">${I.notplanned}</span>` : `<span class="st st-closed" title="Closed">${I.closed}</span>`;
+const readyIcon = it => isBlocked(it) ? `<span class="st st-blocked" title="Open and blocked">${I.blocked}</span>` : stIcon(it);
+const extTag = it => isTracked(it.repo) ? '' : `<span class="ext" title="${esc(it.repo)} is not a tracked repository">external</span>`;
+const repoChip = repo => `<span class="rchip ${isTracked(repo) ? '' : 'x'}" style="--h:${ownerHue(repo)}" title="${esc(repo)}${isTracked(repo) ? '' : ' (not tracked)'}">${esc(isTracked(repo) ? repo.split('/')[1] : repo)}</span>`;
+const LABEL_COLORS = { bug: 'd73a4a', enhancement: 'a2eeef', docs: '0075ca', infra: 'c5def5', 'good first issue': '7057ff', performance: 'f9d0c4', security: 'b60205', ux: 'd4c5f9', 'needs design': 'fef2c0', 'tech debt': 'e4e669', epic: '3e4b9e', api: '1d76db', legal: '5319e7' };
+const labelPill = l => {
+  const h = LABEL_COLORS[l] ?? 'ededed', n = parseInt(h, 16), lum = (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+  return `<span class="lbl" style="background:#${h};color:${lum > 0.6 ? '#1f2328' : '#fff'}">${esc(l)}</span>`;
+};
+const labelsHTML = (it, max = 3) => it.labels.slice(0, max).map(labelPill).join('')
+  + (it.labels.length > max ? `<span class="lbl more" title="${esc(it.labels.slice(max).join(', '))}">+${it.labels.length - max}</span>` : '');
+const labelDots = it => it.labels.length ? `<span class="dots" title="${esc(it.labels.join(', '))}">${it.labels.map(l => `<i style="background:#${LABEL_COLORS[l] ?? 'ededed'}"></i>`).join('')}</span>` : '';
+const avatar = (p, cls = '') => `<span class="av ${cls}" style="--h:${hashStr(p) % 360}" title="${esc(p)}">${esc(p[0].toUpperCase())}</span>`;
+const progHTML = it => { const d = doneSubs(it), t = it.subs.length; return t ? `<span class="bar" title="${d} of ${t} sub-issues closed"><i style="width:${d / t * 100}%"></i></span><span class="frac">${d}/${t}</span>` : ''; };
+const statePill = it => it.state === 'open' ? `<span class="pill open">${I.open}Open</span>`
+  : it.reason === 'not planned' ? `<span class="pill np">${I.notplanned}Closed as not planned</span>` : `<span class="pill closed">${I.closed}Closed</span>`;
+const blockPills = it => {
+  const ob = it.state === 'open' ? openBlockers(it).length : 0, ow = openBlocked(it).length;
+  return (ob ? `<span class="cnt red" title="Blocked by ${plural(ob, 'open issue')}">${I.blocked}Blocked by ${ob}</span>` : '')
+    + (ow ? `<span class="cnt amber" title="Blocks ${plural(ow, 'open issue')}">${I.arrow}Blocks ${ow}</span>` : '');
+};
+
+// ---------- issue content (decided; not up for review here) ----------
+const withRefs = (h, home) => h.replace(/\{([\w.-]+\/[\w.-]+#\d+)\}/g, (m, k) => ISSUES.has(k)
+  ? `<a class="iref" data-act="open" data-arg="${esc(k)}" title="${esc(ISSUES.get(k).title)} (opens in Verdandi)">${esc(refShort(k, home))}</a>` : k);
+function bodyHTML(it) {
+  if (it.body) return withRefs(it.body, it.repo);
+  const r = mulberry32(hashStr(it.key + '/body'));
+  let h = Array.from({ length: rint(1, 2, r) }, () => `<p>${Array.from({ length: rint(2, 3, r) }, () => pick(SENTENCES, r)).join(' ')}</p>`).join('');
+  if (it.blockedBy.length && r() < 0.8 && !ISSUES.get(it.blockedBy[0]).hidden) h += `<p>Depends on {${it.blockedBy[0]}}; check the discussion there before starting.</p>`;
+  if (r() < 0.35) h += `<pre><code>${esc(pick(SNIPPETS, r))}</code></pre>`;
+  if (r() < 0.6) { const ts = [...new Set(Array.from({ length: rint(2, 4, r) }, () => pick(TASKS, r)))]; h += `<h3>Acceptance criteria</h3><ul class="tasks">${ts.map(t => `<li class="${r() < 0.4 ? 'done' : ''}">${t}</li>`).join('')}</ul>`; }
+  return withRefs(h, it.repo);
+}
+function commentsHTML(it) {
+  const r = mulberry32(hashStr(it.key + '/thread'));
+  const th = it.thread ?? Array.from({ length: it.comments }, (_, i) => [pick(PEOPLE, r), Math.max(1, it.updated + it.comments - i - 1), pick(COMMENTS, r)]);
+  if (!th.length) return '<div class="cmts"><div class="nocmt">No comments yet.</div></div>';
+  return `<div class="cmts">${th.map(([who, d, h]) => `<div class="cmt">${avatar(who)}<div class="cbox"><div class="chd"><b>${esc(who)}</b> commented ${ago(d)}</div><div class="cbd md">${withRefs(h, it.repo)}</div></div></div>`).join('')}</div>`;
+}
+const openedLine = it => `<span><b>${esc(it.author)}</b>&nbsp;opened this ${ago(it.created)}</span>`;
+
+// ---------- the issue list (decided; not up for review here) ----------
+function memberKeys(id) {
+  const e = entryInfo(id);
+  if (e.kind === 'repo') return REPO_ISSUES.get(e.repo);
+  const tracked = trackedRepos().flatMap(r => REPO_ISSUES.get(r));
+  if (e.kind === 'all') return tracked;
+  if (id === 'v:epics') return tracked.filter(k => ISSUES.get(k).subs.length);
+  return tracked.filter(k => e.test(ISSUES.get(k)));
+}
+const sortRoots = keys => keys.slice().sort((a, b) => {
+  const x = ISSUES.get(a), y = ISSUES.get(b);
+  return (x.state === 'closed') - (y.state === 'closed') || (y.subs.length > 0) - (x.subs.length > 0) || x.updated - y.updated;
+});
+function model(id) {
+  const e = entryInfo(id), keys = memberKeys(id), mem = new Set(keys);
+  const home = e.kind === 'repo' ? e.repo : null;
+  if (e.kind === 'view' && id !== 'v:epics') return { flat: true, roots: sortRoots(keys), home, hidden: 0 };
+  const covered = k => { for (let p = ISSUES.get(k).parent; p; p = ISSUES.get(p).parent) if (mem.has(p)) return true; return false; };
+  const roots = [];
+  let hidden = 0;
+  for (const k of keys) {
+    if (covered(k)) continue;
+    if (doneBranch(k)) { hidden++; continue; }
+    roots.push(k);
+  }
+  return { flat: false, roots: sortRoots(roots), home, hidden };
+}
+function countFor(id) {
+  const e = entryInfo(id);
+  if (e.kind === 'repo') return REPO_ISSUES.get(e.repo).filter(k => ISSUES.get(k).state === 'open').length;
+  if (e.kind === 'all') return trackedRepos().reduce((s, r) => s + countFor('r:' + r), 0);
+  return memberKeys(id).filter(k => ISSUES.get(k).state === 'open').length;
+}
+function lstate(id) {
+  if (!S.lists[id]) S.lists[id] = { sel: null, expanded: new Set([...ISSUES.values()].filter(x => x.subs.length).map(x => x.key)), scroll: 0 };
+  return S.lists[id];
+}
+function selIndex(rows, id = S.active) {
+  const ls = lstate(id);
+  let i = ls.sel ? rows.findIndex(r => r.id === ls.sel) : -1;
+  if (i < 0 && ls.sel) for (let k = ls.sel; k && i < 0; k = ISSUES.get(k).parent) i = rows.findIndex(r => r.k === k);
+  if (i < 0) i = rows.length ? 0 : -1;
+  if (i >= 0) ls.sel = rows[i].id;
+  return i;
+}
+function outlineRow(r, o) {
+  const it = ISSUES.get(r.k), closed = it.state === 'closed', home = o.home, all = o.all;
+  const ob = openBlockers(it).length, tb = it.blockedBy.length, ow = openBlocked(it).length, tw = it.blocking.length;
+  const bb = ob && !closed ? `<span class="cnt red" title="Blocked by ${plural(ob, 'open issue')}">${I.blocked}${ob}</span>`
+    : tb ? `<span class="cnt mute" title="Not blocked now: ${ob} of ${plural(tb, 'blocking issue')} open${closed ? ', and this issue is closed' : ''}">${I.blocked}${ob}/${tb}</span>` : '';
+  const bl = ow ? `<span class="cnt amber" title="Blocks ${plural(ow, 'open issue')}">${I.arrow}${ow}</span>`
+    : tw ? `<span class="cnt mute" title="Blocks no open issue now (${tw} in total)">${I.arrow}0/${tw}</span>` : '';
+  const p = o.pchip && r.d === 0 && it.parent ? ISSUES.get(it.parent) : null;
+  const pchip = p ? `<span class="pchip" data-act="open" data-arg="${esc(p.key)}" title="Sub-issue of ${esc(p.key)}: ${esc(p.title)}">${I.up}${esc(refShort(p.key, home))}${isTracked(p.repo) ? '' : ' · external'}</span>` : '';
+  const ch = `<span class="chev" ${r.kids ? `data-act="${o.toggle}" data-arg="${esc(o.toggleArg)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>`;
+  return `<div class="arow ${o.sel ? 'row-sel' : ''} ${it.state}" ${o.nav ? `data-nav="${esc(o.nav)}"` : ''} data-act="${o.act}" data-arg="${esc(o.arg)}"><span class="guides" style="--d:${r.d}"></span>${ch}${stIcon(it)}${all ? repoChip(it.repo) : ''}`
+    + `<span class="num">${esc(all ? '#' + it.number : refShort(r.k, home))}</span><span class="title">${esc(it.title)}</span>${labelsHTML(it)}${all ? '' : extTag(it)}${pchip}<span class="sp"></span>`
+    + `<span class="col-prog">${progHTML(it)}</span><span class="col-bb">${bb}</span><span class="col-bl">${bl}</span></div>`;
+}
+const LIST = {
+  rows(id) {
+    const M = model(id), ls = lstate(id), rows = [];
+    const walk = (k, d) => {
+      const it = ISSUES.get(k), kids = it.subs.length > 0, exp = kids && ls.expanded.has(k);
+      rows.push({ id: k, k, d, kids, exp });
+      if (exp) it.subs.forEach(c => walk(c, d + 1));
+    };
+    if (M.flat) M.roots.forEach(k => rows.push({ id: k, k, d: 0 }));
+    else M.roots.forEach(k => walk(k, 0));
+    return { rows, M };
+  },
+  html(id) {
+    const { rows, M } = this.rows(id), si = selIndex(rows, id), all = entryInfo(id).kind === 'all';
+    const head = `<div class="colhead"><span class="c-title">Issue</span><span class="col-prog">Sub-issues</span><span class="col-bb">Blocked by</span><span class="col-bl">Blocks</span></div>`;
+    const foot = M.hidden ? `<div class="list-foot">${plural(M.hidden, 'closed issue')} with no open sub-issues ${M.hidden === 1 ? 'is' : 'are'} not listed</div>` : '';
+    return `<div class="alist">${head}${rows.map((r, i) => outlineRow(r, { sel: i === si, home: M.home, all, act: 'row', arg: r.id, toggle: 'toggle', toggleArg: r.k, pchip: true })).join('') || '<div class="empty">No issues here.</div>'}${foot}</div>`;
+  },
+};
+
+// ================= the simulated GitHub =================
+// ISSUES above is the truth on GitHub. The app only knows what came back: CACHE.lists holds each fetched
+// relationship list ("up:owner/repo#n" is its blocked-by list, "down:…" its blocking list) and CACHE.snaps
+// the issue fields and dependency summary each response carried. Kept until quit, as decided.
+const CACHE = { lists: new Map(), snaps: new Map() };
+const lid = (dir, k) => `${dir}:${k}`;
+function takeSnap(k) {
+  const t = ISSUES.get(k), cnt = ks => ({ total: ks.length, open: ks.filter(x => ISSUES.get(x).state === 'open').length });
+  const s = { key: k, repo: t.repo, number: t.number, title: t.title, state: t.state, reason: t.reason, labels: t.labels.slice(), sum: { up: cnt(t.blockedBy), down: cnt(t.blocking) } };
+  CACHE.snaps.set(k, s);
+  return s;
+}
+const snap = k => CACHE.snaps.get(k) ?? takeSnap(k);
+const listOf = (dir, k) => { const id = lid(dir, k); if (!CACHE.lists.has(id)) CACHE.lists.set(id, { status: 'none', items: null }); return CACHE.lists.get(id); };
+
+const LAT = { instant: 0, normal: 380, slow: 1200 };
+const NET = { speed: 'normal', queue: [], running: [], max: 4, paused: false, until: '', resumeTimer: 0, failNext: 0, failKeys: new Set(), pauseAfter: null, delivered: 0, seq: 0, log: [] };
+const clockIn = min => new Date(Date.now() + min * 60000).toTimeString().slice(0, 5);
+const newTag = (pg, dir, kind) => ({ pg, dir, kind, pending: new Set(), revealed: [], stopped: false, capped: false, cap: null, done: false });
+const pagePending = pg => NET.queue.some(r => r.page === pg) || NET.running.some(r => r.page === pg);
+function logNet(r, what) { NET.log.unshift(`${r.dir === 'up' ? 'blocked-by' : 'blocking  '} ${r.k.padEnd(20)} ${what}`); NET.log.length = Math.min(NET.log.length, 7); }
+
+// Ask for one relationship list on behalf of a page. hops > 1 also opens the lists of the issues it
+// returns, that many steps deep. A list already in the cache arrives at once, without a request.
+function request(pg, dir, k, hops, tag, force = false) {
+  const id = lid(dir, k), L = listOf(dir, k);
+  pg.open.add(id);
+  const pend = NET.queue.find(r => r.list === id) ?? NET.running.find(r => r.list === id);
+  if (pend) {
+    pend.page = pg; pend.hops = Math.max(pend.hops, hops);
+    if (tag && pend.tag !== tag) { const old = pend.tag; old?.pending.delete(pend); pend.tag = tag; tag.pending.add(pend); tagCheck(old); }
+    return;
+  }
+  if (L.status === 'loaded' && !force) { arrive(pg, dir, k, hops, tag); return; }
+  const r = { n: ++NET.seq, list: id, dir, k, hops, tag, page: pg };
+  NET.queue.push(r); L.status = 'queued'; tag?.pending.add(r);
+  pump();
+}
+function pump() {
+  while (!NET.paused && NET.running.length < NET.max && NET.queue.length) {
+    const r = NET.queue.shift();
+    NET.running.push(r); listOf(r.dir, r.k).status = 'running';
+    if (NET.speed !== 'step') r.timer = setTimeout(() => deliver(r), LAT[NET.speed]);
+  }
+  later();
+}
+function deliver(r) {
+  const i = NET.running.indexOf(r);
+  if (i < 0) return;
+  clearTimeout(r.timer); NET.running.splice(i, 1); NET.delivered++;
+  const L = listOf(r.dir, r.k);
+  let fail = false;
+  if (NET.failKeys.has(r.list)) { NET.failKeys.delete(r.list); fail = true; } else if (NET.failNext > 0) { NET.failNext--; fail = true; }
+  r.tag?.pending.delete(r);
+  if (fail) { L.status = 'failed'; logNet(r, 'failed: HTTP 502'); }
+  else {
+    const t = ISSUES.get(r.k), ks = (r.dir === 'up' ? t.blockedBy : t.blocking).filter(y => !ISSUES.get(y).hidden);
+    takeSnap(r.k); ks.forEach(takeSnap);
+    L.items = ks.slice(); L.status = 'loaded';
+    logNet(r, plural(ks.length, 'issue'));
+    arrive(r.page, r.dir, r.k, r.hops, r.tag);
+  }
+  if (NET.pauseAfter !== null && NET.delivered >= NET.pauseAfter) { NET.pauseAfter = null; hitLimit(); }
+  tagCheck(r.tag);
+  pump();
+}
+function deliverNext() { if (NET.running.length) deliver(NET.running[0]); else toast(NET.paused ? 'Requests are paused by the rate limit' : 'Nothing is waiting for GitHub'); }
+function hitLimit() {
+  NET.paused = true; NET.until = clockIn(12);
+  // the requests GitHub refused go back to the queue and wait for the reset
+  const back = NET.running.splice(0);
+  for (const r of back) { clearTimeout(r.timer); listOf(r.dir, r.k).status = 'queued'; logNet(r, 'rate limited'); }
+  NET.queue.unshift(...back);
+  clearTimeout(NET.resumeTimer); NET.resumeTimer = setTimeout(resume, 20000);
+  toast(`Rate limit hit. In the prototype the reset comes after 20 seconds, or from the panel.`, 4000);
+  later();
+}
+function resume() { NET.paused = false; clearTimeout(NET.resumeTimer); pump(); }
+function setSpeed(v) {
+  NET.speed = v;
+  for (const r of NET.running) { clearTimeout(r.timer); if (v !== 'step') r.timer = setTimeout(() => deliver(r), LAT[v]); }
+  later();
+}
+// Leaving a page, or Stop: requests not yet started are dropped; running ones finish into the cache.
+function dropQueued(pg, pred = () => true) {
+  const tags = new Set();
+  NET.queue = NET.queue.filter(r => {
+    if (r.page !== pg || !pred(r)) return true;
+    const L = listOf(r.dir, r.k);
+    L.status = L.items ? 'loaded' : 'none';
+    if (!L.items) pg.open.delete(r.list);
+    if (r.tag) { r.tag.pending.delete(r); tags.add(r.tag); }
+    return false;
+  });
+  tags.forEach(tagCheck);
+}
+function tagCheck(tag) {
+  if (!tag || tag.done || tag.pending.size) return;
+  tag.done = true;
+  if (tag.dir && tag.pg.run[tag.dir] === tag && !tag.capped) tag.pg.run[tag.dir] = null;
+  later();
+}
+function resetNet() {
+  for (const r of NET.running) clearTimeout(r.timer);
+  clearTimeout(NET.resumeTimer);
+  Object.assign(NET, { queue: [], running: [], paused: false, failNext: 0, pauseAfter: null, delivered: 0, log: [] });
+  NET.failKeys.clear(); CACHE.lists.clear(); CACHE.snaps.clear();
+}
+
+// ================= what the page knows about the blocking graph =================
+const DIRS = [['up', -1], ['down', 1]];
+const CW = 150, CH = 60, VG = 12, PAD = 16, HEAD = 34, CAP = 40;
+const nid = (pg, dir, k) => k === pg.key ? 'center' : `${dir}:${k}`;
+// A closed issue no longer blocks anything, so its own relationships are not followed (the accepted rule
+// for blockers). The panel can follow closed issues on the "Blocks" side instead.
+const follows = (pg, dir, k) => k === pg.key || snap(k).state === 'open' || (dir === 'down' && S.followClosed);
+const countDir = (pg, dir) => { let n = 0; for (const id of pg.pin.keys()) if (id.startsWith(dir + ':')) n++; return n; };
+
+// A list has arrived (or was in the cache): note where each issue in it was first found, then open
+// the next lists while hops remain.
+function arrive(pg, dir, x, hops, tag) {
+  const L = listOf(dir, x), px = x === pg.key ? 0 : pg.pin.get(`${dir}:${x}`) ?? 0;
+  for (const y of L.items) {
+    if (y === pg.key) continue;
+    const id = `${dir}:${y}`;
+    if (!pg.pin.has(id)) { pg.pin.set(id, px + 1); pg.parent.set(id, x); pg.seq.set(id, ++pg.seqN); tag?.revealed.push(id); }
+  }
+  if (hops > 1 && !tag?.stopped) for (const y of L.items) {
+    if (y === pg.key || !follows(pg, dir, y) || !snap(y).sum[dir].total) continue;
+    if (pg.open.has(lid(dir, y)) && listOf(dir, y).status !== 'failed') continue;
+    if (tag?.cap && countDir(pg, dir) >= tag.cap) { tag.capped = true; continue; }
+    request(pg, dir, y, hops - 1, tag);
+  }
+  later();
+}
+function ensureLoaded(pg) {
+  if (!CACHE.snaps.has(pg.key)) takeSnap(pg.key);
+  const tag = newTag(pg, null, 'load');
+  for (const [dir] of DIRS) request(pg, dir, pg.key, 2, tag);
+}
+function refresh(pg) {
+  takeSnap(pg.key);
+  const tag = newTag(pg, null, 'refresh');
+  pg.refreshing = tag;
+  for (const id of [...pg.open]) {
+    const [dir, k] = id.split(':'), p = k === pg.key ? 0 : pg.pin.get(id) ?? 2;
+    request(pg, dir, k, Math.max(1, 2 - p), tag, true);
+  }
+  tagCheck(tag);
+  toast('Refresh: every loaded relationship list is read again');
+}
+
+// Every issue reachable through the lists this page has loaded. depth = longest route (cycles excluded);
+// an edge back onto the current route closes a cycle and is flagged instead of followed.
+function walk(pg, dir) {
+  const c = pg.key, nodes = new Map([[c, { key: c, id: 'center', depth: 0 }]]), edges = [], onRoute = new Set(), done = new Set(), post = [];
+  const items = x => follows(pg, dir, x) && pg.open.has(lid(dir, x)) ? listOf(dir, x).items ?? [] : [];
+  const dfs = x => {
+    onRoute.add(x);
+    for (const y of items(x)) {
+      if (onRoute.has(y)) { edges.push({ a: x, b: y, cycle: true }); continue; }
+      edges.push({ a: x, b: y, cycle: false });
+      if (!nodes.has(y)) nodes.set(y, { key: y, id: `${dir}:${y}`, depth: 0 });
+      if (!done.has(y)) dfs(y);
+    }
+    onRoute.delete(x); done.add(x); post.push(x);
+  };
+  dfs(c);
+  const out = new Map();
+  for (const e of edges) if (!e.cycle) { if (!out.has(e.a)) out.set(e.a, []); out.get(e.a).push(e.b); }
+  for (const x of post.reverse()) for (const y of out.get(x) ?? []) nodes.get(y).depth = Math.max(nodes.get(y).depth, nodes.get(x).depth + 1);
+  return { nodes, edges };
+}
+// Where the known graph is incomplete. kinds: more (not loaded yet; n = relationships GitHub's summary
+// counts), load, pause, bad (failed), hid (n relationships to issues the user cannot see; assumed to be
+// counted by the summary but left out of the list), nf (closed, not followed).
+function branchesOf(pg, dir, G) {
+  const out = [];
+  for (const n of G.nodes.values()) {
+    const s = snap(n.key).sum[dir];
+    if (!s.total) continue;
+    const b = { key: n.key, id: n.id, n: s.total };
+    if (!follows(pg, dir, n.key)) { out.push({ ...b, kind: 'nf' }); continue; }
+    const L = listOf(dir, n.key), opened = pg.open.has(lid(dir, n.key));
+    if (opened && L.items) { const hid = s.total - L.items.length; if (hid > 0) out.push({ ...b, kind: 'hid', n: hid }); continue; }
+    const st = opened ? L.status : 'none';
+    out.push({ ...b, kind: st === 'none' ? 'more' : st === 'failed' ? 'bad' : NET.paused && st === 'queued' ? 'pause' : 'load' });
+  }
+  return out;
+}
+function dirInfo(pg, dir) {
+  const G = walk(pg, dir), B = branchesOf(pg, dir, G), by = k => B.filter(b => b.kind === k);
+  const I = { dir, G, B, more: by('more'), bad: by('bad'), load: by('load'), pause: by('pause'), hid: by('hid'), nf: by('nf'), count: G.nodes.size - 1 };
+  I.complete = !I.more.length && !I.bad.length && !I.load.length && !I.pause.length;
+  I.rel = I.more.reduce((s, b) => s + b.n, 0);
+  I.hidN = I.hid.reduce((s, b) => s + b.n, 0);
+  return I;
+}
+const mapInfo = pg => ({ up: dirInfo(pg, 'up'), down: dirInfo(pg, 'down') });
+const sideName = dir => dir === 'up' ? 'Blocked by' : 'Blocks';
+
+// The accepted map's layout: one column per step of the longest route, columns nearest this issue
+// ordered first, each card placed by the neighbours already placed. win folds farther cards (A).
+function longestLayout(pg, K, win) {
+  const P = new Map(), cols = new Map(), edges = [], folded = { up: [], down: [] }, seen = new Set();
+  const add = (id, col, o) => { P.set(id, { id, col, w: CW, h: CH, ...o }); if (!cols.has(col)) cols.set(col, []); cols.get(col).push(id); };
+  add('center', 0, { key: pg.key, kind: 'center' });
+  for (const [dir, sgn] of DIRS) {
+    const G = K[dir].G, W = win ? win[dir] : Infinity, idOf = k => nid(pg, dir, k);
+    for (const n of G.nodes.values()) if (n.key !== pg.key) { if (n.depth <= W) add(n.id, sgn * n.depth, { key: n.key, dir, kind: 'card' }); else folded[dir].push(n.id); }
+    for (const e of G.edges) {
+      const a = idOf(e.a), b = idOf(e.b);
+      if (!P.has(a)) continue;
+      const tb = P.has(b) ? b : `${dir}:edge`, [from, to] = dir === 'up' ? [tb, a] : [a, tb], k = from + '>' + to;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      edges.push({ from, to, cycle: e.cycle, more: tb !== b, live: snap(e.a).state === 'open' && snap(e.b).state === 'open' });
+    }
+  }
+  const rowsMax = Math.max(...[...cols.values()].map(c => c.length)), ypos = new Map();
+  for (const c of [...cols.keys()].sort((a, b) => Math.abs(a) - Math.abs(b))) {
+    const ids = cols.get(c);
+    if (c !== 0) {
+      const score = id => {
+        const ys = edges.filter(e => e.from === id || e.to === id).map(e => ypos.get(e.from === id ? e.to : e.from)).filter(y => y !== undefined);
+        return ys.length ? ys.reduce((s, y) => s + y, 0) / ys.length : 1e8;
+      };
+      const sc = new Map(ids.map(id => [id, score(id)]));
+      ids.sort((a, b) => sc.get(a) - sc.get(b));
+    }
+    ids.forEach((id, i) => ypos.set(id, HEAD + ((rowsMax - ids.length) / 2 + i) * (CH + VG)));
+  }
+  for (const p of P.values()) p.y = ypos.get(p.id);
+  return { P, edges, folded, rowsMax };
+}
+const graphEdges = (pg, dir, G, edges) => {
+  for (const e of G.edges) {
+    const a = nid(pg, dir, e.a), b = nid(pg, dir, e.b), [from, to] = dir === 'up' ? [b, a] : [a, b];
+    if (!edges.some(x => x.from === from && x.to === to)) edges.push({ from, to, cycle: e.cycle, live: snap(e.a).state === 'open' && snap(e.b).state === 'open' });
+  }
+};
+const maxCol = (boxes, dir) => Math.max(0, ...[...boxes.values()].filter(b => b.dir === dir && b.kind === 'card').map(b => Math.abs(b.col)));
+
+// ================= Map A: live =================
+const MAP_A = {
+  name: 'Live', GAP: 46,
+  blurb: 'A · Live: the accepted map, redrawn as relationships arrive. Cards glide to their longest route; badges mark incomplete cards; More… loads the rest of the chain, with Stop',
+  stances: [
+    ['Placement', 'Longest route over the relationships loaded so far, redrawn whenever more arrive. Cards glide to their new column; one that changed column flashes amber, a new one green.'],
+    ['Two steps', 'Columns 1 and 2 of that longest route. Loaded cards farther out fold into the edge card, as in the accepted map, even a direct blocker whose longest route turned out to be longer.'],
+    ['Branch states', 'A badge on the outer corner of each incomplete card: +N relationships not loaded, a spinner while loading, pause for the rate limit, "! Retry" for a failed request (click it), a lock with N for issues you cannot see, ⋯ for a closed issue that is not followed.'],
+    ['Edge card', '"More…" while the total is unknown; "+N more" only once the whole chain is loaded and folded again; "Fewer" folds back to two steps after a full expansion.'],
+    ['More…', 'Loads the rest of the chain on that side, step by step, retrying failed branches. The edge card counts what has arrived; ↵ on it stops. After 40 more issues it pauses with Continue.'],
+  ],
+  place(pg, K) {
+    const L = longestLayout(pg, K, pg.win), boxes = L.P;
+    let edges = L.edges;
+    for (const [dir, sgn] of DIRS) {
+      const info = K[dir], run = pg.run[dir], nf = L.folded[dir].length;
+      for (const b of info.B) { const box = boxes.get(b.id); if (box) (box.tabs ??= []).push({ side: dir === 'up' ? 'l' : 'r', ...tabFor(b, dir) }); }
+      const mc = maxCol(boxes, dir);
+      let e = null;
+      if (run && !run.capped) e = { t: `${spinner()}Loading…`, lines: [`${plural(info.count, 'issue')} so far`, '↵ Stop'], act: 'stop' };
+      else if (run) e = { t: 'Continue…', lines: [`paused after ${info.count}`, 'more beyond'], act: 'cont' };
+      else if (!info.complete && (info.more.length || info.bad.length || nf)) e = { t: 'More…', lines: ['total unknown'], act: 'more', tip: 'Load the rest of the chain on this side' };
+      else if (nf) e = { t: `+${nf} more`, lines: ['whole chain known'], act: 'unfold', tip: 'Draw the whole chain (already loaded)' };
+      else if (pg.win[dir] === Infinity && mc > 2) e = { t: 'Fewer', lines: ['two steps only'], act: 'fold', cls: 'quiet' };
+      if (e) boxes.set(`${dir}:edge`, { id: `${dir}:edge`, kind: 'edge', dir, arg: dir, col: sgn * (mc + 1), w: 112, h: CH, y: HEAD + (L.rowsMax - 1) / 2 * (CH + VG), ...e });
+      else edges = edges.filter(x => x.from !== `${dir}:edge` && x.to !== `${dir}:edge`);
+    }
+    return { boxes, edges };
+  },
+  legend: () => '<span>badges: <b>+N</b> not loaded · spinner loading · pause: rate limit · <b>!</b> failed · lock: not visible to you · ⋯ closed, not followed</span>',
+};
+function tabFor(b, dir) {
+  switch (b.kind) {
+    case 'more': return { cls: 'more', html: `+${b.n}`, title: `${plural(b.n, 'relationship')} beyond this issue, not loaded yet` };
+    case 'load': return { cls: 'load', html: spinner(), title: 'Loading its relationships' };
+    case 'pause': return { cls: 'pause', html: I.pause, title: `Paused by the rate limit until ${NET.until}; resumes on its own` };
+    case 'bad': return { cls: 'bad', html: '! Retry', title: 'Loading failed. Click to retry', act: 'retry', arg: `${dir}:${b.key}` };
+    case 'hid': return { cls: 'hid', html: `${I.lock}${b.n}`, title: `${plural(b.n, 'relationship')} to issues you cannot see` };
+    default: return { cls: 'nf', html: '⋯', title: `Closed: its ${plural(b.n, 'relationship')} ${b.n === 1 ? 'is' : 'are'} not followed` };
+  }
+}
+
+// ================= Map B: pinned =================
+const MAP_B = {
+  name: 'Pinned', GAP: 40,
+  blurb: 'B · Pinned: a card stays where it was first found and never moves. A stub per incomplete branch; ↵ on a stub loads one more step of it, m one more step of the whole side',
+  stances: [
+    ['Placement', 'A card appears one column beyond the card that revealed it and never changes column. The column counts the steps along which it was first found, not its longest route. A relationship that runs back toward this issue arcs over the cards; one within a column curves beside it.'],
+    ['Two steps', 'Exactly the first two steps, as loaded. Everything loaded stays shown; nothing folds.'],
+    ['Branch states', 'A stub card beside each incomplete branch, in the next column: "+N more", "Loading…", "Paused until…", "Couldn\'t load · Retry", "N not visible", "Not followed".'],
+    ['More…', '↵ on a stub loads one more step of that branch. m (or "Next step" under the map) loads one more step of every open branch on the side the cursor is on. Nothing runs on its own, so there is nothing to stop.'],
+    ['Totals', 'The line under the map says per side how many issues are loaded and whether that is the whole chain.'],
+  ],
+  place(pg, K) {
+    const boxes = new Map([['center', { id: 'center', kind: 'center', key: pg.key, col: 0, w: CW, h: CH, y: HEAD }]]), edges = [];
+    for (const [dir, sgn] of DIRS) {
+      const { G, B } = K[dir], pin = id => id === 'center' ? 0 : pg.pin.get(id) ?? 1, items = [];
+      for (const n of G.nodes.values()) if (n.key !== pg.key) items.push({ col: pin(n.id), par: nid(pg, dir, pg.parent.get(n.id) ?? pg.key), seq: pg.seq.get(n.id) ?? 0, box: { id: n.id, kind: 'card', key: n.key, dir, w: CW, h: CH } });
+      for (const b of B) {
+        const id = `${dir}:stub:${b.key}`;
+        items.push({ col: pin(b.id) + 1, par: b.id, seq: 1e9, box: { id, kind: 'stub', dir, arg: `${dir}:${b.key}`, w: 110, h: CH, ...stubFor(b) } });
+        edges.push(dir === 'up' ? { from: id, to: b.id, more: true } : { from: b.id, to: id, more: true });
+      }
+      const byCol = new Map(), row = new Map([['center', 0]]);
+      for (const it of items) { if (!byCol.has(it.col)) byCol.set(it.col, []); byCol.get(it.col).push(it); }
+      for (const c of [...byCol.keys()].sort((a, b) => a - b)) {
+        byCol.get(c).sort((a, b) => (row.get(a.par) ?? 1e6) - (row.get(b.par) ?? 1e6) || a.seq - b.seq)
+          .forEach((it, i) => { row.set(it.box.id, i); boxes.set(it.box.id, { ...it.box, col: sgn * c, y: HEAD + i * (CH + VG) }); });
+      }
+      graphEdges(pg, dir, G, edges);
+    }
+    return { boxes, edges };
+  },
+  legend(pg, K) {
+    return DIRS.map(([dir]) => {
+      const i = K[dir], open = i.more.length + i.bad.length;
+      return `<span class="sum">${sideSummary(pg, i)}${open ? ` <button class="btn mini" data-act="stepall" data-arg="${dir}" title="Load one more step of every open branch on this side (m)">Next step</button>` : ''}</span>`;
+    }).join('');
+  },
+};
+function stubFor(b) {
+  switch (b.kind) {
+    case 'more': return { t: `+${b.n} more`, lines: ['not loaded · ↵'], act: 'step', tip: 'Load one more step of this branch' };
+    case 'load': return { t: `${spinner()}Loading…`, lines: [''], act: 'stopone', tip: 'Loading; ↵ cancels it if it has not started' };
+    case 'pause': return { t: 'Paused', lines: [`until ${NET.until}`], act: 'pinfo', cls: 'pause' };
+    case 'bad': return { t: 'Couldn\'t load', lines: ['↵ Retry'], act: 'retry', cls: 'bad' };
+    case 'hid': return { t: `${I.lock}${b.n} not visible`, lines: ['no access'], act: 'hinfo', cls: 'quiet' };
+    default: return { t: 'Not followed', lines: [`closed; ${b.n} beyond`], act: 'nfinfo', cls: 'quiet' };
+  }
+}
+function sideSummary(pg, i) {
+  const parts = [];
+  if (!i.count && i.complete) parts.push('nothing');
+  else parts.push(i.complete ? `${plural(i.count, 'issue')}, the whole chain` : `${plural(i.count, 'issue')} loaded`);
+  if (!i.complete) parts.push(i.load.length || pg.run[i.dir] ? 'loading' : 'more beyond, total unknown');
+  if (i.bad.length) parts.push(`${i.bad.length} couldn't load`);
+  if (i.pause.length) parts.push(`${i.pause.length} paused until ${NET.until}`);
+  if (i.hidN) parts.push(`${i.hidN} not visible to you`);
+  return `<b>${sideName(i.dir)}:</b> ${parts.join(' · ')}`;
+}
+
+// ================= Map C: settle =================
+const MAP_C = {
+  name: 'Settle', GAP: 46,
+  blurb: 'C · Settle: the accepted layout, applied once loading stops; new cards wait at the bottom until then. One edge card per side lists everything incomplete; More… loads two more steps',
+  stances: [
+    ['Placement', 'Longest route, as in the accepted map, but applied only when this page has no requests left. While loading, new cards wait at the bottom of the column where they were found; then every card moves once, flashing amber if its column changed.'],
+    ['Two steps', 'Every loaded card is shown; nothing folds.'],
+    ['Branch states', 'One edge card per side sums up everything incomplete: relationships not loaded, failed, paused and invisible ones, and closed issues not followed. Dashed arrows lead into it from each open branch.'],
+    ['More…', 'Loads two more steps for the whole side (the depth opening the page loads), retrying failed branches. ↵ again while it runs stops it.'],
+  ],
+  place(pg, K) {
+    if (!pagePending(pg)) { const L = longestLayout(pg, K, null); pg.frozen = new Map([...L.P.values()].map(p => [p.id, { col: p.col, y: p.y }])); }
+    const fz = id => pg.frozen?.get(id), boxes = new Map(), edges = [];
+    boxes.set('center', { id: 'center', kind: 'center', key: pg.key, col: 0, w: CW, h: CH, y: fz('center')?.y ?? HEAD });
+    for (const [dir, sgn] of DIRS) {
+      const { G } = K[dir], late = [];
+      for (const n of G.nodes.values()) if (n.key !== pg.key) {
+        const f = fz(n.id), box = { id: n.id, kind: 'card', key: n.key, dir, w: CW, h: CH };
+        if (f) boxes.set(n.id, { ...box, ...f }); else late.push({ ...box, col: sgn * (pg.pin.get(n.id) ?? 1), seq: pg.seq.get(n.id) ?? 0 });
+      }
+      late.sort((a, b) => a.seq - b.seq);
+      for (const b of late) { const ys = [...boxes.values()].filter(x => x.col === b.col).map(x => x.y + x.h); boxes.set(b.id, { ...b, y: ys.length ? Math.max(...ys) + VG : HEAD }); }
+      graphEdges(pg, dir, G, edges);
+    }
+    const bottom = Math.max(...[...boxes.values()].map(b => b.y + b.h));
+    for (const [dir, sgn] of DIRS) {
+      const i = K[dir], run = pg.run[dir], lines = [];
+      let t = null, act = 'info';
+      if (run) { t = `${spinner()}Loading…`; act = 'stop'; lines.push(`${plural(i.count, 'issue')} so far`, '↵ Stop'); }
+      else if (i.more.length || i.bad.length) { t = 'More…'; act = 'more'; }
+      else if (i.load.length) t = `${spinner()}Loading…`;
+      if (!run && i.more.length) lines.push(`${plural(i.rel, 'relationship')} not loaded`);
+      if (!run && i.bad.length) lines.push(`<span class="bad">${i.bad.length} couldn't load</span>`);
+      if (i.pause.length) lines.push(`<span class="pause">${i.pause.length} paused until ${NET.until}</span>`);
+      if (i.hidN) lines.push(`${I.lock} ${i.hidN} not visible to you`);
+      if (i.nf.length) lines.push(`${plural(i.nf.length, 'closed issue')} not followed`);
+      if (!t && !lines.length) continue;
+      const id = `${dir}:edge`, h = Math.max(CH, 12 + (t ? 17 : 0) + lines.length * 15);
+      boxes.set(id, { id, kind: 'edge', dir, arg: dir, col: sgn * (maxCol(boxes, dir) + 1), w: 178, h, y: Math.max(HEAD, (HEAD + bottom) / 2 - h / 2), t: t ?? '', lines, act, cls: t ? '' : 'quiet', tip: act === 'more' ? 'Load two more steps on this side' : '' });
+      for (const b of [...i.more, ...i.bad, ...i.load, ...i.pause]) edges.push(dir === 'up' ? { from: id, to: b.id, more: true } : { from: b.id, to: id, more: true });
+    }
+    return { boxes, edges };
+  },
+  legend: () => '<span>new cards wait at the bottom until loading stops; then the map settles once</span>',
+};
+const MAPS = { A: MAP_A, B: MAP_B, C: MAP_C };
+const KEYS = Object.keys(MAPS);
+const MV = () => MAPS[S.variant];
+
+// ---------- drawing (shared) ----------
+function flash(pg, b, now) {
+  if (b.kind !== 'card') return { cls: '', style: '' };
+  if (!pg.born.has(b.id)) pg.born.set(b.id, pg.drawn ? now : -1e9);
+  const pc = pg.lastCol.get(b.id);
+  if (pc !== undefined && pc !== b.col) pg.movedAt.set(b.id, now);
+  pg.lastCol.set(b.id, b.col);
+  const am = now - (pg.movedAt.get(b.id) ?? -1e9), ab = now - pg.born.get(b.id);
+  return am < 1800 ? { cls: 'moved', style: `--ad:-${am | 0}ms;` } : ab < 1800 ? { cls: 'arrived', style: `--ad:-${ab | 0}ms;` } : { cls: '', style: '' };
+}
+function drawMap(pg, V, K) {
+  const { boxes, edges } = V.place(pg, K), now = performance.now(), home = pg.key.slice(0, pg.key.indexOf('#'));
+  const cols = new Map();
+  for (const b of boxes.values()) { if (!cols.has(b.col)) cols.set(b.col, []); cols.get(b.col).push(b); }
+  const ck = [...cols.keys()].sort((a, b) => a - b), colX = new Map();
+  let x = PAD;
+  for (const c of ck) { const w = Math.max(...cols.get(c).map(b => b.w)); colX.set(c, { x, w }); x += w + V.GAP; }
+  const W = Math.max(x - V.GAP + PAD, 560);
+  for (const b of boxes.values()) { const c = colX.get(b.col); b.x = c.x + (c.w - b.w) / 2; }
+  const live = edges.filter(e => boxes.has(e.from) && boxes.has(e.to));
+  const H = Math.max(...[...boxes.values()].map(b => b.y + b.h)) + PAD + (live.some(e => e.cycle) ? 22 : 0);
+  const cx = boxes.get('center').x;
+  const path = e => {
+    const f = boxes.get(e.from), t = boxes.get(e.to), fy = f.y + f.h / 2, ty = t.y + t.h / 2;
+    if (e.cycle) { const yb = H - 6, fx = f.x + f.w / 2, tx = t.x + t.w / 2; return `M${fx} ${f.y + f.h}C${fx} ${yb} ${tx} ${yb} ${tx} ${t.y + t.h}`; }
+    if (t.x >= f.x + f.w + 4) { const x1 = f.x + f.w, x2 = t.x, dx = Math.max(14, (x2 - x1) / 2); return `M${x1} ${fy}C${x1 + dx} ${fy} ${x2 - dx} ${ty} ${x2} ${ty}`; }
+    if (f.col === t.col) { const left = f.x < cx, xo = left ? f.x : f.x + f.w, d = left ? -30 : 30; return `M${xo} ${fy}C${xo + d} ${fy} ${xo + d} ${ty} ${xo} ${ty}`; }
+    const top = Math.max(4, Math.min(f.y, t.y) - 24), fx = f.x + f.w / 2, tx = t.x + t.w / 2; // runs back toward this issue: over the top
+    return `M${fx} ${f.y}C${fx} ${top} ${tx} ${top} ${tx} ${t.y}`;
+  };
+  const marker = (id, cls) => `<marker id="${id}" class="${cls}" viewBox="0 0 6 6" refX="5.5" refY="3" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L6 3L0 6z"/></marker>`;
+  const svgEl = `<svg class="pb-svg" width="${W}" height="${H}"><defs>${marker('pb-arr', '')}${marker('pb-arr-c', 'cyc')}</defs>`
+    + live.map(e => `<path class="e ${e.cycle ? 'cyc' : e.live === false ? 'dead' : ''} ${e.more ? 'more' : ''}" d="${path(e)}" marker-end="url(#${e.cycle ? 'pb-arr-c' : 'pb-arr'})"/>`).join('') + '</svg>';
+  const colLabel = c => c === 0 ? 'This issue' : c === -1 ? 'Blocked by' : c === 1 ? 'Blocks' : c < 0 ? `${-c} steps back` : `${c} steps on`;
+  const heads = ck.filter(c => cols.get(c).some(b => b.kind === 'card' || b.kind === 'center')).map(c => `<div class="pb-colh ${c === 0 ? 'c0' : ''}" style="left:${colX.get(c).x}px;width:${colX.get(c).w}px">${colLabel(c)}</div>`).join('');
+  let nodes = '', tabs = '';
+  for (const b of boxes.values()) {
+    if (b.kind === 'card' || b.kind === 'center') {
+      const n = snap(b.key), blk = n.state === 'open' && n.sum.up.open > 0, center = b.kind === 'center', fx = flash(pg, b, now);
+      nodes += `<div class="node ${n.state} ${isTracked(n.repo) ? '' : 'x'} ${center ? 'center' : ''} ${blk ? 'isblk' : ''} ${fx.cls}" style="left:${b.x}px;top:${b.y}px;${fx.style}" data-box="${esc(b.id)}" data-nav="${esc(b.id)}" ${center ? '' : `data-act="open" data-arg="${esc(n.key)}"`} title="${esc(n.key)}: ${esc(n.title)}">`
+        + `<div class="n1">${blk ? `<span class="st st-blocked" title="Open and blocked">${I.blocked}</span>` : stIcon(n)}${n.repo !== home ? repoChip(n.repo) : ''}<span class="num">#${n.number}</span><span class="sp"></span>${labelDots(n)}</div><div class="n2">${esc(n.title)}</div></div>`;
+    } else {
+      nodes += `<div class="node ${b.kind} ${b.cls ?? ''}" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px" data-box="${esc(b.id)}" data-nav="${esc(b.id)}" data-act="${b.act}" data-arg="${esc(b.arg)}" title="${esc(b.tip ?? '')}">`
+        + `${b.t ? `<b>${b.t}</b>` : ''}${b.lines.map(l => `<span>${l}</span>`).join('')}</div>`;
+    }
+    for (const t of b.tabs ?? []) {
+      const pos = t.side === 'l' ? `left:${b.x - 10}px` : `right:${W - b.x - b.w - 10}px`;
+      tabs += `<span class="tab ${t.cls}" style="${pos};top:${b.y - 9}px" data-box="tab:${esc(b.id)}:${t.side}" title="${esc(t.title)}" ${t.act ? `data-act="${t.act}" data-arg="${esc(t.arg)}"` : ''}>${t.html}</span>`;
+    }
+  }
+  pg.drawn = true;
+  const lonely = boxes.size === 1 && K.up.complete && K.down.complete && !tabs ? `<div class="pb-note" style="left:${cx + CW + 16}px;top:${HEAD + CH / 2 - 9}px">No blocking relationships</div>` : '';
+  return { W, H, inner: svgEl + heads + nodes + tabs + lonely };
+}
+
+// ================= the issue page (decided: variant B of the issue-page prototype) =================
+const PAGE = {
+  hint: '<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> open <kbd>r</kbd> refresh',
+  html(it, pg) {
+    const home = it.repo, anc = ancestors(it);
+    const crumbs = `<nav class="crumbs">${anc.map(k => { const a = ISSUES.get(k); return `<span class="crumb" data-nav="anc:${esc(k)}" data-act="open" data-arg="${esc(k)}" title="${esc(k)}: ${esc(a.title)}">${stIcon(a)}<span class="num">${esc(refShort(k, home))}</span><span class="t">${esc(a.title)}</span>${extTag(a)}</span><span class="muted">›</span>`; }).join('')}`
+      + `<span class="crumb" style="cursor:default">${I.repo}${esc(it.repo)} #${it.number}${extTag(it)}</span></nav>`;
+    const meta = `<div class="metaline">${statePill(it)}${blockPills(it)}${it.labels.map(labelPill).join('')}`
+      + `${it.assignees.length ? `<span class="avs" title="Assigned to ${esc(it.assignees.join(', '))}">${it.assignees.map(p => avatar(p, 'sm')).join('')}</span>` : ''}`
+      + `${it.milestone ? `<span>${I.milestone}${esc(it.milestone)}</span>` : ''}${openedLine(it)}<span>${I.comment}${it.comments}</span></div>`;
+    const V = MV(), I2 = mapInfo(pg), m = drawMap(pg, V, I2);
+    const legend = `<div class="pb-legend"><span>arrows point at the issue that waits</span><span><svg width="24" height="8"><path d="M1 4H23" stroke="currentColor" stroke-dasharray="3 3"/></svg>no longer blocking</span><span>dashed card: external</span>${V.legend(pg, I2)}</div>`;
+    return `<article class="pb">${crumbs}<h1 class="ptitle">${esc(it.title)} <span class="muted">#${it.number}</span></h1>${meta}`
+      + `<section class="pb-map"><div class="pb-canvas" style="width:${m.W}px;height:${m.H}px">${m.inner}</div></section>${legend}`
+      + `${this.subs(it, pg, home)}<div class="pb-body md">${bodyHTML(it)}</div>${commentsHTML(it)}</article>`;
+  },
+  subs(it, pg, home) {
+    if (!it.subs.length) return '';
+    const rows = [];
+    const walkSubs = (x, d, path) => {
+      for (const y of ISSUES.get(x).subs) {
+        const id = `sub:${[...path, y].join('>')}`, kids = ISSUES.get(y).subs.length > 0, exp = kids && pg.sx.has(id);
+        rows.push({ k: y, d, id, kids, exp });
+        if (exp) walkSubs(y, d + 1, [...path, y]);
+      }
+    };
+    walkSubs(it.key, 0, []);
+    return `<section class="pb-subs"><div class="colhead"><span class="c-title">Sub-issues of this issue</span><span class="col-prog">Sub-issues</span><span class="col-bb">Blocked by</span><span class="col-bl">Blocks</span></div>`
+      + rows.map(r => outlineRow(r, { home, nav: r.id, act: 'open', arg: r.k, toggle: 'ptoggle', toggleArg: r.id })).join('') + '</section>';
+  },
+};
+
+// ---------- render ----------
+let raf = 0;
+const later = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); };
+const sbOrder = () => ['all', ...S.order.filter(x => x[0] === 'r'), ...S.order.filter(x => x[0] === 'v')];
+function renderSidebar() {
+  const sb = $('sb');
+  sb.className = 'sidebar' + (S.focus === 'sidebar' ? ' focused' : '');
+  const entry = id => {
+    const e = entryInfo(id);
+    const label = e.kind === 'repo' ? `<span class="name2"><span class="n1">${esc(e.name)}</span><span class="n2">${esc(e.owner)}</span></span>` : `<span class="name">${esc(e.name)}</span>`;
+    return `<div class="entry ${e.kind === 'repo' ? 'tall' : ''} ${S.active === id ? 'active' : ''}" data-act="entry" data-arg="${esc(id)}">${icon(e)}${label}<span class="count">${countFor(id)}</span></div>`;
+  };
+  const off = 'Settled in the app-shell prototype; not part of this one';
+  setHTML(sb, `<div class="brand"><span class="logo"></span>Verdandi<span class="sp"></span><button class="iconbtn" data-act="help" title="Help (?)">?</button></div><div class="sb-scroll">${entry('all')}`
+    + `<div class="sec"><span>Repositories</span><button class="iconbtn" disabled title="${off}">${I.plus}</button></div>${S.order.filter(x => x[0] === 'r').map(entry).join('')}`
+    + `<div class="sec"><span>Views</span><button class="iconbtn" disabled title="${off}">${I.plus}</button></div>${S.order.filter(x => x[0] === 'v').map(entry).join('')}`
+    + `</div><div class="sb-foot"><kbd>Tab</kbd> sidebar ⇄ main · <kbd>?</kbd> help</div>`);
+}
+const navEls = () => [...$('scr').querySelectorAll('[data-nav]')];
+function fallbackCursor(pg, els, curOld) {
+  const m = /^(up|down):stub:(.+)$/.exec(pg.cur);
+  if (m) { // a stub that just loaded: go to the first card it revealed, else back to its card
+    const [, dir, k] = m, kids = [...pg.parent].filter(([id, p]) => p === k && id.startsWith(dir + ':')).sort((a, b) => pg.seq.get(a[0]) - pg.seq.get(b[0]));
+    for (const [id] of kids) { const e = els.find(x => x.dataset.nav === id); if (e) return e; }
+    const own = els.find(x => x.dataset.nav === (k === pg.key ? 'center' : `${dir}:${k}`));
+    if (own) return own;
+  }
+  if (!curOld) return null;
+  let best = null, bd = Infinity; // otherwise the card nearest to where the cursor was
+  for (const e of els) {
+    if (!e.dataset.box) continue;
+    const r = e.getBoundingClientRect(), d = Math.hypot(r.left + r.width / 2 - curOld.left - curOld.width / 2, r.top + r.height / 2 - curOld.top - curOld.height / 2);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+function renderMain() {
+  const mn = $('mn'), e = entryInfo(S.active);
+  mn.className = 'main' + (S.focus === 'main' ? ' focused' : '');
+  if (!S.pages.length) {
+    mn.dataset.page = '';
+    mn.innerHTML = `<div class="mainbar"><h2>${icon(e)}${titleHTML(e)}</h2><span class="sub">${countFor(S.active)} open</span><span class="sp"></span>`
+      + `<span class="hint"><kbd>↵</kbd> open <kbd>←</kbd><kbd>→</kbd> collapse / expand</span></div><div class="scroll" id="scr"></div>`;
+    const c = $('scr'), ls = lstate(S.active);
+    c.innerHTML = LIST.html(S.active);
+    c.scrollTop = ls.scroll;
+    if (S.scrollSel) { c.querySelector('.row-sel')?.scrollIntoView({ block: 'nearest' }); S.scrollSel = false; }
+    c.onscroll = () => { ls.scroll = c.scrollTop; };
+    return;
+  }
+  const top = S.pages.at(-1), prev = S.pages.at(-2), it = ISSUES.get(top.key);
+  // remember where everything was on screen, to hold this issue's card still and let the rest glide
+  const same = mn.dataset.page === String(top.uid) && mn.dataset.variant === S.variant, old = new Map();
+  let curOld = null;
+  if (same) {
+    for (const x of mn.querySelectorAll('[data-box]')) old.set(x.dataset.box, x.getBoundingClientRect());
+    const ce = top.cur && [...mn.querySelectorAll('[data-nav]')].find(x => x.dataset.nav === top.cur);
+    if (ce) curOld = ce.getBoundingClientRect();
+  }
+  const pend = pagePending(top);
+  const status = NET.paused ? `<span class="status warn">${I.pause}GitHub rate limit reached · requests paused until ${NET.until}</span>`
+    : pend ? `<span class="status">${spinner()}${top.refreshing && !top.refreshing.done ? 'Refreshing…' : 'Loading…'}</span>` : `<span class="status">Updated just now</span>`;
+  mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${titleHTML(e)}${prev ? '' : '<kbd>Esc</kbd>'}</button>`
+    + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>Esc</kbd></button>` : '')
+    + `<span class="sp"></span>${status}<span class="hint">${PAGE.hint}</span><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll" id="scr"></div>`;
+  mn.dataset.page = top.uid; mn.dataset.variant = S.variant;
+  const c = $('scr');
+  c.innerHTML = PAGE.html(it, top);
+  c.scrollTop = top.scroll;
+  const m = c.querySelector('.pb-map'), ctr = m.querySelector('[data-box="center"]');
+  if (top.mapScroll === undefined) top.mapScroll = Math.max(0, ctr.offsetLeft + ctr.offsetWidth / 2 - m.clientWidth / 2);
+  m.scrollLeft = top.mapScroll;
+  if (same && old.has('center')) { const a = old.get('center'), b = ctr.getBoundingClientRect(); m.scrollLeft += b.left - a.left; c.scrollTop += b.top - a.top; }
+  top.mapScroll = m.scrollLeft; top.scroll = c.scrollTop;
+  m.onscroll = () => { top.mapScroll = m.scrollLeft; };
+  c.onscroll = () => { top.scroll = c.scrollTop; };
+  // the cursor stays on its card; if that card is gone, it moves to what replaced it
+  const els = navEls();
+  let cur = els.find(x => x.dataset.nav === top.cur);
+  if (!cur && top.cur) { cur = fallbackCursor(top, els, curOld); if (cur) S.scrollLink = true; }
+  if (!cur) cur = els.find(x => x.dataset.nav === 'center');
+  top.cur = cur?.dataset.nav ?? null;
+  if (cur) {
+    cur.classList.add('navcur');
+    if (S.scrollLink) cur.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    else if (curOld && m.contains(cur)) { // a card that moved sideways stays in view
+      const r = cur.getBoundingClientRect(), mr = m.getBoundingClientRect();
+      if (r.left < mr.left + 16) m.scrollLeft -= mr.left + 16 - r.left; else if (r.right > mr.right - 16) m.scrollLeft += r.right - mr.right + 16;
+    }
+  }
+  S.scrollLink = false;
+  if (same) for (const x of m.querySelectorAll('[data-box]')) {
+    const a = old.get(x.dataset.box);
+    if (!a) continue;
+    const b = x.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1) x.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(.2, .7, .3, 1)' });
+  }
+}
+function renderNet() {
+  $('net-fold').textContent = S.netOpen ? '▾' : '▸';
+  const sc = S.show;
+  setHTML($('net-ctl'), !S.netOpen ? '' : `<div class="row">Speed <select id="net-speed">${[['instant', 'Instant'], ['normal', 'Normal'], ['slow', 'Slow'], ['step', 'One at a time']].map(([v, l]) => `<option value="${v}" ${NET.speed === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`
+    + `${NET.speed === 'step' ? '<button data-act="deliver" title="Deliver the next response (n)">Next <kbd>n</kbd></button>' : ''}</div>`
+    + `<div class="row"><button data-act="limit" class="${NET.paused ? 'on' : ''}">${NET.paused ? 'Reset the rate limit' : 'Hit the rate limit'}</button><button data-act="failnext" class="${NET.failNext ? 'on' : ''}">Fail next request</button></div>`
+    + `<div class="row"><button data-act="change" ${sc?.change ? '' : 'disabled'} title="${sc?.change ? 'Change something on GitHub; press r to see it' : 'This showcase has no change'}">Change GitHub</button><button data-act="reload" title="Clear the cache and open this page again">Clear cache, reopen</button></div>`
+    + `<div class="row"><label><input type="checkbox" id="net-follow" ${S.followClosed ? 'checked' : ''}>Follow closed issues on the "Blocks" side</label></div>`);
+  setHTML($('net-log'), !S.netOpen ? '' : `<div class="row q">${NET.running.length} running · ${NET.queue.length} queued${NET.paused ? ' · paused' : ''}\n${NET.log.map(esc).join('\n')}</div>`);
+}
+function render() { renderSidebar(); renderMain(); renderNet(); renderState(); $('sw-lbl').textContent = `${S.variant} · ${MV().name}`; }
+const KIND = { more: 'not loaded', load: 'loading', pause: 'paused by the rate limit', bad: 'failed', hid: 'not visible to you', nf: 'closed, not followed' };
+function renderState() {
+  const box = $('statebox');
+  if (box.style.display !== 'block') return;
+  const top = S.pages.at(-1);
+  if (!top) { box.textContent = 'Open an issue page to see what its map knows.'; return; }
+  const In = mapInfo(top);
+  const side = dir => {
+    const i = In[dir], run = top.run[dir];
+    return {
+      issuesKnown: i.count, wholeChainKnown: i.complete,
+      incomplete: i.B.map(b => `${b.key}: ${KIND[b.kind]}${b.kind === 'more' || b.kind === 'hid' || b.kind === 'nf' ? ` (${b.n})` : ''}`),
+      cycles: i.G.edges.filter(e => e.cycle).map(e => `${e.a} -> ${e.b}`),
+      moreRunning: run ? (run.capped ? `paused at ${CAP}` : 'yes') : 'no',
+      ...(S.variant === 'A' ? { foldedBeyondTwoSteps: top.win[dir] !== Infinity } : {}),
+    };
+  };
+  box.textContent = JSON.stringify({
+    variant: `${S.variant} (${MV().name})`, page: top.key, 'blocked by (up)': side('up'), 'blocks (down)': side('down'),
+    network: { speed: NET.speed, paused: NET.paused ? `until ${NET.until}` : false, running: NET.running.map(r => r.list), queued: NET.queue.map(r => r.list) },
+    listsOpenedByThisPage: [...top.open],
+  }, null, 2);
+}
+let toastTimer;
+function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, ms); }
+
+// ---------- actions ----------
+const topPage = () => S.pages.at(-1);
+const leave = () => { const t = topPage(); if (t) dropQueued(t); };
+function activate(id) { leave(); S.active = id; S.pages = []; render(); }
+function openIssue(k) {
+  if (topPage()?.key === k) { toast('Already on this issue\'s page'); return; }
+  leave(); const pg = newPage(k); S.pages.push(pg); S.focus = 'main'; ensureLoaded(pg); render();
+}
+function popPage() { leave(); S.pages.pop(); const t = topPage(); if (t) ensureLoaded(t); render(); }
+function toList() { leave(); S.pages = []; render(); }
+function gh(k) { if (!k) return; const it = ISSUES.get(k); toast(`Would open https://github.com/${it.repo}/issues/${it.number} in the browser`); }
+function toggleKey(k) { const ls = lstate(S.active); ls.expanded.has(k) ? ls.expanded.delete(k) : ls.expanded.add(k); render(); }
+const curRows = () => LIST.rows(S.active).rows;
+function moveSel(d) {
+  const rows = curRows(), ls = lstate(S.active);
+  if (!rows.length) return;
+  ls.sel = rows[Math.max(0, Math.min(rows.length - 1, selIndex(rows) + d))].id; S.scrollSel = true; render();
+}
+function goRight() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows), r = rows[i];
+  if (!r) return;
+  if (r.kids && !r.exp) ls.expanded.add(r.k);
+  else if (r.kids && rows[i + 1]) { ls.sel = rows[i + 1].id; S.scrollSel = true; }
+  render();
+}
+function goLeft() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows), r = rows[i];
+  if (!r) return;
+  if (r.exp) ls.expanded.delete(r.k);
+  else if (r.d > 0) for (let j = i - 1; j >= 0; j--) if (rows[j].d === r.d - 1) { ls.sel = rows[j].id; S.scrollSel = true; break; }
+  render();
+}
+function enterRow(rid) {
+  const rows = curRows(), ls = lstate(S.active);
+  if (rid) ls.sel = rid;
+  const r = rows[selIndex(rows)];
+  if (r) openIssue(r.k);
+}
+function pageSpatial(dx, dy) {
+  const top = topPage(), els = navEls(), cur = els.find(x => x.dataset.nav === top.cur);
+  if (!cur) { if (els.length) { top.cur = els[0].dataset.nav; S.scrollLink = true; render(); } return; }
+  const a = cur.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2;
+  let best = null, bs = Infinity;
+  for (const x of els) {
+    if (x === cur) continue;
+    const b = x.getBoundingClientRect(), bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const p = dx ? (bx - ax) * dx : (by - ay) * dy;
+    if (p <= 4) continue;
+    const s = p + (dx ? Math.abs(by - ay) : Math.abs(bx - ax)) * 2.5;
+    if (s < bs) { bs = s; best = x; }
+  }
+  if (best) { top.cur = best.dataset.nav; S.scrollLink = true; render(); }
+}
+function pageEnter() {
+  const top = topPage(), cur = navEls().find(x => x.dataset.nav === top.cur);
+  if (!cur) return;
+  if (cur.dataset.act === 'open') openIssue(cur.dataset.arg);
+  else if (cur.dataset.act) mapAct(top, cur.dataset.act, cur.dataset.arg);
+  else toast('This issue\'s page is already open');
+}
+function pageScroll(d) { const m = $('scr'); m.scrollBy({ top: d * m.clientHeight * 0.8, behavior: 'smooth' }); }
+function startRun(pg, dir, hops, cap) {
+  const i = dirInfo(pg, dir), t = newTag(pg, dir, 'run');
+  t.cap = cap ? i.count + cap : null;
+  pg.run[dir] = t;
+  for (const b of [...i.more, ...i.bad]) request(pg, dir, b.key, hops, t);
+  tagCheck(t);
+}
+function stopRun(pg, dir) {
+  const t = pg.run[dir];
+  if (!t) return;
+  t.stopped = true; t.capped = false; pg.run[dir] = null;
+  dropQueued(pg, r => r.tag === t);
+  toast('Stopped. What already arrived stays; requests on their way finish into the cache.');
+}
+function mapAct(pg, act, arg) {
+  const dir = arg?.split(':')[0], key = arg?.includes(':') ? arg.slice(arg.indexOf(':') + 1) : null;
+  switch (act) {
+    case 'more':
+      if (S.variant === 'A') { pg.win[dir] = Infinity; startRun(pg, dir, Infinity, CAP); } else startRun(pg, dir, 2, null);
+      break;
+    case 'cont': {
+      const t = pg.run[dir], i = dirInfo(pg, dir);
+      if (!t) break;
+      t.capped = false; t.cap = countDir(pg, dir) + CAP;
+      for (const b of [...i.more, ...i.bad]) request(pg, dir, b.key, Infinity, t);
+      tagCheck(t);
+      break;
+    }
+    case 'stop': stopRun(pg, dir); break;
+    case 'unfold': pg.win[dir] = Infinity; break;
+    case 'fold': pg.win[dir] = 2; break;
+    case 'step': case 'retry': request(pg, dir, key, 1, null); break;
+    case 'stepall': {
+      const i = dirInfo(pg, dir);
+      if (!i.more.length && !i.bad.length) { toast('Nothing more to load on this side'); break; }
+      for (const b of [...i.more, ...i.bad]) request(pg, dir, b.key, 1, null);
+      break;
+    }
+    case 'stopone': {
+      const r = NET.queue.find(x => x.list === lid(dir, key));
+      if (r) dropQueued(pg, x => x === r); else toast('Already on its way; it finishes into the cache');
+      break;
+    }
+    case 'pinfo': toast(`GitHub's rate limit is used up. This loads on its own after ${NET.until}.`); break;
+    case 'hinfo': toast('GitHub counts relationships to issues you cannot read, but does not list them: Verdandi can say how many, not which. (Assumed; not verified.)', 5500); break;
+    case 'nfinfo': toast('A closed issue no longer blocks anything, so its own relationships are not followed.', 4000); break;
+    case 'info': toast('Nothing to load here right now.'); break;
+  }
+  later();
+}
+function setVariant(v) {
+  closeHelp(false);
+  S.variant = v;
+  for (const p of S.pages) { p.born.clear(); p.lastCol.clear(); p.movedAt.clear(); p.drawn = false; p.frozen = null; }
+  const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
+  render(); toast(MV().blurb, 6500);
+}
+const cycle = d => setVariant(KEYS[(KEYS.indexOf(S.variant) + d + KEYS.length) % KEYS.length]);
+function showcase(sc) {
+  if (S.changed) { // GitHub was changed: start over from the original data
+    const u = new URL(location.href);
+    u.searchParams.set('show', SHOWCASES.indexOf(sc)); u.searchParams.set('variant', S.variant); u.searchParams.set('speed', NET.speed);
+    location.href = u; return;
+  }
+  resetNet();
+  S.show = sc;
+  const repo = ISSUES.get(sc.key).repo;
+  if (isTracked(repo)) S.active = 'r:' + repo;
+  const pg = newPage(sc.key);
+  S.pages = [pg]; S.focus = 'main';
+  sc.setup?.();
+  ensureLoaded(pg); render();
+}
+function reopen() {
+  const t = topPage();
+  if (!t) { toast('Open an issue page first'); return; }
+  resetNet();
+  const pg = newPage(t.key);
+  S.pages = [pg]; ensureLoaded(pg); render();
+}
+function openHelp() {
+  closeHelp(false);
+  S.modal = 'help';
+  const rows = (h, rs, bold) => `<div class="h-sec">${h}</div>` + rs.map(([k, d]) => `<div class="h-k">${bold ? `<b>${esc(k)}</b>` : `<kbd>${esc(k)}</kbd>`}</div><div>${esc(d)}</div>`).join('');
+  const common = [
+    ['Focus', 'The cursor stays on its card while the map changes, and this issue\'s card holds still on screen. If the card under the cursor goes away (a stub that loaded, an edge card that finished), the cursor moves to the first card it revealed, else to the nearest card.'],
+    ['Closed issues', 'Shown faded, with dashed arrows, and not followed on either side: a closed issue no longer blocks anything. The panel can follow them on the "Blocks" side instead.'],
+    ['Cycles', 'A red dotted loop, drawn once the relationship that closes it has loaded; traversal stops there.'],
+    ['Not visible', 'Assumed, not verified: GitHub counts relationships to issues you cannot read in the summary but leaves them out of the list.'],
+    ['Refresh', 'r reads every loaded list again (decided); changes apply in place.'],
+  ];
+  const keys = [['← → ↑ ↓ / h j k l', 'Move across the page: ← toward blockers, → toward waiting issues'], ['↵ or click', 'Open the issue; on an edge card or stub, do what it says'], ['r', 'Refresh the page'], ...(S.variant === 'B' ? [['m', 'Next step for every open branch on the cursor\'s side']] : []), ['Esc ⌫', 'Back one page (decided)'], ['o', 'Open on GitHub']];
+  const proto = [['⇧← ⇧→', 'Switch variant'], ['issue menu', 'Jump to a showcase (clears the cache)'], ['n', 'Deliver the next response, when the speed is "One at a time"'], ['`', 'Show what the map knows'], ['?', 'This help']];
+  const bg = el(`<div class="modal-bg"><div class="modal help"><div class="m-head"><b>Blocking map, variant ${S.variant}: ${esc(MV().name)}</b><span class="sp"></span><kbd>Esc</kbd></div><div class="help-body">${rows('What this variant decides', MV().stances, true)}${rows('The same in every variant', common, true)}${rows('Keys on the issue page', keys)}${rows('Prototype only', proto)}</div></div></div>`);
+  bg.onclick = e => { if (e.target === bg) closeHelp(); };
+  document.body.append(bg);
+}
+function closeHelp(rerender = true) { document.querySelectorAll('.modal-bg').forEach(n => n.remove()); S.modal = null; if (rerender) render(); }
+function toggleState() { const b = $('statebox'); b.style.display = b.style.display === 'block' ? 'none' : 'block'; renderState(); }
+
+// ---------- events ----------
+const isDown = e => e.key === 'ArrowDown' || e.key === 'j';
+const isUp = e => e.key === 'ArrowUp' || e.key === 'k';
+const isRight = e => e.key === 'ArrowRight' || e.key === 'l';
+const isLeft = e => e.key === 'ArrowLeft' || e.key === 'h';
+function keyMain(e) {
+  if (e.key === 'n' && NET.speed === 'step') { deliverNext(); return true; }
+  if (S.focus === 'sidebar') {
+    const ord = sbOrder();
+    if (isDown(e) || isUp(e)) { activate(ord[Math.max(0, Math.min(ord.length - 1, ord.indexOf(S.active) + (isDown(e) ? 1 : -1)))]); return true; }
+    if (e.key === 'Enter' || isRight(e) || e.key === 'Escape') { S.focus = 'main'; render(); return true; }
+    return false;
+  }
+  const top = topPage();
+  if (top) {
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === '[') { popPage(); return true; }
+    if (e.key === 'o') { gh(top.key); return true; }
+    if (e.key === 'r') { refresh(top); return true; }
+    if (e.key === 'm' && S.variant === 'B') {
+      const d = top.cur?.startsWith('up:') ? ['up'] : top.cur?.startsWith('down:') ? ['down'] : ['up', 'down'];
+      d.forEach(x => mapAct(top, 'stepall', x));
+      return true;
+    }
+    if (e.key === ' ') { pageScroll(e.shiftKey ? -1 : 1); return true; }
+    if (e.key === 'Enter') { pageEnter(); return true; }
+    if (isDown(e)) { pageSpatial(0, 1); return true; }
+    if (isUp(e)) { pageSpatial(0, -1); return true; }
+    if (isRight(e)) { pageSpatial(1, 0); return true; }
+    if (isLeft(e)) { pageSpatial(-1, 0); return true; }
+    return false;
+  }
+  if (isDown(e)) { moveSel(1); return true; }
+  if (isUp(e)) { moveSel(-1); return true; }
+  if (isRight(e)) { goRight(); return true; }
+  if (isLeft(e)) { goLeft(); return true; }
+  if (e.key === 'Enter') { enterRow(); return true; }
+  if (e.key === 'o') { const r = curRows()[selIndex(curRows())]; if (r) gh(r.k); return true; }
+  return false;
+}
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { cycle(e.key === 'ArrowRight' ? 1 : -1); e.preventDefault(); return; }
+  if (S.modal === 'help') { if (e.key === 'Escape' || e.key === '?') { closeHelp(); e.preventDefault(); } return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '?') { openHelp(); e.preventDefault(); return; }
+  if (e.key === '`') { toggleState(); e.preventDefault(); return; }
+  if (e.key === 'Tab') { S.focus = S.focus === 'main' ? 'sidebar' : 'main'; render(); e.preventDefault(); return; }
+  if (keyMain(e)) e.preventDefault();
+});
+// The map redraws whenever a response arrives, which can replace an element between mousedown and
+// click; act on pointerdown so no click is lost.
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const t = e.target.closest('[data-act]');
+  if (!t || t.closest('#switcher')) return;
+  if (t.tagName === 'BUTTON' || t.closest('#net')) e.preventDefault(); // buttons must not keep focus, or Enter would press them again
+  const arg = t.dataset.arg, top = topPage();
+  const nav = e.target.closest('[data-nav]');
+  if (top && nav && $('scr')?.contains(nav)) top.cur = nav.dataset.nav; // coming back restores the cursor there
+  switch (t.dataset.act) {
+    case 'entry': S.focus = 'sidebar'; activate(arg); break;
+    case 'row': S.focus = 'main'; enterRow(arg); break;
+    case 'toggle': toggleKey(arg); break;
+    case 'ptoggle': top.sx.has(arg) ? top.sx.delete(arg) : top.sx.add(arg); render(); break;
+    case 'open': openIssue(arg); break;
+    case 'xlink': toast('Would open the link in the browser'); break;
+    case 'gh': gh(arg); break;
+    case 'tolist': toList(); break;
+    case 'pop': popPage(); break;
+    case 'help': openHelp(); break;
+    case 'netfold': S.netOpen = !S.netOpen; render(); break;
+    case 'deliver': deliverNext(); break;
+    case 'limit': NET.paused ? resume() : hitLimit(); break;
+    case 'failnext': NET.failNext = NET.failNext ? 0 : 1; render(); break;
+    case 'change': { const msg = S.show?.change?.(); if (msg) S.changed = true; if (msg) toast(`On GitHub: ${msg} The page shows it after a refresh (r).`, 6000); render(); break; }
+    case 'reload': reopen(); break;
+    default: if (top) mapAct(top, t.dataset.act, arg);
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'net-speed') { setSpeed(e.target.value); e.target.blur(); }
+  if (e.target.id === 'net-follow') { S.followClosed = e.target.checked; e.target.blur(); const t = topPage(); if (t) ensureLoaded(t); render(); }
+});
+$('sw-prev').onclick = () => cycle(-1);
+$('sw-next').onclick = () => cycle(1);
+$('sw-help').onclick = openHelp;
+$('sw-state').onclick = toggleState;
+const sel = $('sw-show');
+sel.innerHTML = '<option value="">Jump to a showcase…</option>' + SHOWCASES.map((s, i) => `<option value="${i}">${esc(s.name)} (${esc(s.key)})</option>`).join('');
+sel.onchange = () => { if (sel.value !== '') showcase(SHOWCASES[+sel.value]); sel.value = ''; sel.blur(); };
+
+const params = new URL(location.href).searchParams, initial = params.get('variant');
+S.variant = KEYS.includes(initial) ? initial : 'A';
+if (params.get('speed') in LAT || params.get('speed') === 'step') NET.speed = params.get('speed');
+// prototype-only deep link: ?show=0..8 picks a showcase
+showcase(SHOWCASES[+(params.get('show') ?? 0)] ?? SHOWCASES[0]);
+toast(MV().blurb, 6500);
+</script>
+</body>
+</html>
