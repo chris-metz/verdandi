@@ -2,10 +2,6 @@
   "name": "verdandi",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.17.0",
-  "engines": {
-    "node": "^24"
-  },
   "scripts": {
     "dev": "pnpm --filter @verdandi/desktop dev",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",

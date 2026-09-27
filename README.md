@@ -4,11 +4,10 @@ A read-only, keyboard-first desktop client for GitHub issues across many reposit
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 24, the Node major bundled with the Electron version in use.
-- [pnpm](https://pnpm.io/) 11; the exact version is pinned in `package.json` under `packageManager`.
+- [Node.js](https://nodejs.org/) and [pnpm](https://pnpm.io/) in the versions pinned in `mise.toml`. Node stays on the major bundled with the Electron version in use.
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed, on your `PATH` and signed in (`gh auth login`). Verdandi reads GitHub only through `gh` and never asks it for your token.
 
-With [mise](https://mise.jdx.dev/), `mise install` sets up the Node and pnpm versions from `mise.toml`.
+With [mise](https://mise.jdx.dev/), `mise install` sets up Node and pnpm.
 
 ## Run from source
 
