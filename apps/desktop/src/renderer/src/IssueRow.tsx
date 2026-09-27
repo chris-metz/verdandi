@@ -9,10 +9,12 @@ import { cn } from "@/lib/utils";
 import { IssueStateIcon } from "./IssueStateIcon";
 import type { ListRow } from "./list-navigation";
 import {
+  colorStyle,
   labelColors,
   labelOverflow,
   progressCell,
   relationshipCell,
+  repositoryChipCell,
 } from "./row-cells";
 
 /** The widths of the right-aligned columns, shared with their header. */
@@ -23,16 +25,20 @@ export const columnClasses = {
 } as const;
 
 /**
- * One issue in a list: chevron, state, reference, title, labels and tags,
- * then the sub-issue progress, "Blocked by" and "Blocks" columns.
+ * One issue in a list: chevron, state, repository chip in All, reference,
+ * title, labels and tags, then the sub-issue progress, "Blocked by" and
+ * "Blocks" columns.
  */
 export const IssueRow = memo(function IssueRow({
   row,
+  withRepository,
   selected,
   onSelect,
   onToggle,
 }: {
   row: ListRow;
+  /** Whether the row names its repository with a chip, as in All. */
+  withRepository: boolean;
   selected: boolean;
   onSelect: (issueId: string) => void;
   onToggle: (issueId: string, expanded: boolean) => void;
@@ -89,6 +95,7 @@ export const IssueRow = memo(function IssueRow({
         )}
       >
         <IssueStateIcon state={issue.state} />
+        {withRepository && <RepositoryChip issue={issue} />}
         <span className="shrink-0 text-muted-foreground tabular-nums">
           {issue.reference}
         </span>
@@ -131,7 +138,7 @@ function Labels({ labels }: { labels: Label[] }) {
       {shown.map((label) => (
         <span
           key={label.name}
-          style={labelStyle(label)}
+          style={colorStyle(labelColors(label.color))}
           className="shrink-0 rounded-full px-1.5 text-[11px] leading-[18px] font-medium"
         >
           {label.name}
@@ -149,9 +156,25 @@ function Labels({ labels }: { labels: Label[] }) {
   );
 }
 
-function labelStyle({ color }: Label) {
-  const { background, foreground } = labelColors(color);
-  return { backgroundColor: background, color: foreground };
+/**
+ * The chip naming an issue's repository: filled in its owner's colour, or
+ * outlined for an external repository.
+ */
+function RepositoryChip({ issue }: { issue: IssueSummary }) {
+  const { text, title, colors } = repositoryChipCell(issue);
+  return (
+    <span
+      title={title}
+      style={colors && colorStyle(colors)}
+      className={cn(
+        "shrink-0 rounded px-1.5 text-[11px] leading-[18px] font-medium",
+        !colors &&
+          "text-muted-foreground ring-1 ring-muted-foreground ring-inset",
+      )}
+    >
+      {text}
+    </span>
+  );
 }
 
 /** The ↑ chip naming a parent issue the list does not show above. */

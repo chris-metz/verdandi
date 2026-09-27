@@ -7,13 +7,18 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
-import { repositoryLabel, sameScope } from "./scope";
+import {
+  presentScope,
+  sameScope,
+  scopeLabel,
+  type ScopePresentation,
+} from "./scope";
 import { countLabel, type SidebarItem } from "./sidebar-entries";
 
 /**
- * The sidebar's sections, Repositories and Views, then the account. Entries
- * are selected by click or by the keys the window handles; the sidebar pane
- * itself holds the keyboard, not its entries.
+ * All, pinned on top, then the sidebar's sections, Repositories and Views,
+ * then the account. Entries are selected by click or by the keys the window
+ * handles; the sidebar pane itself holds the keyboard, not its entries.
  */
 export function Sidebar({
   sidebar,
@@ -44,6 +49,28 @@ export function Sidebar({
       ?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
+  /** An entry, with the shortcut of its place in visual order. */
+  function renderEntry(item: SidebarItem) {
+    const position = items.indexOf(item);
+    return (
+      <Entry
+        key={`${String(position)}:${scopeLabel(item.scope)}`}
+        item={item}
+        selected={selected !== undefined && sameScope(item.scope, selected)}
+        focused={focused}
+        shortcut={
+          shortcutsShown ? entryShortcut(position, modifier) : undefined
+        }
+        onSelect={() => {
+          onSelect(item.scope);
+        }}
+      />
+    );
+  }
+  const inSection = (section: ScopePresentation["entry"]["section"]) =>
+    items.filter((item) => presentScope(item.scope).entry.section === section);
+  const repositories = inSection("repositories");
+
   return (
     <>
       <nav
@@ -51,6 +78,9 @@ export function Sidebar({
         aria-label="Sidebar"
         className="min-h-0 flex-1 overflow-y-auto p-2"
       >
+        <ul role="listbox" aria-label="All" className="flex flex-col gap-px">
+          {inSection("pinned").map(renderEntry)}
+        </ul>
         <SectionHeading>Repositories</SectionHeading>
         {sidebar === undefined ? null : sidebar.status === "failed" ? (
           <p
@@ -59,7 +89,7 @@ export function Sidebar({
           >
             {sidebar.message}
           </p>
-        ) : items.length === 0 ? (
+        ) : repositories.length === 0 ? (
           <p className="px-2 py-1 text-muted-foreground">
             No tracked repositories
           </p>
@@ -69,22 +99,7 @@ export function Sidebar({
             aria-label="Repositories"
             className="flex flex-col gap-px"
           >
-            {items.map((item, position) => (
-              <RepositoryItem
-                key={`${String(position)}:${repositoryLabel(item.scope.repository)}`}
-                item={item}
-                selected={
-                  selected !== undefined && sameScope(item.scope, selected)
-                }
-                focused={focused}
-                shortcut={
-                  shortcutsShown ? entryShortcut(position, modifier) : undefined
-                }
-                onSelect={() => {
-                  onSelect(item.scope);
-                }}
-              />
-            ))}
+            {repositories.map(renderEntry)}
           </ul>
         )}
         {/* Empty until views arrive. */}
@@ -104,14 +119,12 @@ function SectionHeading({ children }: { children: string }) {
 }
 
 /**
- * A tracked repository: its name, the owner on a second line, and the
- * open-issue count, or the entry's shortcut while the modifier is held.
+ * An entry: All with its icon, or a tracked repository's name with its owner
+ * on a second line; then the open-issue count, or the entry's shortcut while
+ * the modifier is held.
  */
-function RepositoryItem({
-  item: {
-    scope: { repository },
-    openIssues,
-  },
+function Entry({
+  item: { scope, openIssues },
   selected,
   focused,
   shortcut,
@@ -123,14 +136,16 @@ function RepositoryItem({
   shortcut: string | undefined;
   onSelect: () => void;
 }) {
+  const { description, entry } = presentScope(scope);
   return (
     <li
       role="option"
       aria-selected={selected}
-      title={repositoryLabel(repository)}
+      title={description}
       onClick={onSelect}
       className={cn(
-        "flex min-h-10 items-center gap-2 rounded-md px-2 py-1 select-none",
+        "flex items-center gap-2 rounded-md px-2 py-1 select-none",
+        entry.section === "pinned" ? "min-h-8" : "min-h-10",
         selected
           ? focused
             ? "bg-selection shadow-[inset_2px_0_0_var(--selection-edge)]"
@@ -138,14 +153,32 @@ function RepositoryItem({
           : "hover:bg-sidebar-accent",
       )}
     >
-      <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className={cn("truncate", selected && "font-medium")}>
-          {repository.name}
+      {entry.section === "pinned" ? (
+        <>
+          <svg
+            viewBox="0 0 16 16"
+            aria-hidden
+            className="size-4 shrink-0 fill-none stroke-current stroke-[1.4] text-muted-foreground"
+          >
+            <path d="M8 1.8 14.2 5 8 8.2 1.8 5z" />
+            <path d="M1.8 8 8 11.2 14.2 8M1.8 11 8 14.2 14.2 11" />
+          </svg>
+          <span
+            className={cn("min-w-0 flex-1 truncate", selected && "font-medium")}
+          >
+            {entry.name}
+          </span>
+        </>
+      ) : (
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className={cn("truncate", selected && "font-medium")}>
+            {entry.name}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {entry.owner}
+          </span>
         </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {repository.owner}
-        </span>
-      </span>
+      )}
       {shortcut ? (
         <kbd className="shrink-0 rounded border border-b-2 bg-background px-1 font-mono text-[11px] text-muted-foreground">
           {shortcut}

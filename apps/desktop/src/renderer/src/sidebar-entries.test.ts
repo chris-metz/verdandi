@@ -10,10 +10,11 @@ function entry(owner: string, name: string): RepositoryEntry {
 }
 
 describe("entry order", () => {
-  it("lists the Repositories section in the settings file's order, with counts", () => {
+  it("starts with All, then lists the Repositories section in the settings file's order, with counts", () => {
     expect(
       entryOrder({
         status: "read",
+        all: { openIssues: { status: "known", count: 3 } },
         repositories: [
           entry("acme", "web"),
           entry("acme", "api"),
@@ -21,6 +22,10 @@ describe("entry order", () => {
         ],
       }),
     ).toEqual([
+      {
+        scope: { kind: "all" },
+        openIssues: { status: "known", count: 3 },
+      },
       {
         scope: {
           kind: "repository",
@@ -45,11 +50,18 @@ describe("entry order", () => {
     ]);
   });
 
-  it("has no entries before the sidebar is read, or when it failed", () => {
-    expect(entryOrder(undefined)).toEqual([]);
+  it("has only All before the sidebar is read, or when it failed", () => {
+    expect(entryOrder(undefined)).toEqual([
+      { scope: { kind: "all" }, openIssues: { status: "loading" } },
+    ]);
     expect(
       entryOrder({ status: "failed", message: "settings.json is broken" }),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        scope: { kind: "all" },
+        openIssues: { status: "failed", message: "settings.json is broken" },
+      },
+    ]);
   });
 });
 

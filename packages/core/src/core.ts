@@ -35,16 +35,14 @@ export function createCore({ github, settings }: CoreOptions): Contract {
   const lists = createIssueLists({
     store: createIssueStore(),
     request,
-    trackedRepositories: async () => {
-      const result = await settings.read();
-      return result.ok ? result.value.repositories : [];
-    },
+    settings,
     push: (list) => {
       events.emit("listChanged", list);
-      // The sidebar's count follows the list each time it has loaded.
-      if (list.loading.status === "loaded") {
-        sidebar.listLoaded(list.scope.repository, list.loading.openIssues);
-      }
+    },
+    // The sidebar's count follows a repository's open issues each time they
+    // have loaded, for its list or for All.
+    openIssuesLoaded: (repository, openIssues) => {
+      sidebar.openIssuesLoaded(repository, openIssues);
     },
   });
 

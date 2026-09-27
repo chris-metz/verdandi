@@ -25,14 +25,25 @@ export function labelOverflow(labels: readonly Label[]): {
   };
 }
 
+/** The colours of a filled pill or chip: behind, and of its text. */
+export interface ColorPair {
+  background: string;
+  foreground: string;
+}
+
+/** An element's inline style for a colour pair. */
+export function colorStyle({ background, foreground }: ColorPair): {
+  backgroundColor: string;
+  color: string;
+} {
+  return { backgroundColor: background, color: foreground };
+}
+
 /**
  * A label pill's colours: GitHub's colour behind, and dark or white text,
  * whichever reads better on it.
  */
-export function labelColors(color: string): {
-  background: string;
-  foreground: string;
-} {
+export function labelColors(color: string): ColorPair {
   const hex = /^[0-9a-f]{6}$/i.test(color) ? color : "ededed";
   const value = Number.parseInt(hex, 16);
   const luminance =
@@ -43,6 +54,74 @@ export function labelColors(color: string): {
   return {
     background: `#${hex}`,
     foreground: luminance > 0.6 ? "#1f2328" : "#ffffff",
+  };
+}
+
+/** A repository chip, which names in All where each issue lives. */
+export interface RepositoryChipCell {
+  /** The repository's name, or `owner/name` for an external repository. */
+  text: string;
+  /** Its tooltip. */
+  title: string;
+  /**
+   * Its owner's colours, which fill the chip; none for an external
+   * repository, whose chip is outlined.
+   */
+  colors: ColorPair | undefined;
+}
+
+/**
+ * The chip of an issue's repository: a tracked repository's name, filled in
+ * its owner's colour, or an external repository's `owner/name`, outlined.
+ */
+export function repositoryChipCell({
+  repository,
+  external,
+}: Pick<IssueSummary, "repository" | "external">): RepositoryChipCell {
+  const { owner, name } = repository;
+  const full = `${owner}/${name}`;
+  return external
+    ? {
+        text: full,
+        title: `${full} is not a tracked repository`,
+        colors: undefined,
+      }
+    : { text: name, title: full, colors: ownerColors(owner) };
+}
+
+/**
+ * Owners' chip colours, far apart in hue and each dark enough for white text
+ * (4.5:1 or more), so a filled chip reads the same in light and dark.
+ */
+const ownerPalette = [
+  "#b91c1c",
+  "#c2410c",
+  "#b45309",
+  "#4d7c0f",
+  "#15803d",
+  "#0f766e",
+  "#0e7490",
+  "#1d4ed8",
+  "#4f46e5",
+  "#6d28d9",
+  "#a21caf",
+  "#be185d",
+] as const;
+
+/**
+ * An owner's chip colours: always the same for one owner, whatever the case
+ * of its name, as GitHub ignores it.
+ */
+export function ownerColors(owner: string): ColorPair {
+  // FNV-1a, which spreads similar names apart.
+  let hash = 0x811c9dc5;
+  for (const char of owner.toLowerCase()) {
+    hash = Math.imul(hash ^ (char.codePointAt(0) ?? 0), 0x01000193);
+  }
+  const index = (hash >>> 0) % ownerPalette.length;
+  return {
+    background: ownerPalette[index] ?? "#57606a",
+    foreground: "#ffffff",
   };
 }
 

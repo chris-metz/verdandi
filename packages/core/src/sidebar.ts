@@ -10,14 +10,20 @@ import type {
   RepositorySummary,
   SendRequest,
 } from "./github/port.ts";
-import { repositoryKey, sameRepository } from "./repository-address.ts";
+import {
+  distinctRepositories,
+  nameWithOwner,
+  repositoryKey,
+  sameRepository,
+} from "./repository-address.ts";
 import type { SettingsStorage } from "./settings/port.ts";
 
 /**
  * The sidebar: the tracked repositories from the settings file, with their
  * open-issue counts. A count is read once per session, or again after reading
  * it failed, many repositories at a time and without their issues. It then
- * follows the repository's list each time that loads.
+ * follows the repository's open issues each time they load, for its list or
+ * for All.
  */
 export interface Sidebar {
   /**
@@ -25,8 +31,8 @@ export interface Sidebar {
    * it does not know and is not already asking for.
    */
   read(): Promise<SidebarEntries>;
-  /** Takes a repository's open-issue count from its list, just loaded. */
-  listLoaded(repository: RepositoryAddress, openIssues: number): void;
+  /** Takes a repository's open-issue count from its open issues, just loaded. */
+  openIssuesLoaded(repository: RepositoryAddress, openIssues: number): void;
 }
 
 export interface SidebarOptions {
@@ -58,14 +64,17 @@ export function createSidebar({
   /** The tracked repositories as last read: what a push lists. */
   let tracked: RepositoryAddress[] | undefined;
 
+  function countOf(repository: RepositoryAddress): OpenIssueCount {
+    return counts.get(repositoryKey(repository)) ?? { status: "loading" };
+  }
+
   function entries(repositories: RepositoryAddress[]): SidebarEntries {
     return {
       status: "read",
+      all: { openIssues: allCount(repositories, countOf) },
       repositories: repositories.map((repository) => ({
         repository,
-        openIssues: counts.get(repositoryKey(repository)) ?? {
-          status: "loading",
-        },
+        openIssues: countOf(repository),
       })),
     };
   }
@@ -82,7 +91,7 @@ export function createSidebar({
     let changed = false;
     for (const [index, repository] of repositories.entries()) {
       const key = repositoryKey(repository);
-      // A list that loaded meanwhile gave a count at least as recent.
+      // Open issues that loaded meanwhile gave a count at least as recent.
       if (counts.get(key)?.status !== "loading") continue;
       // Each repository fails on its own, unless the whole request did.
       const summary: GitHubResult<RepositorySummary> = result.ok
@@ -124,7 +133,7 @@ export function createSidebar({
       }
       return entries(tracked);
     },
-    listLoaded(repository, openIssues) {
+    openIssuesLoaded(repository, openIssues) {
       const key = repositoryKey(repository);
       const count = counts.get(key);
       if (count?.status === "known" && count.count === openIssues) return;
@@ -134,4 +143,30 @@ export function createSidebar({
       }
     },
   };
+}
+
+/**
+ * All's count: every tracked repository's together, each repository counted
+ * once however often the settings file lists it. It is unknown while any of
+ * theirs is, and then names the repositories whose count failed.
+ */
+function allCount(
+  repositories: readonly RepositoryAddress[],
+  countOf: (repository: RepositoryAddress) => OpenIssueCount,
+): OpenIssueCount {
+  let total = 0;
+  let loading = false;
+  const failures: string[] = [];
+  for (const repository of distinctRepositories(repositories)) {
+    const count = countOf(repository);
+    if (count.status === "known") total += count.count;
+    else if (count.status === "loading") loading = true;
+    else {
+      failures.push(`${nameWithOwner(repository)}: ${count.message}`);
+    }
+  }
+  if (failures.length > 0) {
+    return { status: "failed", message: failures.join("\n") };
+  }
+  return loading ? { status: "loading" } : { status: "known", count: total };
 }

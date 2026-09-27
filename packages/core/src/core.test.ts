@@ -141,16 +141,23 @@ function collapsedIssues(list: IssueList): string[] {
 
 /**
  * A list as a user reads it: one line per issue, sub-issues indented below
- * their parent issue, with what the row says besides its title.
+ * their parent issue, with what the row says besides its title. In All, each
+ * row starts with its repository chip, as `owner/name`.
  */
 function outline(list: IssueList): string[] {
   const lines: string[] = [];
   function add(node: IssueNode, depth: number, tags: string[]) {
-    const { reference, title, state, external } = node.issue;
+    const { repository, reference, title, state, external } = node.issue;
+    const chip =
+      list.scope.kind === "all"
+        ? `${repository.owner}/${repository.name} `
+        : "";
     if (state === "closed") tags.unshift("closed");
     if (external) tags.unshift("external");
     lines.push(
-      [`${"  ".repeat(depth)}${reference} ${title}`, ...tags].join(" · "),
+      [`${"  ".repeat(depth)}${chip}${reference} ${title}`, ...tags].join(
+        " · ",
+      ),
     );
     for (const subIssue of node.subIssues) add(subIssue, depth + 1, []);
   }
@@ -176,6 +183,8 @@ const acmeWeb: Scope = {
   kind: "repository",
   repository: { owner: "acme", name: "web" },
 };
+
+const all: Scope = { kind: "all" };
 
 describe("account", () => {
   it("reports the account GitHub answers as", async () => {
@@ -248,6 +257,7 @@ describe("sidebar", () => {
 
     expect(await core.getSidebar()).toEqual({
       status: "read",
+      all: { openIssues: { status: "known", count: 0 } },
       repositories: [],
     });
   });
@@ -363,6 +373,7 @@ describe("sidebar counts", () => {
 
     expect(read).toEqual({
       status: "read",
+      all: { openIssues: { status: "loading" } },
       repositories: [
         {
           repository: { owner: "acme", name: "api" },
@@ -433,6 +444,13 @@ describe("sidebar counts", () => {
 
     expect(await readUntilCounted(core)).toEqual({
       status: "read",
+      all: {
+        openIssues: {
+          status: "failed",
+          message:
+            "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+        },
+      },
       repositories: [
         {
           repository: { owner: "acme", name: "api" },
@@ -638,6 +656,57 @@ describe("sidebar counts", () => {
 
     expect(sidebarLines(await counted)).toEqual(["acme/api 1"]);
     expect(github.requestsReceived).toBe(1);
+  });
+
+  it("counts All's open issues as every tracked repository's together", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [
+        { name: "acme/api" },
+        { name: "acme/web" },
+        { name: "octo-org/tools" },
+      ],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    github.addRepository("octo-org/tools", []);
+    const core = createTestCore(github);
+
+    const read = await core.getSidebar();
+    expect(read.status === "read" && read.all).toEqual({
+      openIssues: { status: "loading" },
+    });
+    const counted = await readUntilCounted(core);
+    expect(counted.status === "read" && counted.all).toEqual({
+      openIssues: { status: "known", count: 3 },
+    });
+  });
+
+  it("leaves All's count unknown, naming why, while a tracked repository's is", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/gone" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+
+    const sidebar = await readUntilCounted(core);
+
+    expect(sidebar.status === "read" && sidebar.all).toEqual({
+      openIssues: {
+        status: "failed",
+        message:
+          "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+      },
+    });
   });
 
   it("asks GitHub nothing while no repository is tracked", async () => {
@@ -1100,6 +1169,7 @@ describe("sub-issue forest", () => {
 
     expect(tree?.issue).toEqual({
       id: "I_acme/api#1",
+      repository: { owner: "acme", name: "api" },
       reference: "#1",
       title: "Launch billing",
       state: "open",
@@ -1112,6 +1182,7 @@ describe("sub-issue forest", () => {
     });
     expect(tree?.subIssues[1]?.issue).toEqual({
       id: "I_acme/api#3",
+      repository: { owner: "acme", name: "api" },
       reference: "#3",
       title: "Usage endpoint",
       state: "open",
@@ -1263,5 +1334,528 @@ describe("expansion", () => {
     const reopened = await openUntilLoaded(core, acmeApi);
 
     expect(collapsedIssues(reopened)).toEqual(["#1"]);
+  });
+});
+
+describe("All", () => {
+  it("merges the open issues of every tracked repository into one forest", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "octo-org/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Retry webhooks", updatedAt: "2026-09-03T00:00:00Z" },
+      { number: 1, title: "Crash on start", updatedAt: "2026-09-01T00:00:00Z" },
+    ]);
+    github.addRepository("octo-org/web", [
+      { number: 2, title: "Broken footer", updatedAt: "2026-09-02T00:00:00Z" },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual([
+      "acme/api #3 Retry webhooks",
+      "octo-org/web #2 Broken footer",
+      "acme/api #1 Crash on start",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 3,
+      closedNotListed: 0,
+    });
+  });
+
+  it("shows each issue once, below its parent issue in another tracked repository", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "octo-org/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Usage endpoint" },
+      { number: 1, title: "Launch billing", subIssues: ["octo-org/web#5"] },
+    ]);
+    github.addRepository("octo-org/web", [
+      { number: 6, title: "Broken footer" },
+      { number: 5, title: "Usage dashboard", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+
+    // octo-org/web#5 and acme/api#2 are open issues of tracked repositories
+    // and sub-issues too; each shows once, under its parent issue.
+    expect(outline(await openUntilLoaded(core, all))).toEqual([
+      "acme/api #1 Launch billing",
+      "  octo-org/web #5 Usage dashboard",
+      "    acme/api #2 Usage endpoint",
+      "octo-org/web #6 Broken footer",
+    ]);
+  });
+
+  it("names a parent issue outside every tracked repository with a chip", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 2,
+        title: "Support the v3 handshake",
+        updatedAt: "2026-09-03T00:00:00Z",
+      },
+      { number: 1, title: "Usage endpoint" },
+    ]);
+    github.addRepository("acme/web", [
+      {
+        number: 5,
+        title: "Usage dashboard",
+        subIssues: ["acme/api#1"],
+      },
+      {
+        number: 4,
+        title: "Show the protocol version",
+        updatedAt: "2026-09-02T00:00:00Z",
+      },
+    ]);
+    github.addRepository("upstream/protocol", [
+      {
+        number: 7,
+        title: "Protocol v3 rollout",
+        subIssues: ["acme/api#2", "acme/web#4"],
+      },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual([
+      "acme/web #5 Usage dashboard",
+      "  acme/api #1 Usage endpoint",
+      "acme/api #2 Support the v3 handshake · ↑ upstream/protocol#7 external",
+      "acme/web #4 Show the protocol version · ↑ upstream/protocol#7 external",
+    ]);
+    expect(list.trees[1]?.parent).toEqual({
+      id: "I_upstream/protocol#7",
+      reference: "upstream/protocol#7",
+      title: "Protocol v3 rollout",
+      external: true,
+    });
+  });
+
+  it("nests an issue below a tracked ancestor through an external parent issue", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 7, title: "Usage endpoint" }]);
+    github.addRepository("vendor/sdk", [
+      { number: 8, title: "Emit usage events", subIssues: ["acme/api#7"] },
+    ]);
+    github.addRepository("acme/web", [
+      {
+        number: 3,
+        title: "Launch billing",
+        state: "closed",
+        subIssues: ["vendor/sdk#8"],
+      },
+    ]);
+    const core = createTestCore(github);
+
+    expect(outline(await openUntilLoaded(core, all))).toEqual([
+      "acme/web #3 Launch billing · closed",
+      "  vendor/sdk #8 Emit usage events · external",
+      "    acme/api #7 Usage endpoint",
+    ]);
+  });
+
+  it("gives every issue its repository for the chip, and names it by number", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "octo-org/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["octo-org/web#2", "vendor/sdk#3"],
+      },
+    ]);
+    github.addRepository("octo-org/web", [{ number: 2, title: "Usage page" }]);
+    github.addRepository("vendor/sdk", [
+      { number: 3, title: "Emit usage events" },
+    ]);
+    const core = createTestCore(github);
+    const [tree] = (await openUntilLoaded(core, all)).trees;
+
+    expect(
+      [tree, ...(tree?.subIssues ?? [])].map((node) => {
+        const { repository, reference, external } = node?.issue ?? {};
+        return { repository, reference, external };
+      }),
+    ).toEqual([
+      {
+        repository: { owner: "acme", name: "api" },
+        reference: "#1",
+        external: false,
+      },
+      {
+        repository: { owner: "octo-org", name: "web" },
+        reference: "#2",
+        external: false,
+      },
+      {
+        repository: { owner: "vendor", name: "sdk" },
+        reference: "#3",
+        external: true,
+      },
+    ]);
+  });
+
+  it("leaves out closed issues without open sub-issues, and counts those of every tracked repository", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Finished rollout", state: "closed" },
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/web#4"] },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 6, title: "Broken footer" },
+      { number: 5, title: "Old crash", state: "closed" },
+      { number: 4, title: "Usage chart", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual([
+      "acme/api #1 Launch billing",
+      "  acme/web #4 Usage chart · closed",
+      "acme/web #6 Broken footer",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 2,
+      closedNotListed: 3,
+    });
+  });
+
+  it("keeps a closed issue of a tracked repository as the ancestor of open issues in another", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 7, title: "Usage endpoint" },
+      { number: 6, title: "Old crash", state: "closed" },
+    ]);
+    github.addRepository("acme/web", [
+      {
+        number: 3,
+        title: "Launch billing",
+        state: "closed",
+        subIssues: ["acme/api#7"],
+      },
+      { number: 2, title: "Dark mode", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual([
+      "acme/web #3 Launch billing · closed",
+      "  acme/api #7 Usage endpoint",
+    ]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 1,
+      closedNotListed: 2,
+    });
+  });
+
+  it("loads every tracked repository when it is opened, and not before", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+
+    await readUntilCounted(core);
+    expect(github.requestsFor("acme/api")).toBe(0);
+    expect(github.requestsFor("acme/web")).toBe(0);
+
+    await openUntilLoaded(core, all);
+    expect(github.requestsFor("acme/api")).toBe(1);
+    expect(github.requestsFor("acme/web")).toBe(1);
+  });
+
+  it("shows each repository's issues as they arrive", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 2, title: "Audit trail" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    const core = createTestCore(github);
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+
+    const loaded = await openUntilLoaded(core, all);
+
+    const firstRows = pushed.find((list) => list.trees.length > 0);
+    expect(firstRows?.loading.status).toBe("loading");
+    expect(outline(loaded)).toHaveLength(4);
+  });
+
+  it("reuses a repository whose list has loaded, reading none of it again", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+
+    await openUntilLoaded(core, acmeApi);
+    // Its one page, and its closed sub-issue by ID.
+    expect(github.requestsFor("acme/api")).toBe(2);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual([
+      "acme/api #1 Launch billing",
+      "  acme/api #2 Meter requests · closed",
+      "acme/web #1 Broken footer",
+    ]);
+    expect(github.requestsFor("acme/api")).toBe(2);
+    expect(github.requestsFor("acme/web")).toBe(1);
+  });
+
+  it("leaves the repository lists nothing to read once it has loaded", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 1, title: "Usage page", subIssues: ["acme/api#1"] },
+    ]);
+    const core = createTestCore(github);
+
+    await openUntilLoaded(core, all);
+    const requestsBefore = github.requestsReceived;
+
+    expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
+      "#1 Launch billing · ↑ acme/web#1",
+      "  #2 Meter requests · closed",
+    ]);
+    expect(outline(await openUntilLoaded(core, acmeWeb))).toEqual([
+      "#1 Usage page",
+      "  acme/api#1 Launch billing",
+      "    acme/api#2 Meter requests · closed",
+    ]);
+    expect(github.requestsReceived).toBe(requestsBefore);
+  });
+
+  it("reads an issue once when All needs it while a repository's list is reading it", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+    github.pause("fetchIssues");
+
+    await core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    // All shows acme/api's issues while their closed sub-issue is still
+    // being read for acme/api's list.
+    const shown = new Promise<void>((resolve) => {
+      core.on("listChanged", (list) => {
+        if (list.scope.kind === "all" && list.trees.length > 0) resolve();
+      });
+    });
+    const loaded = openUntilLoaded(core, all);
+    await shown;
+    github.resume();
+
+    expect(outline(await loaded)).toEqual([
+      "acme/api #1 Launch billing",
+      "  acme/api #2 Meter requests · closed",
+      "acme/web #1 Broken footer",
+    ]);
+    // Its one page, and its closed sub-issue by ID.
+    expect(github.requestsFor("acme/api")).toBe(2);
+  });
+
+  it("updates the counts of the repositories it loads, without asking GitHub again", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+    expect(sidebarLines(await readUntilCounted(core))).toEqual([
+      "acme/api 1",
+      "acme/web 1",
+    ]);
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 3, title: "Audit trail" },
+      { number: 2, title: "CSV import" },
+      { number: 1, title: "Broken footer" },
+    ]);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+    await openUntilLoaded(core, all);
+
+    expect(
+      sidebarLines(pushed.at(-1) ?? { status: "failed", message: "" }),
+    ).toEqual(["acme/api 2", "acme/web 3"]);
+    // The counts, then one page of each repository.
+    expect(github.requestsReceived).toBe(3);
+  });
+
+  it("names a tracked repository whose issues could not be loaded, and shows the others", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/gone" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
+    expect(list.loading).toEqual({
+      status: "failed",
+      message:
+        "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+    });
+  });
+
+  it("tries only the repositories that failed again when it is reopened", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/gone" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, all);
+
+    github.addRepository("acme/gone", [{ number: 4, title: "Found again" }]);
+    const reopened = await openUntilLoaded(core, all);
+
+    expect(outline(reopened)).toEqual([
+      "acme/gone #4 Found again",
+      "acme/api #1 Crash on start",
+    ]);
+    expect(reopened.loading.status).toBe("loaded");
+    expect(github.requestsFor("acme/api")).toBe(1);
+  });
+
+  it("says why when the settings file cannot be read", async () => {
+    await writeFile(join(home, "settings.json"), '{ "repositories": [ }');
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+
+    expect(await openUntilLoaded(core, all)).toEqual({
+      scope: all,
+      trees: [],
+      loading: {
+        status: "failed",
+        message: expect.stringContaining(
+          `${join(home, "settings.json")} is not valid JSON:`,
+        ) as unknown,
+      },
+    });
+    expect(github.requestsReceived).toBe(0);
+  });
+
+  it("has no open issues, asking GitHub nothing, while no repository is tracked", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+
+    expect(await openUntilLoaded(core, all)).toEqual({
+      scope: all,
+      trees: [],
+      loading: { status: "loaded", openIssues: 0, closedNotListed: 0 },
+    });
+    expect(github.requestsReceived).toBe(0);
+  });
+
+  it("keeps its expansion apart from the repository lists'", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Usage endpoint" },
+      { number: 1, title: "Launch billing", subIssues: ["acme/api#2"] },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await openUntilLoaded(core, all);
+
+    const collapsed = await nextList(core, all, () =>
+      core.setExpanded(all, "I_acme/api#1", false),
+    );
+    expect(collapsedIssues(collapsed)).toEqual(["#1"]);
+    expect(collapsedIssues(await openUntilLoaded(core, acmeApi))).toEqual([]);
+
+    await core.setAllExpanded(acmeApi, false);
+    await core.setExpanded(all, "I_acme/api#1", true);
+    expect(collapsedIssues(await openUntilLoaded(core, all))).toEqual([]);
+  });
+
+  it("merges a repository the settings file lists twice once", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "Acme/API" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    const list = await openUntilLoaded(core, all);
+
+    expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
+    expect(list.loading).toEqual({
+      status: "loaded",
+      openIssues: 1,
+      closedNotListed: 0,
+    });
   });
 });

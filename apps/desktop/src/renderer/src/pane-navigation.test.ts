@@ -196,3 +196,40 @@ describe("entry shortcuts", () => {
     expect(entryShortcut(9, macOS)).toBeUndefined();
   });
 });
+
+describe("All, pinned on top", () => {
+  const all: Scope = { kind: "all" };
+  const withAll = [all, ...entries];
+
+  function pressWithAll(pressed: KeyPress, selected: Scope | undefined) {
+    return commandForWindowKey(pressed, {
+      focused: "sidebar",
+      entries: withAll,
+      selected,
+      modifier: macOS,
+    });
+  }
+
+  it("is selected with ⌘1, and the repositories with ⌘2 on", () => {
+    expect(pressWithAll(key("1", { metaKey: true }), undefined)).toEqual({
+      kind: "select",
+      scope: all,
+    });
+    expect(pressWithAll(key("2", { metaKey: true }), all)).toEqual(
+      select("api"),
+    );
+    expect(pressWithAll(key("4", { metaKey: true }), all)).toEqual(
+      select("infra"),
+    );
+  });
+
+  it("is left with j or ↓ for the first repository, and reached from it with k or ↑", () => {
+    expect(pressWithAll(key("j"), all)).toEqual(select("api"));
+    expect(pressWithAll(key("ArrowDown"), all)).toEqual(select("api"));
+    expect(pressWithAll(key("k"), repository("api"))).toEqual({
+      kind: "select",
+      scope: all,
+    });
+    expect(pressWithAll(key("ArrowUp"), all)).toBeUndefined();
+  });
+});

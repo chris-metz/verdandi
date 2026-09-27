@@ -18,7 +18,7 @@ import {
 } from "./list-navigation";
 import { rememberedPlace, rememberPlace } from "./list-places";
 import { listStatus } from "./list-status";
-import { repositoryLabel, sameScope } from "./scope";
+import { presentScope, sameScope } from "./scope";
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
@@ -116,18 +116,17 @@ export function IssueListPane({
       ?.scrollIntoView({ block: "nearest" });
   });
 
+  const { label, repositoryChips } = presentScope(scope);
   const failed = list?.loading.status === "failed";
   return (
     <>
       <header className="flex h-12 shrink-0 items-center border-b px-4">
-        <h1 className="truncate font-medium">
-          {repositoryLabel(scope.repository)}
-        </h1>
+        <h1 className="truncate font-medium">{label}</h1>
       </header>
       <div
         ref={scroller}
         role="tree"
-        aria-label={`Issues of ${repositoryLabel(scope.repository)}`}
+        aria-label={`Issues of ${label}`}
         tabIndex={0}
         data-pane-focus
         onKeyDown={onKeyDown}
@@ -158,6 +157,7 @@ export function IssueListPane({
               <IssueRow
                 key={row.node.issue.id}
                 row={row}
+                withRepository={repositoryChips}
                 selected={index === selected}
                 onSelect={select}
                 onToggle={toggle}

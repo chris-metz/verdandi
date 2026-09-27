@@ -1,5 +1,5 @@
 import type { Scope } from "@verdandi/core/contract";
-import { repositoryLabel } from "./scope";
+import { scopeLabel } from "./scope";
 
 /** Where the user is in a list: its selection and scroll position. */
 export interface ListPlace {
@@ -15,7 +15,7 @@ const places = new Map<string, ListPlace>();
 
 export function rememberedPlace(scope: Scope): ListPlace {
   return (
-    places.get(repositoryLabel(scope.repository)) ?? {
+    places.get(scopeLabel(scope)) ?? {
       selectedId: undefined,
       scrollTop: 0,
     }
@@ -23,5 +23,5 @@ export function rememberedPlace(scope: Scope): ListPlace {
 }
 
 export function rememberPlace(scope: Scope, place: ListPlace): void {
-  places.set(repositoryLabel(scope.repository), place);
+  places.set(scopeLabel(scope), place);
 }

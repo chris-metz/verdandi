@@ -1,10 +1,13 @@
 import type { Label } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
+  colorStyle,
   labelColors,
   labelOverflow,
+  ownerColors,
   progressCell,
   relationshipCell,
+  repositoryChipCell,
 } from "./row-cells";
 
 const labels: Label[] = [
@@ -101,3 +104,87 @@ describe("blocking columns", () => {
     ).toBeUndefined();
   });
 });
+
+describe("colour pairs", () => {
+  it("style an element's background and text", () => {
+    expect(
+      colorStyle({ background: "#d73a4a", foreground: "#ffffff" }),
+    ).toEqual({ backgroundColor: "#d73a4a", color: "#ffffff" });
+  });
+});
+
+describe("repository chips", () => {
+  it("name a tracked repository, in its owner's colour", () => {
+    const api = repositoryChipCell({
+      repository: { owner: "acme", name: "api" },
+      external: false,
+    });
+    const web = repositoryChipCell({
+      repository: { owner: "acme", name: "web" },
+      external: false,
+    });
+
+    expect(api).toEqual({
+      text: "api",
+      title: "acme/api",
+      colors: ownerColors("acme"),
+    });
+    expect(web.colors).toEqual(api.colors);
+  });
+
+  it("name an external repository in full, outlined instead of filled", () => {
+    expect(
+      repositoryChipCell({
+        repository: { owner: "vendor", name: "sdk" },
+        external: true,
+      }),
+    ).toEqual({
+      text: "vendor/sdk",
+      title: "vendor/sdk is not a tracked repository",
+      colors: undefined,
+    });
+  });
+});
+
+describe("owner colours", () => {
+  const owners = Array.from(
+    { length: 200 },
+    (_, index) => `owner-${String(index)}`,
+  );
+
+  it("stay the same for an owner, whatever the case of its name", () => {
+    expect(ownerColors("Octo-Org")).toEqual(ownerColors("octo-org"));
+  });
+
+  it("tell owners apart", () => {
+    const backgrounds = new Set(
+      owners.map((owner) => ownerColors(owner).background),
+    );
+    expect(backgrounds.size).toBeGreaterThanOrEqual(10);
+  });
+
+  it("keep the chip's text readable, in light and dark alike", () => {
+    // WCAG 2 AA asks for 4.5:1 for small text. The chip is filled, so the
+    // window's background does not matter.
+    for (const owner of owners) {
+      const { background, foreground } = ownerColors(owner);
+      expect(contrast(background, foreground)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+/** The WCAG 2 contrast ratio of two `#rrggbb` colours. */
+function contrast(a: string, b: string): number {
+  const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
+}
+
+function luminance(hex: string): number {
+  const [r = 0, g = 0, b = 0] = [1, 3, 5].map((start) => {
+    const channel = Number.parseInt(hex.slice(start, start + 2), 16) / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}

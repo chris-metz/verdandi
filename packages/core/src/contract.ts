@@ -28,12 +28,27 @@ export type SidebarEntries =
   | {
       status: "read";
       /**
+       * All, pinned above the sections. It is always there and never stored
+       * in the settings file.
+       */
+      all: AllEntry;
+      /**
        * The Repositories section: the tracked repositories, in the settings
        * file's order.
        */
       repositories: RepositoryEntry[];
     }
   | { status: "failed"; message: string };
+
+/** All as the sidebar lists it. */
+export interface AllEntry {
+  /**
+   * How many open issues every tracked repository has together: known once
+   * each repository's count is, and otherwise unknown, naming the
+   * repositories whose count failed.
+   */
+  openIssues: OpenIssueCount;
+}
 
 /** A tracked repository as the sidebar lists it. */
 export interface RepositoryEntry {
@@ -51,8 +66,12 @@ export type OpenIssueCount =
   | { status: "known"; count: number }
   | { status: "failed"; message: string };
 
-/** What a list in the main area shows: so far, a tracked repository. */
-export type Scope = { kind: "repository"; repository: RepositoryAddress };
+/**
+ * What a list in the main area shows: All, which merges every tracked
+ * repository, or one tracked repository.
+ */
+export type Scope =
+  { kind: "all" } | { kind: "repository"; repository: RepositoryAddress };
 
 /** A GitHub label. */
 export interface Label {
@@ -78,8 +97,14 @@ export interface IssueSummary {
   /** GitHub's node ID, the same wherever the issue appears. */
   id: string;
   /**
-   * How the list names it: `#12` in its own repository's list, and
-   * `owner/name#12` when it lives in another repository.
+   * The repository it lives in. In All, every row names it with a repository
+   * chip.
+   */
+  repository: RepositoryAddress;
+  /**
+   * How the list names it: `#12` in its own repository's list and in All,
+   * where the repository chip names the repository, and `owner/name#12` when
+   * it lives in another repository than the list's.
    */
   reference: string;
   title: string;
@@ -110,7 +135,10 @@ export interface IssueNode {
 /** A parent issue that a list names instead of showing it above. */
 export interface ParentIssue {
   id: string;
-  /** How the list names it, as for an issue it shows. */
+  /**
+   * How the list names it, as for an issue it shows; in All, with no
+   * repository chip beside it, always `owner/name#12`.
+   */
   reference: string;
   title: string;
   /** Whether it is an external issue. */
@@ -121,7 +149,8 @@ export interface ParentIssue {
 export interface IssueTree extends IssueNode {
   /**
    * Its parent issue, which the list does not show above it: it lives in
-   * another repository with no issue of this one above it, or has not loaded
+   * another repository with no issue of this one above it (in All, outside
+   * every tracked repository, with none of them above it), or has not loaded
    * (yet).
    */
   parent: ParentIssue | undefined;
@@ -135,11 +164,15 @@ export type ListLoading =
   | { status: "loading" }
   | {
       status: "loaded";
-      /** How many open issues the repository has. */
+      /**
+       * How many open issues the repository has, or in All every tracked
+       * repository together.
+       */
       openIssues: number;
       /**
-       * How many of the repository's closed issues the list leaves out: all
-       * but the ancestors of its open issues and the sub-issues in it.
+       * How many of the repository's closed issues the list leaves out (in
+       * All, of every tracked repository's): all but the ancestors of its
+       * open issues and the sub-issues in it.
        */
       closedNotListed: number;
     }
@@ -150,7 +183,9 @@ export type ListLoading =
  * repository's open issues and their closed ancestors in the same repository,
  * however many repositories lie in between, form the top level, parent
  * issues first, then the most recently updated; the sub-issues of each, open
- * or closed and from any repository, nest below it. Each issue appears once.
+ * or closed and from any repository, nest below it. All does the same with
+ * every tracked repository at once, so an issue nests below its parent issue
+ * whichever tracked repository either lives in. Each issue appears once.
  */
 export interface IssueList {
   scope: Scope;
@@ -174,7 +209,9 @@ export interface CoreRequests {
    * once, then again as each page of open issues and each batch of the other
    * issues it shows arrives. Only the opened scope is loaded, once per
    * session: opening it again reuses what is loaded or loading, and loads it
-   * again only if it failed.
+   * again only if it failed. All loads every tracked repository side by side,
+   * and shares each repository's open issues with that repository's list, so
+   * neither reads again what the other has read.
    */
   openList: (scope: Scope) => Promise<void>;
   /**

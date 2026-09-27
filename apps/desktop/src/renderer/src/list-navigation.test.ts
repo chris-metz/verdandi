@@ -16,6 +16,7 @@ function issue(
   return {
     issue: {
       id: `I_${String(number)}`,
+      repository: { owner: "acme", name: "api" },
       reference: `#${String(number)}`,
       title: `Issue ${String(number)}`,
       state: "open",

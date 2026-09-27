@@ -7,7 +7,7 @@ import {
   shortcutModifier,
   type Pane,
 } from "./pane-navigation";
-import { repositoryLabel } from "./scope";
+import { scopeLabel } from "./scope";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder } from "./sidebar-entries";
 
@@ -107,12 +107,14 @@ export function App() {
         {selected ? (
           // A new scope starts from a fresh list, never the previous one's.
           <IssueListPane
-            key={repositoryLabel(selected.repository)}
+            key={scopeLabel(selected)}
             scope={selected}
             hasKeyboard={focused === "main"}
           />
         ) : (
-          <p className="m-auto text-muted-foreground">Select a repository.</p>
+          <p className="m-auto text-muted-foreground">
+            Select All or a repository.
+          </p>
         )}
       </main>
     </div>
