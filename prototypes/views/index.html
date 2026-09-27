@@ -1,0 +1,1869 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Do not build on this code.
+
+  Question ("Prototype saved-search views and their filtered issue trees", issue #17 under "Map: Verdandi
+  MVP spec"): how do users create, edit, remove and browse views (named, saved GitHub issue searches whose
+  scope is their search text alone), and how does a view's issue tree show matches, context issues,
+  closed issues and incomplete results?
+
+  Plan: the decided shell and outline list, with a simulated GitHub behind the views. Three structurally
+  different takes, switchable via ?variant=A|B|C (bottom bar, or Shift+Left/Right):
+
+                        A  Dialog                      B  Query bar                   C  Editor page
+    create / edit       modal dialog: name, search,    the search is an editable bar  an editor page replaces the
+                          examples; Save runs the        above the tree; Enter runs     list: name, search, example
+                          search, stays open on          it, Save keeps it; inline      gallery, preview of the
+                          GitHub's error                 rename in the sidebar          first matches
+    remove              confirmed                      immediately, with Undo         confirmed
+    starter views       none; "New view..." entry      three, written on first run    none; example gallery
+    sidebar entry       name + last match count        name only                      name + search text + count
+    tree                every ancestor, with all its   only the paths to matches;     matches grouped under one
+                          sub-issues as context          other sub-issues folded        dimmed path header per
+                                                         into "N other sub-issues"      parent issue
+    match vs context    context dimmed; closed         a dot marks a match; context   context rows faint and
+                          matches not dimmed in a        dimmed; closed dimmed as       italic, no columns; closed
+                          view                           everywhere                     dimmed as everywhere
+    unknown status      dimmed + "?"                   dashed ring instead of dot     "match?" tag
+
+  Common to all three, and up for review too: roots ordered by the search rank of their first match
+  (GitHub's order: newest-created first unless the search has sort:); paths to matches start expanded,
+  matches without a matching sub-issue start collapsed; an issue appears once; the header, strips and
+  body states follow "Decide refresh, partial loading and rate-limit recovery".
+
+  Synthetic data only; nothing is persisted. GitHub's error messages are simulated. The shell, the
+  outline rows and the issue page are decided and not up for review here.
+
+  Run: open this file in a browser. URL parameters: ?variant=A|B|C, ?view=v1..v4, ?speed=instant|normal|slow.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdandi views prototype</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2; --fg: #1f2328; --fg2: #59636e; --fg3: #818b98;
+  --line: #d1d9e0; --accent: #0969da; --accent-bg: #ddf4ff; --sel: #e6eefb; --open: #1a7f37;
+  --closed: #8250df; --blocked: #cf222e; --blocked-bg: #ffebe9; --warn: #9a6700; --warn-bg: #fff8c5;
+  --scrim: rgba(31, 35, 40, .28); --shadow: 0 8px 28px rgba(66, 74, 83, .28);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --bg2: #151b23; --bg3: #212830; --fg: #e6edf3; --fg2: #9198a1; --fg3: #6e7681;
+    --line: #30363d; --accent: #4493f8; --accent-bg: #132a47; --sel: #1a2638; --open: #3fb950;
+    --closed: #ab7df8; --blocked: #f85149; --blocked-bg: rgba(248, 81, 73, .13); --warn: #d29922; --warn-bg: rgba(187, 128, 9, .15);
+    --scrim: rgba(1, 4, 9, .55); --shadow: 0 8px 28px rgba(1, 4, 9, .85);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, sans-serif;
+  background: var(--bg); color: var(--fg); overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg2); white-space: nowrap;
+}
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code { font-size: 12px; background: var(--bg3); padding: 0 4px; border-radius: 4px; }
+.muted { color: var(--fg3); font-weight: 400; }
+.sp { flex: 1; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- shell (decided: app-shell prototype, variant A) ---------- */
+#app { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 100vh; }
+.sidebar { width: 256px; background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidebar.focused { box-shadow: inset 0 2px 0 var(--accent); }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.main.focused .mainbar { box-shadow: inset 0 2px 0 var(--accent); }
+.brand { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; font-weight: 600; white-space: nowrap; }
+.logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #8250df, #0969da); flex: none; }
+.sb-scroll { flex: 1; overflow: auto; padding: 2px 8px 16px; }
+.sb-foot { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg3); font-size: 11px; line-height: 1.8; }
+.iconbtn { border: 0; background: none; color: var(--fg2); width: 22px; height: 22px; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: none; }
+.iconbtn:hover { background: var(--bg3); color: var(--fg); }
+.iconbtn:disabled { opacity: .35; cursor: not-allowed; }
+.sec { display: flex; align-items: center; justify-content: space-between; padding: 16px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); }
+.entry { display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 30px; border-radius: 6px; cursor: default; user-select: none; white-space: nowrap; }
+.entry.tall { min-height: 40px; }
+.entry:hover { background: var(--bg3); }
+.entry.active { background: var(--sel); font-weight: 600; }
+.sidebar.focused .entry.active { background: var(--accent-bg); outline: 1px solid var(--accent); outline-offset: -1px; }
+.entry .ic { color: var(--fg2); }
+.entry.active .ic { color: var(--accent); }
+.entry .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.entry .count { color: var(--fg3); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.entry .warn { color: var(--blocked); display: inline-flex; }
+.entry .warn .ic { color: var(--blocked); width: 14px; height: 14px; }
+.entry .dotmod { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
+.entry.draft .name { font-style: italic; }
+.entry.newview { color: var(--fg3); cursor: pointer; }
+.entry.newview .ic { color: var(--fg3); }
+.name2 { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.name2 .n1, .name2 .n2 { overflow: hidden; text-overflow: ellipsis; }
+.name2 .n2 { font-size: 11px; color: var(--fg3); font-weight: 400; }
+.name2 .qline { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; }
+.ren { flex: 1; min-width: 0; font-weight: 400; border: 1px solid var(--accent); border-radius: 4px; padding: 2px 5px; background: var(--bg); color: var(--fg); outline: none; }
+.owner { color: var(--fg3); font-weight: 400; }
+.mainbar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); flex: none; min-width: 0; white-space: nowrap; }
+.mainbar h2 { font-size: 14px; margin: 0; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; flex: none; max-width: 40%; }
+.mainbar .sub { color: var(--fg3); white-space: nowrap; }
+.mainbar .draft-tag { font-size: 11px; font-weight: 400; color: var(--warn); border: 1px solid var(--warn); border-radius: 10px; padding: 0 6px; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.btn { border: 1px solid var(--line); background: var(--bg2); border-radius: 6px; padding: 3px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 28px; }
+.btn:hover { background: var(--bg3); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--bg2); }
+.btn.primary { background: var(--open); border-color: var(--open); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary kbd { background: transparent; color: #fff; border-color: rgba(255, 255, 255, .5); }
+.btn.danger { color: var(--blocked); }
+.btn.danger.solid { background: var(--blocked); border-color: var(--blocked); color: #fff; }
+.btn.danger.solid kbd { background: transparent; color: #fff; border-color: rgba(255, 255, 255, .5); }
+.linkbtn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+.linkbtn:hover { text-decoration: underline; }
+.sep { color: var(--line); }
+.qchip { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; color: var(--fg2); cursor: pointer; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.qchip:hover { border-color: var(--accent); color: var(--fg); }
+.status { color: var(--fg3); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.status .ic { width: 14px; height: 14px; }
+
+/* ---------- strips and body states (policy: "Decide refresh, partial loading and rate-limit recovery") ---------- */
+.strip { display: flex; align-items: center; gap: 8px; padding: 5px 16px; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--warn-bg); flex: none; white-space: nowrap; overflow: hidden; }
+.strip > .ic { color: var(--warn); width: 14px; height: 14px; }
+.strip.red { background: var(--blocked-bg); } .strip.red > .ic { color: var(--blocked); }
+.strip.info { background: var(--bg2); } .strip.info > .ic { color: var(--fg2); }
+.strip .hintx { color: var(--fg2); overflow: hidden; text-overflow: ellipsis; }
+.bstate { max-width: 580px; margin: 56px auto; padding: 0 24px; text-align: center; color: var(--fg2); }
+.bstate h3 { color: var(--fg); font-size: 15px; margin: 10px 0 6px; }
+.bstate .big { width: 28px; height: 28px; color: var(--fg3); stroke-width: 1.2; }
+.bstate pre { text-align: left; white-space: pre-wrap; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--fg); }
+.bstate .acts { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+.bstate ul { text-align: left; margin: 12px auto; padding-left: 18px; line-height: 1.6; }
+
+/* ---------- outline rows (decided: issue-list prototype, variant A) ---------- */
+.chev { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg3); border-radius: 4px; flex: none; }
+.chev[data-act]:hover { background: var(--bg3); color: var(--fg); }
+.chev .ic { width: 12px; height: 12px; stroke-width: 1.8; }
+.num { color: var(--fg3); font-variant-numeric: tabular-nums; flex: none; }
+.st { display: inline-flex; flex: none; }
+.st-open { color: var(--open); } .st-closed { color: var(--closed); } .st-blocked { color: var(--blocked); } .st-ghost { color: var(--fg3); }
+.title { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; white-space: nowrap; }
+.closed > .title { color: var(--fg2); }
+.ext { font-size: 10px; border: 1px dashed var(--fg3); border-radius: 10px; padding: 0 6px; color: var(--fg2); flex: none; line-height: 16px; }
+.list-foot { padding: 14px 16px; color: var(--fg3); font-size: 12px; }
+.row-sel { background: var(--sel) !important; box-shadow: inset 2px 0 0 var(--accent); }
+.main:not(.focused) .row-sel { background: var(--bg3) !important; box-shadow: none; }
+.arow { scroll-margin: 44px 0 90px; }
+.alist { padding-bottom: 110px; }
+.colhead { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 16px 0 12px; background: var(--bg); border-bottom: 1px solid var(--line); color: var(--fg3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.colhead .c-title { flex: 1; }
+.arow { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 16px 0 12px; cursor: pointer; white-space: nowrap; }
+.arow:hover { background: var(--bg2); }
+.guides { flex: none; align-self: stretch; width: calc(var(--d) * 20px); margin-right: -6px; background-image: repeating-linear-gradient(to right, transparent 0 8px, var(--line) 8px 9px, transparent 9px 20px); }
+.col-prog { width: 92px; flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.col-bb, .col-bl { width: 76px; flex: none; display: inline-flex; }
+.bar { width: 44px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; flex: none; }
+.bar i { display: block; height: 100%; background: var(--closed); }
+.frac { font-size: 12px; color: var(--fg2); font-variant-numeric: tabular-nums; }
+.cnt { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px 0 5px; border-radius: 10px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cnt .ic { width: 13px; height: 13px; }
+.cnt.red { background: var(--blocked-bg); color: var(--blocked); }
+.cnt.amber { color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.cnt.mute { color: var(--fg3); font-weight: 400; }
+.rchip { font-size: 11px; padding: 0 6px; border-radius: 4px; color: #fff; background: hsl(var(--h) 42% 44%); flex: none; line-height: 17px; }
+.rchip.x { background: none; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--fg3); }
+.lbl { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 7px; border-radius: 2em; flex: none; white-space: nowrap; }
+.lbl.more { background: var(--bg3); color: var(--fg2); }
+.pchip { font-size: 11px; color: var(--fg2); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 4px; flex: none; line-height: 17px; display: inline-flex; gap: 3px; align-items: center; }
+.pchip .ic { width: 12px; height: 12px; }
+.pchip:hover { border-color: var(--accent); color: var(--accent); }
+.pchip.load { border-style: dashed; }
+.pchip .spin { width: 9px; height: 9px; border-width: 1.5px; }
+
+/* ---------- view rows: what differs per variant ---------- */
+.arow.ctx > :not(.guides):not(.chev) { opacity: .42; }
+.arow.ctx.row-sel > :not(.guides):not(.chev) { opacity: .75; }
+.vA .arow.closed.match > .title { color: var(--fg); }
+.gut { width: 10px; flex: none; display: inline-flex; justify-content: center; align-items: center; margin: 0 -2px; }
+.gut i { display: block; border-radius: 50%; }
+.gut .dot { width: 7px; height: 7px; background: var(--accent); }
+.gut .ring { width: 8px; height: 8px; border: 1.5px dashed var(--fg2); }
+.arow.faint .title { font-style: italic; color: var(--fg3); }
+.arow.faint > .st, .arow.faint > .rchip, .arow.faint > .num { opacity: .55; }
+.unk { font-size: 10px; border: 1px dashed var(--fg2); border-radius: 8px; padding: 0 5px; color: var(--fg2); flex: none; line-height: 15px; }
+.inside { font-size: 11px; color: var(--accent); flex: none; white-space: nowrap; }
+.inside.dotn { display: inline-flex; align-items: center; gap: 3px; }
+.inside.dotn i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: block; }
+.fold .title { color: var(--fg3); }
+.unavail .title { color: var(--fg2); }
+.unavail.failed .title { color: var(--blocked); }
+.crumbs { display: inline-flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
+.crumb { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 4px; white-space: nowrap; color: var(--fg3); min-width: 0; }
+.crumb:hover { background: var(--bg3); color: var(--fg); }
+.crumb .st { opacity: .55; }
+.crumb .ic { width: 14px; height: 14px; }
+.crumb.bad { color: var(--blocked); }
+.csep { color: var(--fg3); flex: none; }
+.pmore { color: var(--fg3); font-size: 12px; flex: none; }
+.loadrow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 16px 0 36px; color: var(--fg3); font-size: 12px; }
+
+/* ---------- context menu, confirm, help ---------- */
+.menu { position: fixed; z-index: 60; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 200px; }
+.menu .mi { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.menu .mi:hover { background: var(--sel); }
+.menu .mi kbd { margin-left: auto; }
+.menu .mi.danger { color: var(--blocked); }
+.modal-bg { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.modal-bg.top { align-items: flex-start; padding-top: 9vh; }
+.modal { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: 86vh; overflow: hidden; }
+.m-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
+.m-foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-top: 1px solid var(--line); min-height: 50px; }
+.cf { width: 460px; max-width: calc(100vw - 32px); }
+.cf-body { padding: 14px 16px; color: var(--fg2); }
+.help { width: 760px; max-width: calc(100vw - 32px); }
+.help-body { display: grid; grid-template-columns: max-content 1fr; gap: 7px 16px; padding: 14px 16px; overflow: auto; }
+.help-body .h-k { text-align: right; }
+.help-body .h-sec { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); margin-top: 6px; }
+
+/* ---------- shared editor bits ---------- */
+.fl { font-weight: 600; font-size: 12px; margin-top: 8px; }
+.tin { font-size: 14px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); outline: none; width: 100%; }
+.tin:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.tin.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.scope { font-size: 12px; color: var(--fg2); display: flex; gap: 6px; align-items: flex-start; line-height: 1.5; }
+.scope .ic { width: 14px; height: 14px; margin-top: 2px; }
+.scope.warn { color: var(--warn); }
+.ederr { font-size: 12px; color: var(--blocked); background: var(--blocked-bg); border-radius: 6px; padding: 7px 10px; }
+.ederr pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--fg); }
+.ederr .acts { margin-top: 6px; display: flex; gap: 8px; }
+.exh { margin-top: 12px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg3); display: flex; gap: 8px; align-items: center; }
+.exh .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* ---------- A: dialog ---------- */
+.ed-a { width: 680px; max-width: calc(100vw - 32px); }
+.ed-body { padding: 8px 16px 16px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.exl { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.ex { display: grid; grid-template-columns: minmax(0, 330px) 1fr; gap: 12px; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: var(--bg); padding: 6px 10px; cursor: pointer; align-items: center; }
+.ex:last-child { border-bottom: 0; }
+.ex:hover, .ex:focus { background: var(--sel); outline: none; }
+.ex code { background: none; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ex span { color: var(--fg2); font-size: 12px; }
+
+/* ---------- B: query bar ---------- */
+.qbar { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex: none; }
+.qwrap { flex: 1; display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--bg); min-width: 0; }
+.qwrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.qwrap .ic { color: var(--fg3); }
+.qwrap input { flex: 1; min-width: 0; border: 0; outline: none; background: none; color: var(--fg); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 6px 0; }
+.qstate { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg3); white-space: nowrap; }
+.qstate .mod { color: var(--warn); font-weight: 600; }
+.qdd { position: absolute; left: 16px; right: 16px; top: calc(100% - 6px); z-index: 20; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: none; }
+.qdd.on { display: block; }
+.qdd .ddh { padding: 4px 8px; font-size: 11px; color: var(--fg3); }
+.qdd .ddi { display: grid; grid-template-columns: minmax(0, 360px) 1fr; gap: 12px; padding: 5px 8px; border-radius: 5px; cursor: pointer; align-items: center; }
+.qdd .ddi.hi, .qdd .ddi:hover { background: var(--sel); }
+.qdd .ddi code { background: none; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qdd .ddi span { color: var(--fg2); font-size: 12px; }
+.qdd .scope { padding: 7px 8px 4px; border-top: 1px solid var(--line); margin-top: 4px; }
+
+/* ---------- C: editor page ---------- */
+.edc { max-width: 860px; padding: 12px 28px 120px; display: flex; flex-direction: column; gap: 6px; }
+.edc .qrow { display: flex; gap: 8px; }
+.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; cursor: pointer; background: var(--bg); text-align: left; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.card:hover, .card:focus { border-color: var(--accent); outline: none; background: var(--bg2); }
+.card b { font-size: 13px; }
+.card code { font-size: 11px; background: none; padding: 0; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card span { font-size: 12px; color: var(--fg3); }
+.prev { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.prev .ph { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--bg2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--fg2); flex-wrap: wrap; }
+.prev .ph .ic { width: 14px; height: 14px; }
+.prev .pr { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.prev .pr:last-child { border-bottom: 0; }
+.prev .pe { padding: 12px; color: var(--fg2); font-size: 12px; }
+.prev .pe pre { margin: 0; white-space: pre-wrap; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--fg); }
+.edc-foot { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---------- issue page (decided elsewhere; deliberately plain here) ---------- */
+.issue { max-width: 1060px; padding: 20px 28px 110px; }
+.i-ref { display: flex; align-items: center; gap: 6px; color: var(--fg2); }
+.issue h1 { font-size: 22px; font-weight: 600; margin: 6px 0 10px; line-height: 1.3; }
+.i-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--fg2); padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 8px; border-radius: 999px; color: #fff; font-weight: 500; }
+.pill.open { background: var(--open); } .pill.closed { background: var(--closed); }
+.i-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; margin-top: 16px; }
+.i-body p { margin: 0 0 10px; }
+.side section { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.side h4 { font-size: 12px; color: var(--fg2); margin: 0 0 4px; font-weight: 600; }
+.lnk { display: flex; align-items: center; gap: 6px; padding: 3px 6px; margin: 0 -6px; border-radius: 5px; cursor: pointer; white-space: nowrap; min-width: 0; }
+.lnk:hover { background: var(--bg2); }
+.lnk.cur { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.lnk .t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.none { color: var(--fg3); }
+.note { margin-top: 18px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: 6px; color: var(--fg3); font-size: 12px; }
+
+/* ---------- prototype chrome (not part of the design being evaluated) ---------- */
+#switcher {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 2px;
+  background: #111; color: #fff; border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); font-size: 12px; border: 1px solid #444;
+}
+#switcher button { background: none; border: 0; color: #fff; min-width: 28px; height: 28px; border-radius: 999px; cursor: pointer; padding: 0 8px; }
+#switcher button:hover { background: #333; }
+#switcher .swl { padding: 0 6px; white-space: nowrap; min-width: 150px; text-align: center; }
+#switcher .tag { background: #fbbf24; color: #111; border-radius: 999px; padding: 1px 7px; font-weight: 700; font-size: 10px; letter-spacing: .05em; }
+#statebox {
+  position: fixed; left: 268px; bottom: 62px; z-index: 99; width: 430px; max-height: 70vh; overflow: auto; background: #111; color: #c9f7c9;
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 8px; white-space: pre; display: none; border: 1px solid #444;
+}
+#toast {
+  position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); background: #111; color: #fff; padding: 7px 14px; border-radius: 8px;
+  z-index: 101; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: min(900px, 86vw); text-align: center; border: 1px solid #444;
+}
+#undo { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 102; background: #111; color: #fff; border: 1px solid #444; border-radius: 8px; padding: 6px 8px 6px 14px; display: none; align-items: center; gap: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); }
+#undo.on { display: flex; }
+#undo button { background: #333; color: #fff; border: 1px solid #555; border-radius: 6px; padding: 2px 10px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+#undo kbd { background: #222; color: #ccc; border-color: #555; }
+#net {
+  position: fixed; right: 12px; bottom: 62px; z-index: 99; width: 272px; background: #111; color: #e8e8e8; border: 1px solid #444;
+  border-radius: 10px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+}
+#net .nh { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+#net .h { font-weight: 700; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #fbbf24; }
+#net .row { display: flex; gap: 5px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+#net .lab { color: #9a9a9a; font-size: 11px; min-width: 44px; }
+#net button, #net select { background: #222; color: #fff; border: 1px solid #555; border-radius: 6px; height: 24px; padding: 0 7px; cursor: pointer; font-size: 11px; }
+#net select { flex: 1; min-width: 0; }
+#net button:hover { background: #333; }
+#net button.on { background: #fbbf24; color: #111; border-color: #fbbf24; }
+#net label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; font-size: 11px; color: #ccc; }
+#net .trk { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; margin-top: 4px; }
+#net .trk label { font-size: 10.5px; white-space: nowrap; overflow: hidden; }
+#net .q { color: #9a9a9a; font: 10.5px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre; overflow: hidden; margin-top: 6px; }
+#net-log { margin-top: 6px; border-top: 1px solid #333; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div id="app"><aside class="sidebar" id="sb"></aside><main class="main" id="mn"></main></div>
+<div id="switcher">
+  <span class="tag">PROTOTYPE</span>
+  <button id="sw-prev" title="Previous variant (Shift+Left)">&#8249;</button>
+  <span class="swl" id="sw-lbl"></span>
+  <button id="sw-next" title="Next variant (Shift+Right)">&#8250;</button>
+  <button id="sw-help" title="What this variant decides, and its keys (?)">?</button>
+  <button id="sw-state" title="Show the stored settings and the current search (`)">state</button>
+</div>
+<div id="net"><div class="nh" data-act="sim-fold"><span class="h">Simulated GitHub</span><span class="sp"></span><span id="net-fold"></span></div><div id="net-ctl"></div><div id="net-log" class="q"></div></div>
+<pre id="statebox"></pre>
+<div id="toast"></div>
+<div id="undo"></div>
+<script>
+'use strict';
+// PROTOTYPE, throwaway: no tests, no error handling, globals everywhere on purpose.
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+const fmt = n => n.toLocaleString('en-US');
+const fmtK = n => n < 1000 ? String(n) : (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+const delay = ms => new Promise(r => setTimeout(r, ms));
+const hhmm = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+const ago = d => { const m = Math.floor((Date.now() - d) / 60000); return m < 1 ? 'just now' : `${m} min ago`; };
+
+// ---------- icons ----------
+const svg = d => `<svg class="ic" viewBox="0 0 16 16">${d}</svg>`;
+const I = {
+  repo: svg('<path d="M3.5 13.3V2.9c0-.8.6-1.4 1.4-1.4h8.6v9.9H4.9c-.8 0-1.4.6-1.4 1.3s.6 1.3 1.4 1.3h8.6"/>'),
+  view: svg('<path d="M2 3h12l-4.6 5.4v4.8l-2.8 1.3V8.4z"/>'),
+  all: svg('<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/><path d="M1.8 8 8 11.2 14.2 8"/><path d="M1.8 11 8 14.2 14.2 11"/>'),
+  open: svg('<circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>'),
+  closed: svg('<circle cx="8" cy="8" r="6.2"/><path d="m5.3 8.2 1.9 1.9 3.6-3.8"/>'),
+  blocked: svg('<circle cx="8" cy="8" r="6.2"/><path d="m3.7 12.3 8.6-8.6"/>'),
+  right: svg('<path d="m6 3.5 4.5 4.5L6 12.5"/>'),
+  down: svg('<path d="m3.5 6 4.5 4.5L12.5 6"/>'),
+  back: svg('<path d="M13 8H3m4.5-4.5L3 8l4.5 4.5"/>'),
+  gh: svg('<path d="M9 2.5h4.5V7M13.5 2.5 7 9M11.5 9.5v3.2c0 .5-.4.8-.8.8H3.3c-.5 0-.8-.4-.8-.8V5.3c0-.5.4-.8.8-.8h3.2"/>'),
+  plus: svg('<path d="M8 2.5v11M2.5 8h11"/>'),
+  arrow: svg('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+  up: svg('<path d="M8 13V3.5M4.5 7 8 3.5 11.5 7"/>'),
+  lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>'),
+  alert: svg('<path d="M8 2 14.5 13.5h-13z"/><path d="M8 6.5v3.2M8 11.6v.1"/>'),
+  refresh: svg('<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>'),
+  pencil: svg('<path d="m10.5 2.8 2.7 2.7-7.7 7.7H2.8v-2.7z"/>'),
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>'),
+  info: svg('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4M8 4.9v.1"/>'),
+  pause: svg('<path d="M6 4v8M10 4v8"/>'),
+};
+
+// ---------- synthetic data (the issue-list prototype's, extended) ----------
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const pick = (a, r) => a[Math.floor(r() * a.length)];
+const rint = (lo, hi, r) => lo + Math.floor(r() * (hi - lo + 1));
+
+const ME = 'example-user';
+const PEOPLE = ['alex-k', 'sam-r', 'jo-dev', 'taylor-m', 'robin-q', 'casey-l', 'morgan-p'];
+const LABELS = ['bug', 'enhancement', 'docs', 'infra', 'good first issue', 'performance', 'security', 'ux', 'needs design', 'tech debt'];
+const VERBS = ['Add', 'Fix', 'Remove', 'Migrate', 'Refactor', 'Document', 'Investigate', 'Support', 'Speed up', 'Split', 'Rename', 'Deprecate', 'Harden', 'Cache', 'Retry', 'Validate', 'Paginate', 'Expose', 'Backfill', 'Audit'];
+const THINGS = ['token refresh', 'webhook retries', 'invoice export', 'rate-limit handling', 'search index', 'session cookies', 'CSV import', 'dark mode', 'audit trail', 'pagination cursor', 'feature flag cleanup', 'error boundaries', 'release pipeline', 'retry budget', 'schema v2', 'timezone handling', 'bulk actions', 'health checks', 'keyboard shortcuts', 'PDF rendering', 'signup funnel', 'cache invalidation', 'SSO login', 'permissions model', 'notification digest', 'Linux packaging', 'mobile layout', 'empty states'];
+const SUFFIX = ['', '', '', '', ' for enterprise accounts', ' on slow networks', ' in the admin console', ' behind a flag', ' across regions', ' (follow-up)', ' before GA'];
+const EPIC_TITLES = ['Q4 reliability push', 'Self-serve data export', 'Public API v2', 'Accessibility audit fixes', 'Multi-region failover', 'Harden the webhook pipeline', 'Dark mode everywhere'];
+const SENTENCES = [
+  'This currently fails intermittently when the upstream service is slow to respond.',
+  'We should keep the existing behaviour behind a flag until the migration is done.',
+  'The fix itself is small, but it touches the retry logic that several other services depend on.',
+  'Once this lands we can remove the temporary workaround in the client.',
+  'Acceptance: the happy path is covered by an integration test and the error path logs a useful message.',
+  'There is some overlap with the work tracked in the parent issue, so coordinate before starting.',
+  'Open question: do we need to support the legacy format, or can we drop it now?',
+];
+
+const ISSUES = new Map();      // "owner/repo#n" -> issue
+const REPO_ISSUES = new Map(); // "owner/repo" -> [keys]
+const repoKeys = repo => { if (!REPO_ISSUES.has(repo)) REPO_ISSUES.set(repo, []); return REPO_ISSUES.get(repo); };
+// created/updated are "days ago"; hidden = in a repository the user cannot read
+function mk(ref, title, state = 'open', o = {}) {
+  const i = ref.indexOf('#'), repo = ref.slice(0, i), r = mulberry32(hashStr(ref));
+  const updated = o.updated ?? rint(3, 80, r);
+  ISSUES.set(ref, {
+    key: ref, repo, number: +ref.slice(i + 1), title, state, author: o.author ?? pick(PEOPLE, r),
+    assignee: o.assignee !== undefined ? o.assignee : (r() < 0.05 ? ME : (r() < 0.5 ? pick(PEOPLE, r) : null)),
+    labels: o.labels ?? [...new Set(r() < 0.65 ? [pick(LABELS, r), ...(r() < 0.3 ? [pick(LABELS, r)] : [])] : [])],
+    parent: null, subs: [], blockedBy: [], blocking: [], comments: rint(0, 6, r), updated,
+    created: o.created ?? updated + rint(5, 300, r), mentionsMe: r() < 0.08, hidden: !!o.hidden,
+  });
+  repoKeys(repo).push(ref);
+  return ref;
+}
+function attach(parentKey, childKey) {
+  const p = ISSUES.get(parentKey), c = ISSUES.get(childKey);
+  if (!p || !c || c.parent || parentKey === childKey) return;
+  for (let a = p; a; a = a.parent && ISSUES.get(a.parent)) if (a.key === childKey) return;
+  c.parent = parentKey; p.subs.push(childKey);
+}
+const tree = (p, cs) => cs.forEach(c => attach(p, c));
+function block(blockedKey, blockerKey) {
+  const a = ISSUES.get(blockedKey), b = ISSUES.get(blockerKey);
+  if (!a || !b || blockedKey === blockerKey || a.blockedBy.includes(blockerKey)) return;
+  a.blockedBy.push(blockerKey); b.blocking.push(blockedKey);
+}
+
+// Showcase 1: usage billing across repositories. The "Billing" view (label:billing) matches the parent
+// issue and several descendants, open and closed, with context issues between and around them.
+mk('acme/api#120', 'Launch usage-based billing', 'open', { labels: ['epic', 'billing'], updated: 1, assignee: 'alex-k', created: 60 });
+mk('acme/infra#77', 'Provision the metering queue', 'closed', { labels: ['infra'], assignee: 'sam-r' });
+mk('acme/api#121', 'Meter API requests per workspace', 'closed', { labels: [], assignee: 'jo-dev' });
+mk('acme/api#122', 'Expose a usage endpoint', 'open', { updated: 2, labels: ['enhancement'], assignee: 'jo-dev' });
+mk('acme/web#310', 'Usage dashboard page', 'open', { labels: ['ux'], assignee: 'taylor-m' });
+mk('acme/web#311', 'Usage chart component', 'closed', { labels: [], assignee: 'taylor-m' });
+mk('acme/web#312', 'Empty state for workspaces without usage', 'open', { labels: ['ux'], assignee: ME, created: 12 });
+mk('acme/web#313', 'Export usage as CSV', 'open', { labels: ['billing'], assignee: null, created: 9 });
+mk('globex/billing#40', 'Rate cards for metered plans', 'open', { updated: 2, labels: ['billing'], assignee: 'robin-q', created: 30 });
+mk('globex/billing#41', 'Model tiered pricing', 'closed', { labels: ['billing'], assignee: 'robin-q', created: 44 });
+mk('globex/billing#42', 'Prorate mid-cycle plan changes', 'open', { labels: ['enhancement'], assignee: 'casey-l' });
+mk('vendor/sdk#88', 'Emit usage events from the SDK', 'open', { labels: [], assignee: null });
+mk('acme/api#123', 'Invoice line items for usage', 'open', { labels: ['billing'], assignee: 'alex-k', created: 20 });
+mk('acme/api#124', 'Document metered pricing', 'open', { labels: ['docs'], assignee: null });
+mk('acme/api#125', 'Load-test the metering pipeline', 'closed', { labels: ['performance'], assignee: 'sam-r' });
+tree('acme/api#120', ['acme/infra#77', 'acme/api#121', 'acme/api#122', 'acme/web#310', 'globex/billing#40', 'vendor/sdk#88', 'acme/api#123', 'acme/api#124', 'acme/api#125']);
+tree('acme/web#310', ['acme/web#311', 'acme/web#312', 'acme/web#313']);
+tree('globex/billing#40', ['globex/billing#41', 'globex/billing#42']);
+block('acme/api#121', 'acme/infra#77');
+block('acme/api#122', 'acme/api#121');
+block('acme/api#122', 'globex/billing#40');
+block('acme/web#310', 'acme/api#122');
+block('acme/web#313', 'acme/api#122');
+block('acme/web#312', 'vendor/sdk#88');
+block('acme/api#123', 'acme/api#122');
+block('acme/api#123', 'globex/billing#42');
+block('acme/api#124', 'acme/api#123');
+mk('acme/api#126', 'Rename the usage scopes', 'open', { updated: 4, assignee: null });
+block('acme/api#126', 'acme/api#121');
+mk('acme/api#127', 'Refund metered usage', 'closed', { labels: ['billing'], assignee: 'alex-k', created: 70 });
+mk('payments-oss/ledger#12', 'Support metered line items', 'open', { labels: ['billing', 'enhancement'], assignee: null, created: 5 });
+
+// Showcase 2: a tracked issue under an external parent issue.
+mk('upstream/protocol#7', 'Protocol v3 rollout', 'open', { labels: ['epic'], updated: 3, assignee: 'morgan-p' });
+mk('upstream/protocol#8', 'Specify the v3 handshake', 'closed', { assignee: 'morgan-p' });
+mk('acme/api#140', 'Support the v3 handshake', 'open', { updated: 3, assignee: 'jo-dev' });
+mk('oss-org/parser#19', 'Parse v3 frames', 'open', { labels: ['enhancement'], assignee: ME, created: 15 });
+mk('acme/web#330', 'Show the protocol version in settings', 'open', { assignee: null });
+tree('upstream/protocol#7', ['upstream/protocol#8', 'acme/api#140', 'oss-org/parser#19', 'acme/web#330']);
+block('acme/api#140', 'oss-org/parser#19');
+mk('acme/infra#55', 'Rotate signing keys for v3', 'open', { updated: 5, assignee: 'sam-r' });
+block('acme/infra#55', 'acme/api#140');
+block('acme/web#330', 'acme/api#140');
+
+// Showcase 3: a three-level tree; "Assigned to me" matches #12 and, below the context issue #13, #15.
+mk('example-user/verdandi#10', 'Ship the first desktop build', 'open', { labels: ['epic'], updated: 1, assignee: null });
+mk('example-user/verdandi#11', 'Pick the GUI stack', 'closed', { assignee: ME });
+mk('example-user/verdandi#12', 'Issue list', 'open', { assignee: ME, created: 25 });
+mk('example-user/verdandi#13', 'Tree rows', 'open', { assignee: 'alex-k' });
+mk('example-user/verdandi#14', 'Collapse state per list', 'closed', { assignee: ME });
+mk('example-user/verdandi#15', 'Keyboard navigation in trees', 'open', { assignee: ME, created: 18 });
+mk('example-user/verdandi#16', 'Blocking indicators', 'open', { assignee: null });
+mk('example-user/verdandi#17', 'Windows installer', 'open', { assignee: null });
+mk('example-user/verdandi#18', 'Sign the macOS build', 'open', { assignee: null });
+mk('acme/infra#60', 'Buy a code-signing certificate', 'open', { updated: 6, assignee: ME, created: 40 });
+tree('example-user/verdandi#10', ['example-user/verdandi#11', 'example-user/verdandi#12', 'example-user/verdandi#17', 'example-user/verdandi#18']);
+tree('example-user/verdandi#12', ['example-user/verdandi#13', 'example-user/verdandi#16']);
+tree('example-user/verdandi#13', ['example-user/verdandi#14', 'example-user/verdandi#15']);
+block('example-user/verdandi#12', 'example-user/verdandi#11');
+block('example-user/verdandi#15', 'example-user/verdandi#14');
+block('example-user/verdandi#16', 'example-user/verdandi#13');
+block('example-user/verdandi#17', 'acme/infra#60');
+block('example-user/verdandi#18', 'acme/infra#60');
+
+// Showcase 4: a match whose parent issue lives in a repository the user cannot read.
+mk('secret-corp/roadmap#9', 'Security roadmap 2027', 'open', { hidden: true, assignee: null, labels: [] });
+mk('acme/api#150', 'Rotate the billing webhook secret', 'open', { labels: ['security', 'billing'], assignee: ME, created: 8 });
+attach('secret-corp/roadmap#9', 'acme/api#150');
+
+// Showcase 5 and 6 from the issue-list prototype.
+mk('acme/infra#80', 'Retire the legacy importer', 'open', { labels: ['epic'], updated: 9, assignee: null });
+['Freeze legacy import writes', 'Backfill imported records', 'Remove the import cron job', 'Delete the importer service'].forEach((t, i) => attach('acme/infra#80', mk(`acme/infra#${81 + i}`, t, 'closed')));
+mk('acme/web#340', 'Redesign onboarding', 'open', { labels: ['epic'], updated: 2, assignee: null });
+['Audit the current funnel', 'Write the new copy', 'Design the welcome screen', 'Build the welcome screen', 'Wire up analytics events', 'Roll out to 10% of signups']
+  .forEach((t, i) => { const k = mk(`acme/web#${341 + i}`, t, i < 2 ? 'closed' : 'open'); attach('acme/web#340', k); if (i) block(k, `acme/web#${340 + i}`); });
+
+// Filler: loose issues and a few small trees per repository.
+const frand = mulberry32(42);
+function filler(repo, nLoose, nTrees) {
+  const used = new Set(repoKeys(repo).map(k => ISSUES.get(k).number)), made = [];
+  let n = rint(20, 50, frand);
+  const next = () => { do n += rint(1, 3, frand); while (used.has(n)); used.add(n); return `${repo}#${n}`; };
+  const title = () => pick(VERBS, frand) + ' ' + pick(THINGS, frand) + pick(SUFFIX, frand);
+  for (let t = 0; t < nTrees; t++) {
+    const p = mk(next(), pick(EPIC_TITLES, frand), 'open', { labels: ['epic'] }), kids = [];
+    for (let j = rint(2, 5, frand); j > 0; j--) { const c = mk(next(), title(), frand() < 0.35 ? 'closed' : 'open'); attach(p, c); kids.push(c); }
+    for (let j = 1; j < kids.length; j++) if (frand() < 0.3) block(kids[j], kids[j - 1]);
+    made.push(p, ...kids);
+  }
+  for (let j = 0; j < nLoose; j++) made.push(mk(next(), title(), frand() < 0.25 ? 'closed' : 'open'));
+  for (const k of made) if (frand() < 0.08) block(k, pick(made, frand));
+  return made;
+}
+const TRACKED0 = ['acme/api', 'acme/web', 'globex/billing', 'example-user/verdandi', 'acme/infra', 'example-user/dotfiles'];
+const FILL = { 'acme/api': [16, 1], 'acme/web': [13, 1], 'globex/billing': [12, 2], 'example-user/verdandi': [7, 0], 'acme/infra': [11, 1], 'example-user/dotfiles': [9, 0], 'vendor/sdk': [5, 0], 'oss-org/parser': [5, 0] };
+const FILLED = {};
+for (const [repo, [loose, trees]] of Object.entries(FILL)) FILLED[repo] = filler(repo, loose, trees);
+for (let i = 0; i < 8; i++) { const a = pick(TRACKED0, frand), b = pick(TRACKED0, frand); if (a !== b) block(pick(FILLED[a], frand), pick(FILLED[b], frand)); }
+
+// Bulk: about 4,200 open bugs in repositories nobody tracks, so "is:open label:bug" passes GitHub's
+// 1,000-result ceiling. A few small trees give them context issues.
+const brand = mulberry32(7);
+for (const owner of ['northwind', 'contoso-labs', 'fabrikam', 'tailspin', 'wingtip', 'adatum', 'litware', 'proseware', 'relecloud', 'woodgrove']) {
+  for (const name of ['app', 'cli', 'docs', 'sdk', 'server', 'web']) {
+    const repo = `${owner}/${name}`, list = repoKeys(repo), bugs = [];
+    let n = rint(100, 900, brand);
+    const raw = (title, labels) => {
+      const ref = `${repo}#${n += rint(1, 4, brand)}`, updated = rint(0, 60, brand);
+      ISSUES.set(ref, { key: ref, repo, number: n, title, state: 'open', author: pick(PEOPLE, brand), assignee: brand() < 0.4 ? pick(PEOPLE, brand) : null, labels, parent: null, subs: [], blockedBy: [], blocking: [], comments: rint(0, 9, brand), updated, created: updated + rint(0, 900, brand), mentionsMe: false, hidden: false });
+      list.push(ref); return ref;
+    };
+    for (let j = 0; j < 70; j++) bugs.push(raw(pick(VERBS, brand) + ' ' + pick(THINGS, brand) + pick(SUFFIX, brand), brand() < 0.25 ? ['bug', pick(['performance', 'ux', 'security', 'docs'], brand)] : ['bug']));
+    for (let e = 0; e < 3; e++) {
+      const p = raw(pick(EPIC_TITLES, brand), ['epic']);
+      for (let j = 0; j < 5; j++) attach(p, pick(bugs, brand));
+      for (let j = 0; j < 2; j++) attach(p, raw(pick(VERBS, brand) + ' ' + pick(THINGS, brand), ['enhancement']));
+    }
+  }
+}
+const REPOS = new Set([...REPO_ISSUES.keys()].filter(r => REPO_ISSUES.get(r).some(k => !ISSUES.get(k).hidden)).map(r => r.toLowerCase()));
+const OWNERS = new Set([...REPOS].map(r => r.split('/')[0]));
+
+// ---------- GitHub issue search, simulated over the synthetic data ----------
+// Enough of GitHub's advanced issue search to make views feel live: implicit AND, AND/OR, parentheses,
+// negation, sort:, and the qualifiers below. Unknown qualifiers match nothing, silently, as on GitHub;
+// adjacent repo: qualifiers combine with AND; unreadable repositories are a 422 unless inside OR.
+function tokenize(q) {
+  const out = [];
+  let i = 0;
+  while (i < q.length) {
+    const c = q[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === '(' || c === ')') { out.push(c); i++; continue; }
+    let j = i, inQ = false;
+    while (j < q.length && (inQ || !/[\s()]/.test(q[j]))) { if (q[j] === '"') inQ = !inQ; j++; }
+    out.push(q.slice(i, j)); i = j;
+  }
+  return out;
+}
+const unq = s => s.replace(/^"(.*)"$/, '$1');
+function parseQuery(q) {
+  const all = tokenize(q), sortTok = all.find(t => /^sort:/i.test(t)), toks = all.filter(t => !/^sort:/i.test(t));
+  const sort = sortTok ? sortTok.slice(5).toLowerCase() : 'created-desc';
+  let p = 0;
+  const peek = () => toks[p], next = () => toks[p++];
+  const fail = message => { throw { kind: 'invalid', message }; };
+  const atom = t => {
+    let neg = false;
+    if (t.length > 1 && t[0] === '-') { neg = true; t = t.slice(1); }
+    const m = t.match(/^([a-z-]+):(.+)$/i);
+    return m ? { op: 'q', k: m[1].toLowerCase(), v: unq(m[2]), neg } : { op: 'text', v: unq(t).toLowerCase(), neg };
+  };
+  function or() { let n = and(); while (peek() === 'OR') { next(); n = { op: 'or', a: n, b: and() }; } return n; }
+  function and() { let n = unary(); while (p < toks.length && peek() !== ')' && peek() !== 'OR') { if (peek() === 'AND') next(); n = { op: 'and', a: n, b: unary() }; } return n; }
+  function unary() {
+    const t = next();
+    if (t === undefined) fail('Validation Failed: the search ends where a term was expected.');
+    if (t === '(') { const n = or(); if (next() !== ')') fail('Validation Failed: the parentheses in the search are unbalanced.'); return n; }
+    if (t === ')') fail('Validation Failed: the parentheses in the search are unbalanced.');
+    if (t === 'OR' || t === 'AND') fail(`Validation Failed: "${t}" needs a term on each side.`);
+    return atom(t);
+  }
+  try {
+    if (!toks.length) fail('Validation Failed: the search is empty.');
+    const ast = or();
+    if (p < toks.length) fail('Validation Failed: the parentheses in the search are unbalanced.');
+    const text = toks.filter(t => !/^-?[a-z-]+:/i.test(t) && !['(', ')', 'OR', 'AND'].includes(t)).join(' ');
+    if (text.length > 256) fail('The search is longer than 256 characters.');
+    return { ast, sort, sortExplicit: !!sortTok };
+  } catch (e) { if (e.kind) return { error: e }; throw e; }
+}
+function checkScope(n, inOr = false) {
+  if (n.op === 'or') { checkScope(n.a, true); checkScope(n.b, true); return; }
+  if (n.op === 'and') { checkScope(n.a, inOr); checkScope(n.b, inOr); return; }
+  if (n.op === 'q' && ['repo', 'org', 'user'].includes(n.k)) {
+    const ok = n.k === 'repo' ? REPOS.has(n.v.toLowerCase()) : OWNERS.has(n.v.toLowerCase());
+    if (ok) return;
+    if (inOr || n.neg) n.dead = true; // dropped without notice
+    else throw { kind: 'access', message: 'The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.' };
+  }
+}
+const openBlockers = it => it.blockedBy.filter(k => ISSUES.get(k).state === 'open');
+const openBlocked = it => it.state === 'open' ? it.blocking.filter(k => ISSUES.get(k).state === 'open') : [];
+const isBlocked = it => it.state === 'open' && openBlockers(it).length > 0;
+function qual(n, it) {
+  const v = n.v.toLowerCase(), me = x => x === '@me' ? ME : x;
+  switch (n.k) {
+    case 'is': return { open: it.state === 'open', closed: it.state === 'closed', issue: true, pr: false, 'pull-request': false, blocked: isBlocked(it), blocking: openBlocked(it).length > 0 }[v] ?? null;
+    case 'state': return v === 'open' || v === 'closed' ? it.state === v : null;
+    case 'type': return v === 'issue' ? true : v === 'pr' ? false : null;
+    case 'label': return it.labels.includes(v);
+    case 'no': return { label: !it.labels.length, assignee: !it.assignee, 'parent-issue': !it.parent, 'sub-issue': !it.subs.length }[v] ?? null;
+    case 'has': return { label: it.labels.length > 0, assignee: !!it.assignee, 'parent-issue': !!it.parent, 'sub-issue': it.subs.length > 0, 'sub-issues': it.subs.length > 0 }[v] ?? null;
+    case 'repo': return it.repo.toLowerCase() === v;
+    case 'org': case 'user': return it.repo.split('/')[0].toLowerCase() === v;
+    case 'assignee': return it.assignee === me(v);
+    case 'author': return it.author === me(v);
+    case 'mentions': return me(v) === ME && it.mentionsMe;
+    case 'parent-issue': return (it.parent || '').toLowerCase() === v;
+    case 'blocked-by': return it.blockedBy.some(k => k.toLowerCase() === v);
+    case 'blocking': return it.blocking.some(k => k.toLowerCase() === v);
+    case 'in': return true;
+    default: return null; // unknown qualifier: GitHub silently matches nothing
+  }
+}
+function ev(n, it) {
+  if (n.op === 'and') return ev(n.a, it) && ev(n.b, it);
+  if (n.op === 'or') return ev(n.a, it) || ev(n.b, it);
+  if (n.op === 'text') { const r = it.title.toLowerCase().includes(n.v); return n.neg ? !r : r; }
+  if (n.dead) return false;
+  const r = qual(n, it);
+  return r === null ? false : n.neg ? !r : r;
+}
+function searchUniverse(q) {
+  const P = parseQuery(q);
+  if (P.error) return { error: P.error };
+  try { checkScope(P.ast); } catch (e) { return { error: e }; }
+  const keys = [];
+  for (const it of ISSUES.values()) if (!it.hidden && !SIM.nomatch.has(it.key) && ev(P.ast, it)) keys.push(it.key);
+  const [f, dir] = P.sort.split('-'), field = { created: 'created', updated: 'updated', comments: 'comments' }[f] ?? 'created';
+  const sgn = (field === 'comments' ? -1 : 1) * (dir === 'asc' ? -1 : 1); // created/updated count days ago
+  keys.sort((a, b) => sgn * (ISSUES.get(a)[field] - ISSUES.get(b)[field]) || (a < b ? -1 : 1));
+  return { keys, total: keys.length, sort: P.sort, sortExplicit: P.sortExplicit };
+}
+// What a search covers, in words, for the editors.
+function scopeInfo(q) {
+  if (!q.trim()) return { cls: '', html: 'A view searches exactly what its text says. Without <code>repo:</code>, <code>org:</code> or <code>user:</code> it covers every repository you can read.' };
+  const P = parseQuery(q);
+  if (P.error) {
+    // not valid yet: only GitHub says so, when the search runs; name the scope qualifiers loosely
+    const qs = tokenize(q).filter(t => /^(repo|org|user):/i.test(t)).map(t => `<b>${esc(t.replace(/^[a-z]+:/i, ''))}</b>`);
+    return { cls: '', html: qs.length ? `Searches ${qs.join(', ')}; GitHub checks the rest of the search when it runs.` : 'No <code>repo:</code>, <code>org:</code> or <code>user:</code>: searches <b>every repository you can read</b> on GitHub, tracked or not.' };
+  }
+  const scopes = [];
+  const walk = (n, inOr) => {
+    if (n.op === 'or') { walk(n.a, true); walk(n.b, true); }
+    else if (n.op === 'and') { walk(n.a, inOr); walk(n.b, inOr); }
+    else if (n.op === 'q' && !n.neg && ['repo', 'org', 'user'].includes(n.k)) scopes.push({ k: n.k, v: n.v, inOr });
+  };
+  walk(P.ast, false);
+  if (!scopes.length) return { cls: '', html: 'No <code>repo:</code>, <code>org:</code> or <code>user:</code>: searches <b>every repository you can read</b> on GitHub, tracked or not.' };
+  const andRepos = new Set(scopes.filter(s => !s.inOr && s.k === 'repo').map(s => s.v.toLowerCase()));
+  if (andRepos.size > 1) return { cls: 'warn', html: 'Several <code>repo:</code> qualifiers without <code>OR</code> must all hold at once, so this matches nothing. Join them: <code>(repo:a/b OR repo:c/d)</code>.' };
+  const names = scopes.map(s => s.k === 'repo' ? `<b>${esc(s.v)}</b>` : `<b>${esc(s.v)}</b>'s repositories`);
+  const list = names.length < 3 ? names.join(' or ') : names.slice(0, -1).join(', ') + ' or ' + names.at(-1);
+  return { cls: '', html: `Searches only ${list}. Adding or removing tracked repositories never changes that.` };
+}
+const EXAMPLES = [
+  { name: 'Assigned to me', q: 'is:open assignee:@me', d: 'Open issues assigned to you, in any repository' },
+  { name: 'Open in acme/api', q: 'repo:acme/api is:open', d: 'Open issues in one repository' },
+  { name: 'API and web', q: '(repo:acme/api OR repo:acme/web) is:open', d: 'Several repositories need OR' },
+  { name: 'Blocked in acme', q: 'org:acme is:open is:blocked', d: 'Open issues with an open blocker, in one organization' },
+  { name: 'Parent issues', q: 'is:open has:sub-issue', d: 'Issues that have sub-issues' },
+  { name: 'Usage billing work', q: 'parent-issue:acme/api#120', d: 'The sub-issues of one issue' },
+  { name: 'Unassigned bugs', q: 'is:open label:bug no:assignee sort:updated-desc', d: 'sort: decides which 1,000 load when there are more' },
+];
+const STARTERS = [
+  { name: 'Assigned to me', query: 'is:open assignee:@me' },
+  { name: 'Created by me', query: 'is:open author:@me' },
+  { name: 'Mentioning me', query: 'is:open mentions:@me' },
+];
+
+// ---------- app state ----------
+const S = {
+  variant: 'A',
+  tracked: [...TRACKED0],
+  views: [
+    { id: 'v1', name: 'Assigned to me', query: 'is:open assignee:@me' },
+    { id: 'v2', name: 'Billing', query: 'label:billing' },
+    { id: 'v3', name: 'Blocked in the API', query: 'repo:acme/api is:open is:blocked' },
+    { id: 'v4', name: 'Open bugs everywhere', query: 'is:open label:bug' },
+  ],
+  active: 'v1',
+  focus: 'main',
+  lists: {},        // per sidebar entry: { sel, expanded, auto, unfolded, scroll, lastIdx }
+  pages: [],        // open issue pages; empty = the list is showing
+  modal: null,      // 'help' | 'confirm' | 'editA'
+  editor: null,     // A: the dialog's fields
+  edit: null,       // C: the editor page's fields
+  drafts: {},       // B: unsaved search text per view
+  renaming: null,   // B: view being renamed in the sidebar
+  qbFocus: false, ddOpen: false, ddIdx: -1,
+  menu: null, undo: null, confirm: null,
+  scrollSel: false, scrollLink: false,
+};
+let SEQ = 10;
+const viewById = id => S.views.find(v => v.id === id);
+const isView = id => !!viewById(id);
+const isTracked = repo => S.tracked.includes(repo);
+const visSubs = it => it.subs.filter(k => !ISSUES.get(k).hidden);
+const doneSubs = it => it.subs.filter(k => ISSUES.get(k).state === 'closed').length;
+const hasOpenDesc = k => ISSUES.get(k).subs.some(c => ISSUES.get(c).state === 'open' || hasOpenDesc(c));
+const doneBranch = k => ISSUES.get(k).state === 'closed' && !hasOpenDesc(k);
+function entryInfo(id) {
+  if (id === 'all') return { id, kind: 'all', name: 'All' };
+  if (id.startsWith('r:')) { const repo = id.slice(2), [owner, name] = repo.split('/'); return { id, kind: 'repo', repo, owner, name }; }
+  return { id, kind: 'view', ...viewById(id) };
+}
+const sbOrder = () => ['all', ...S.tracked.map(r => 'r:' + r), ...S.views.map(v => v.id)];
+const ownerHue = repo => hashStr(repo.split('/')[0]) % 360;
+const refShort = (k, home) => { const it = ISSUES.get(k); return it.repo === home ? `#${it.number}` : `${it.repo}#${it.number}`; };
+const stIcon = it => `<span class="st st-${it.state}" title="${it.state === 'open' ? 'Open' : 'Closed'}">${it.state === 'open' ? I.open : I.closed}</span>`;
+const extTag = it => isTracked(it.repo) ? '' : `<span class="ext" title="${esc(it.repo)} is not a tracked repository">external</span>`;
+const repoChip = it => `<span class="rchip ${isTracked(it.repo) ? '' : 'x'}" style="--h:${ownerHue(it.repo)}" title="${esc(it.repo)}${isTracked(it.repo) ? '' : ' (not tracked)'}">${esc(isTracked(it.repo) ? it.repo.split('/')[1] : it.repo)}</span>`;
+const LABEL_COLORS = { bug: 'd73a4a', enhancement: 'a2eeef', docs: '0075ca', infra: 'c5def5', 'good first issue': '7057ff', performance: 'f9d0c4', security: 'b60205', ux: 'd4c5f9', 'needs design': 'fef2c0', 'tech debt': 'e4e669', epic: '3e4b9e', billing: '0e8a16' };
+const labelPill = l => {
+  const h = LABEL_COLORS[l] ?? 'ededed', n = parseInt(h, 16), lum = (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+  return `<span class="lbl" style="background:#${h};color:${lum > 0.6 ? '#1f2328' : '#fff'}">${esc(l)}</span>`;
+};
+const labelsHTML = (it, max = 3) => it.labels.slice(0, max).map(labelPill).join('')
+  + (it.labels.length > max ? `<span class="lbl more" title="${esc(it.labels.slice(max).join(', '))}">+${it.labels.length - max}</span>` : '');
+const chev = r => `<span class="chev" ${r.kids ? `data-act="toggle" data-arg="${esc(r.id)}"` : ''}>${r.kids ? (r.exp ? I.down : I.right) : ''}</span>`;
+function lstate(id) {
+  if (!S.lists[id]) {
+    // repository lists and All start fully expanded (decided); views expand the paths to their matches
+    const expanded = isView(id) ? new Set() : new Set([...ISSUES.values()].filter(x => x.subs.length).map(x => x.key));
+    S.lists[id] = { sel: null, expanded, auto: new Set(), unfolded: new Set(), scroll: 0, lastIdx: 0 };
+  }
+  return S.lists[id];
+}
+
+// ---------- simulated GitHub: search runs, rate limit, failures ----------
+const SPEED = { instant: 0, normal: 320, slow: 1100 };
+const SIM = { speed: 'normal', scenario: 'normal', failParent: false, pool: 30, resetAt: 0, log: [], folded: false, nomatch: new Set() };
+const SCEN = [['normal', 'as GitHub answers'], ['incomplete', 'incomplete results'], ['invalid', 'rejects the search (422)'], ['access', 'can’t search a repository (422)'], ['server', 'server error (500)'], ['offline', 'no connection']];
+const RUNS = new Map(); // view id (or a temporary key) -> the latest search run
+function log(s) { SIM.log.push(`${hhmm(Date.now())} ${s}`); if (SIM.log.length > 6) SIM.log.shift(); renderSimLog(); }
+function refill() { const now = Date.now(); if (now >= SIM.resetAt) { SIM.pool = 30; SIM.resetAt = now + 60000; } }
+async function takeToken(run) {
+  refill();
+  while (SIM.pool <= 0) { if (!run.paused) { run.paused = SIM.resetAt; render(); } await delay(500); if (run.cancelled) return false; refill(); }
+  if (run.paused) { run.paused = null; render(); }
+  SIM.pool--;
+  return true;
+}
+const wait = async () => { if (SPEED[SIM.speed]) await delay(SPEED[SIM.speed]); };
+function startRun(key, q, opts = {}) {
+  const old = RUNS.get(key);
+  if (old) old.cancelled = true;
+  const cached = old && old.data && old.q === q && !old.error ? old.data : null;
+  const run = { key, q, cancelled: false, phase: 'search', page: 0, pages: 1, paused: null, error: null, data: cached, refreshing: !!cached, at: cached ? old.at : null, stale: null };
+  RUNS.set(key, run);
+  flow(run, opts);
+  render();
+  return run;
+}
+async function flow(run, opts) {
+  const res = searchUniverse(run.q);
+  const forced = {
+    invalid: { kind: 'invalid', message: 'Validation Failed: the search combines qualifiers in a way GitHub does not support. (simulated message)' },
+    access: { kind: 'access', message: 'The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.' },
+    server: { kind: 'server', message: 'HTTP 500 with an empty body' },
+    offline: { kind: 'offline', message: 'Cannot reach GitHub' },
+  }[SIM.scenario];
+  const err = forced ?? res.error;
+  const fresh = { matches: [], set: new Set(), total: 0, incomplete: false, complete: false, ctx: false, failed: new Set(), retrying: null, sort: res.sort, sortExplicit: res.sortExplicit };
+  run.pages = err ? 1 : Math.max(1, Math.ceil(Math.min(res.total, 1000) / 100));
+  for (let p = 1; p <= run.pages; p++) {
+    if (!(await takeToken(run))) return;
+    await wait();
+    if (run.cancelled) return;
+    if (err) {
+      log(`search page 1 → ${err.kind === 'offline' ? 'no connection' : err.kind === 'server' ? 'HTTP 500' : 'HTTP 422'}`);
+      return fail(run, err, opts);
+    }
+    log(`search page ${p} → ${Math.min(100, res.total - (p - 1) * 100)} of ${fmt(res.total)}`);
+    const slice = res.keys.slice((p - 1) * 100, p * 100);
+    fresh.matches.push(...slice); slice.forEach(k => fresh.set.add(k));
+    fresh.total = res.total; run.page = p;
+    if (!run.refreshing) run.data = fresh;
+    render();
+  }
+  fresh.incomplete = SIM.scenario === 'incomplete';
+  fresh.complete = !fresh.incomplete && res.total <= 1000;
+  opts.onSearch?.({ ok: true, total: res.total });
+  if (run.cancelled) return;
+  run.phase = 'context'; render();
+  await wait();
+  if (run.cancelled) return;
+  if (fresh.matches.length) log(`GraphQL nodes(ids:) × ${Math.ceil(fresh.matches.length / 100)}+ → parents, sub-issues`);
+  fresh.ctx = true;
+  if (SIM.failParent) {
+    const m = fresh.matches.find(k => { const p = ISSUES.get(k).parent; return p && !fresh.set.has(p) && !ISSUES.get(p).hidden; });
+    if (m) fresh.failed.add(ISSUES.get(m).parent);
+  }
+  Object.assign(run, { data: fresh, refreshing: false, phase: 'done', at: Date.now(), stale: null });
+  applied(run.key);
+  render();
+}
+function fail(run, err, opts) {
+  run.phase = 'done';
+  if ((err.kind === 'offline' || err.kind === 'server') && run.refreshing) { run.refreshing = false; run.stale = { since: run.at, reason: err.kind === 'offline' ? 'Cannot reach GitHub' : 'GitHub returned an error' }; }
+  else { run.error = err; run.data = null; run.refreshing = false; }
+  opts.onSearch?.({ error: err });
+  render();
+}
+// Paths to matches expand once, the first time they appear; later runs leave the user's collapsing alone.
+function applied(key) {
+  if (!isView(key)) return;
+  const data = RUNS.get(key)?.data;
+  if (!data) return;
+  const ls = lstate(key), { path } = treeInfo(data);
+  for (const k of path) if (!ls.auto.has(k)) { ls.auto.add(k); ls.expanded.add(k); }
+}
+async function retryParent(vid, pk) {
+  const data = RUNS.get(vid)?.data;
+  if (!data || data.retrying) return;
+  data.retrying = pk; render();
+  await wait(); await wait();
+  data.failed.delete(pk); data.retrying = null;
+  log(`GraphQL node ${pk} → loaded`);
+  applied(vid); render();
+}
+function ensureRun(id) {
+  const v = viewById(id), run = RUNS.get(id);
+  if (!v || !v.query) return;
+  if (!run) { startRun(id, v.query); return; }
+  if (run.error && (run.error.kind === 'offline' || run.error.kind === 'server')) { startRun(id, run.q); return; }
+  if (run.data?.failed.size) run.data.failed.forEach(pk => retryParent(id, pk));
+  if (run.phase === 'done' && run.data && (run.stale || (run.at && Date.now() - run.at > 5 * 60000))) startRun(id, run.q);
+}
+
+// ---------- view trees ----------
+// A match's loaded ancestry, top first, and where it stops: not loaded yet, unreadable, or failed.
+function upChain(k, data) {
+  const chain = [];
+  let cut = null;
+  for (let p = ISSUES.get(k).parent; p; p = ISSUES.get(p).parent) {
+    if (!data.ctx) { cut = { kind: 'loading', k: p }; break; }
+    if (ISSUES.get(p).hidden) { cut = { kind: 'hidden', k: p }; break; }
+    if (data.failed.has(p)) { cut = { kind: 'failed', k: p }; break; }
+    chain.unshift(p);
+  }
+  return { chain, cut };
+}
+function treeInfo(data) {
+  const info = new Map(), path = new Set(), below = new Map();
+  for (const m of data.matches) {
+    const u = upChain(m, data);
+    info.set(m, u);
+    for (const a of u.chain) { path.add(a); below.set(a, (below.get(a) || 0) + 1); }
+  }
+  return { info, path, below };
+}
+const roleFn = data => k => data.set.has(k) ? 'match' : data.complete ? 'ctx' : 'unk';
+
+// A and B: a forest of every match under its ancestry. B trims each ancestor to the branches that lead to
+// matches, with one fold row for the rest.
+function forestRows(vid, trim) {
+  const data = RUNS.get(vid)?.data, rows = [];
+  if (!data) return { rows, data };
+  const ls = lstate(vid), { info, path, below } = treeInfo(data), role = roleFn(data);
+  const walk = (k, d) => {
+    const it = ISSUES.get(k), subs = data.ctx ? visSubs(it) : [], kids = subs.length > 0, exp = kids && ls.expanded.has(k);
+    rows.push({ id: k, k, d, kind: 'issue', kids, exp, role: role(k), inside: below.get(k) || 0, pload: d === 0 && !data.ctx && !!it.parent });
+    if (!exp) return;
+    const cut = trim && path.has(k) && !ls.unfolded.has(k);
+    const shown = cut ? subs.filter(c => data.set.has(c) || path.has(c)) : subs;
+    shown.forEach(c => walk(c, d + 1));
+    if (cut && shown.length < subs.length) rows.push({ id: 'more:' + k, k, d: d + 1, kind: 'fold', n: subs.length - shown.length });
+  };
+  const tops = [], seen = new Map();
+  for (const m of data.matches) {
+    const u = info.get(m), top = u.chain[0] ?? m;
+    if (u.cut && u.cut.kind !== 'loading') {
+      const id = 'unavail:' + u.cut.k;
+      if (!seen.has(id)) { const g = { id, cut: u.cut, kids: [] }; seen.set(id, g); tops.push(g); }
+      if (!seen.get(id).kids.includes(top)) seen.get(id).kids.push(top);
+    } else if (!seen.has(top)) { seen.set(top, true); tops.push({ k: top }); }
+  }
+  for (const t of tops) {
+    if (!t.id) { walk(t.k, 0); continue; }
+    rows.push({ id: t.id, k: t.cut.k, d: 0, kind: 'unavail', cut: t.cut, kids: false, exp: true });
+    t.kids.forEach(c => walk(c, 1));
+  }
+  return { rows, data };
+}
+// C: the topmost matches, grouped under one path header per parent issue.
+function groupRows(vid) {
+  const data = RUNS.get(vid)?.data, rows = [];
+  if (!data) return { rows, data };
+  const ls = lstate(vid), { info, below } = treeInfo(data), role = roleFn(data), shown = new Set();
+  const walk = (k, d) => {
+    if (shown.has(k)) return;
+    shown.add(k);
+    const it = ISSUES.get(k), subs = data.ctx ? visSubs(it) : [], kids = subs.length > 0, exp = kids && ls.expanded.has(k);
+    rows.push({ id: k, k, d, kind: 'issue', kids, exp, role: role(k), inside: below.get(k) || 0, pload: d === 0 && !data.ctx && !!it.parent });
+    if (exp) subs.forEach(c => walk(c, d + 1));
+  };
+  const groups = new Map();
+  for (const m of data.matches) { // in rank order, so a group sits where its first match (at any depth) ranks
+    const t = info.get(m).chain.find(a => data.set.has(a)) ?? m, u = info.get(t); // its topmost matching ancestor
+    const unav = u.cut && u.cut.kind !== 'loading';
+    const gk = u.chain.length ? u.chain.at(-1) : unav ? 'unavail:' + u.cut.k : 'loose:' + t;
+    if (!groups.has(gk)) groups.set(gk, { gk, parent: u.chain.at(-1) ?? null, chain: u.chain, cut: unav ? u.cut : null, members: [] });
+    if (!groups.get(gk).members.includes(t)) groups.get(gk).members.push(t);
+  }
+  for (const g of groups.values()) {
+    if (!g.parent && !g.cut) { g.members.forEach(m => walk(m, 0)); continue; }
+    const hid = 'path:' + g.gk, P = g.parent && ISSUES.get(g.parent), all = P ? visSubs(P) : g.members;
+    const others = P ? all.length - g.members.length : 0, exp = others > 0 && ls.expanded.has(hid);
+    rows.push({ id: hid, k: g.parent, d: 0, kind: 'path', chain: g.chain, cut: g.cut, kids: others > 0, exp, others, role: g.parent ? role(g.parent) : null });
+    (exp ? all : P ? all.filter(c => g.members.includes(c)) : g.members).forEach(c => walk(c, 1));
+  }
+  return { rows, data };
+}
+const VROWS = { A: vid => forestRows(vid, false), B: vid => forestRows(vid, true), C: groupRows };
+const OPTS = {
+  A: { chips: true, unkTag: '?', insideFmt: n => `${plural(n, 'match')} inside` },
+  B: { chips: true, gutter: true, insideFmt: n => `<i></i>${n}`, insideCls: 'dotn' },
+  C: { chips: true, faint: true, unkTag: 'match?', insideFmt: n => `${plural(n, 'match')} inside` },
+};
+
+// Repository lists and All: the decided outline list, unchanged.
+const sortRoots = keys => keys.slice().sort((a, b) => {
+  const x = ISSUES.get(a), y = ISSUES.get(b);
+  return (x.state === 'closed') - (y.state === 'closed') || (y.subs.length > 0) - (x.subs.length > 0) || x.updated - y.updated;
+});
+function plainRows(id) {
+  const e = entryInfo(id), ls = lstate(id);
+  const keys = e.kind === 'repo' ? REPO_ISSUES.get(e.repo) : S.tracked.flatMap(r => REPO_ISSUES.get(r));
+  const mem = new Set(keys);
+  const covered = k => { for (let p = ISSUES.get(k).parent; p; p = ISSUES.get(p).parent) if (mem.has(p)) return true; return false; };
+  const roots = [];
+  let hidden = 0;
+  for (const k of keys) { if (covered(k)) continue; if (doneBranch(k)) { hidden++; continue; } roots.push(k); }
+  const rows = [];
+  const walk = (k, d) => {
+    const it = ISSUES.get(k), subs = visSubs(it), kids = subs.length > 0, exp = kids && ls.expanded.has(k);
+    rows.push({ id: k, k, d, kind: 'issue', kids, exp, role: null, pchip: d === 0 && !!it.parent && !ISSUES.get(it.parent).hidden });
+    if (exp) subs.forEach(c => walk(c, d + 1));
+  };
+  sortRoots(roots).forEach(k => walk(k, 0));
+  return { rows, hidden, home: e.kind === 'repo' ? e.repo : null, all: e.kind === 'all' };
+}
+
+// ---------- rows ----------
+function colsHTML(it) {
+  const closed = it.state === 'closed', ob = openBlockers(it).length, tb = it.blockedBy.length, ow = openBlocked(it).length, tw = it.blocking.length, done = doneSubs(it);
+  const prog = it.subs.length ? `<span class="bar" title="${done} of ${it.subs.length} sub-issues closed"><i style="width:${done / it.subs.length * 100}%"></i></span><span class="frac">${done}/${it.subs.length}</span>` : '';
+  const bb = ob && !closed ? `<span class="cnt red" title="Blocked by ${plural(ob, 'open issue')}">${I.blocked}${ob}</span>`
+    : tb ? `<span class="cnt mute" title="Not blocked now">${I.blocked}${ob}/${tb}</span>` : '';
+  const bl = ow ? `<span class="cnt amber" title="Blocks ${plural(ow, 'open issue')}">${I.arrow}${ow}</span>`
+    : tw ? `<span class="cnt mute" title="Blocks no open issue now">${I.arrow}0/${tw}</span>` : '';
+  return `<span class="col-prog">${prog}</span><span class="col-bb">${bb}</span><span class="col-bl">${bl}</span>`;
+}
+const EMPTY_COLS = '<span class="col-prog"></span><span class="col-bb"></span><span class="col-bl"></span>';
+const ROLE_TIP = {
+  match: 'Match: the search returned this issue',
+  ctx: 'Context issue: shown for its place in the tree; the search did not return it',
+  unk: 'Context issue: the search results are incomplete, so it may match too',
+};
+function rowHTML(r, sel, o, data) {
+  const selc = sel ? 'row-sel' : '';
+  if (r.kind === 'fold') {
+    return `<div class="arow fold ${selc}" data-act="row" data-arg="${esc(r.id)}" title="Sub-issues that are not on a path to a match"><span class="guides" style="--d:${r.d}"></span><span class="chev" data-act="toggle" data-arg="${esc(r.id)}">${I.right}</span>${o.gutter ? '<span class="gut"></span>' : ''}<span class="title">${plural(r.n, 'other sub-issue')}</span></div>`;
+  }
+  if (r.kind === 'unavail') {
+    const failed = r.cut.kind === 'failed', retrying = data?.retrying === r.cut.k;
+    const body = retrying ? `<span class="spin"></span><span class="title">Loading the parent issue…</span>`
+      : failed ? `<span class="st st-blocked">${I.alert}</span><span class="title">Parent issue could not be loaded</span><button class="linkbtn" data-act="retryparent" data-arg="${esc(r.cut.k)}">Retry</button>`
+      : `<span class="st st-ghost">${I.lock}</span><span class="title">Parent issue not visible to you</span>`;
+    return `<div class="arow unavail ${failed ? 'failed' : ''} ${selc}" data-act="row" data-arg="${esc(r.id)}"><span class="guides" style="--d:0"></span><span class="chev">${I.down}</span>${o.gutter ? '<span class="gut"></span>' : ''}${body}</div>`;
+  }
+  if (r.kind === 'path') {
+    const crumbs = [];
+    if (r.cut) {
+      const retrying = data?.retrying === r.cut.k;
+      crumbs.push(retrying ? `<span class="crumb"><span class="spin"></span>Loading the parent issue…</span>`
+        : r.cut.kind === 'failed' ? `<span class="crumb bad">${I.alert}Parent issue could not be loaded&nbsp;<button class="linkbtn" data-act="retryparent" data-arg="${esc(r.cut.k)}">Retry</button></span>`
+        : `<span class="crumb">${I.lock}Parent issue not visible to you</span>`);
+    }
+    for (const k of r.chain) {
+      const it = ISSUES.get(k);
+      crumbs.push(`<span class="crumb" data-act="open" data-arg="${esc(k)}" title="${esc(k)}: ${esc(it.title)}">${stIcon(it)}<span>${esc(k.replace(/^[^/]+\//, ''))}</span>${esc(trunc(it.title, 34))}</span>`);
+    }
+    return `<div class="arow path ${selc}" data-act="row" data-arg="${esc(r.id)}" title="Context: the parent issues of the matches below"><span class="guides" style="--d:0"></span>${chev(r)}<span class="crumbs">${crumbs.join('<span class="csep">›</span>')}</span>${r.role === 'unk' ? '<span class="unk" title="' + ROLE_TIP.unk + '">match?</span>' : ''}${r.others ? `<span class="pmore">${r.exp ? `showing all ${r.others + (r.chain.length ? ISSUES.get(r.k).subs.length - r.others : 0)} sub-issues` : `+${plural(r.others, 'other sub-issue')}`}</span>` : ''}</div>`;
+  }
+  const it = ISSUES.get(r.k), role = r.role, ctx = role === 'ctx' || role === 'unk', faint = o.faint && ctx;
+  const cls = `arow ${it.state} ${selc} ${role === 'match' ? 'match' : ''} ${ctx && !o.faint ? 'ctx' : ''} ${faint ? 'faint' : ''}`;
+  const gut = o.gutter ? `<span class="gut">${role === 'match' ? '<i class="dot"></i>' : role === 'unk' ? '<i class="ring"></i>' : ''}</span>` : '';
+  const unk = role === 'unk' && o.unkTag ? `<span class="unk">${o.unkTag}</span>` : '';
+  const inside = r.inside && r.kids && !r.exp && o.insideFmt ? `<span class="inside ${o.insideCls || ''}" title="${plural(r.inside, 'match')} below this issue">${o.insideFmt(r.inside)}</span>` : '';
+  let pchip = '';
+  if (r.pload) pchip = `<span class="pchip load" title="Loading the parent issue"><span class="spin"></span>parent issue</span>`;
+  else if (r.pchip) { const p = ISSUES.get(it.parent); pchip = `<span class="pchip" data-act="open" data-arg="${esc(p.key)}" title="Sub-issue of ${esc(p.key)}: ${esc(p.title)}">${I.up}${esc(refShort(p.key, o.home))}${isTracked(p.repo) ? '' : ' · external'}</span>`; }
+  return `<div class="${cls}" data-act="row" data-arg="${esc(r.id)}" ${role ? `title="${ROLE_TIP[role]}"` : ''}><span class="guides" style="--d:${r.d}"></span>${chev(r)}${gut}${stIcon(it)}${o.chips ? repoChip(it) : ''}`
+    + `<span class="num">${esc(o.chips ? '#' + it.number : refShort(r.k, o.home))}</span>${unk}<span class="title">${esc(it.title)}</span>${faint ? '' : labelsHTML(it)}${o.chips ? '' : extTag(it)}${pchip}${inside}<span class="sp"></span>${faint ? EMPTY_COLS : colsHTML(it)}</div>`;
+}
+const COLHEAD = `<div class="colhead"><span class="c-title">Issue</span><span class="col-prog">Sub-issues</span><span class="col-bb">Blocked by</span><span class="col-bl">Blocks</span></div>`;
+const baseKey = rid => rid.replace(/^(more|path|unavail):/, '');
+function selIndex(rows, ls) {
+  const ok = r => !!r.id;
+  let i = ls.sel ? rows.findIndex(r => r.id === ls.sel) : -1;
+  if (i < 0 && ls.sel && ISSUES.has(baseKey(ls.sel))) { // collapsed away: its nearest visible ancestor
+    for (let k = ISSUES.get(baseKey(ls.sel)).parent; k && i < 0; k = ISSUES.get(k).parent) i = rows.findIndex(r => r.kind === 'issue' && r.k === k);
+  }
+  if (i < 0 && ls.sel) { // gone: the nearest neighbour at its old position
+    for (let j = Math.min(ls.lastIdx, rows.length - 1); j >= 0 && i < 0; j--) if (ok(rows[j])) i = j;
+  }
+  if (i < 0) i = rows.findIndex(ok);
+  if (i >= 0) { ls.sel = rows[i].id; ls.lastIdx = i; }
+  return i;
+}
+const curRows = () => isView(S.active) ? VROWS[S.variant](S.active).rows : plainRows(S.active).rows;
+function selectedRow() { const rows = curRows(); return rows[selIndex(rows, lstate(S.active))]; }
+function selectedKey() { if (S.pages.length) return S.pages.at(-1).key; const r = selectedRow(); return r && (r.kind === 'issue' || r.kind === 'path') ? r.k : null; }
+
+// ---------- the plain issue page (decided elsewhere) ----------
+const pageLinks = it => [...(it.parent && !ISSUES.get(it.parent).hidden ? [it.parent] : []), ...visSubs(it), ...it.blockedBy, ...it.blocking];
+function pageHTML(it, p) {
+  let li = 0;
+  const L = k => { const x = ISSUES.get(k), idx = li++; return `<div class="lnk ${idx === p.link ? 'cur' : ''}" data-act="open" data-arg="${esc(k)}">${stIcon(x)}<span class="num">${esc(refShort(k, it.repo))}</span><span class="t">${esc(x.title)}</span>${extTag(x)}</div>`; };
+  const sec = (h, keys) => `<section><h4>${h}</h4>${keys.length ? keys.map(L).join('') : '<div class="none">None</div>'}</section>`;
+  const r = mulberry32(hashStr(it.key));
+  const paras = Array.from({ length: rint(2, 3, r) }, () => `<p>${Array.from({ length: rint(2, 3, r) }, () => pick(SENTENCES, r)).join(' ')}</p>`).join('');
+  const d = isView(S.active) ? RUNS.get(S.active)?.data : null;
+  const inView = d ? (d.set.has(it.key) ? 'a match in this view' : d.complete ? 'a context issue in this view' : 'a context issue in this view; it may match too') : null;
+  const parent = it.parent ? (ISSUES.get(it.parent).hidden ? '<section><h4>Parent issue</h4><div class="none">Not visible to you</div></section>' : sec('Parent issue', [it.parent])) : sec('Parent issue', []);
+  return `<article class="issue"><div class="i-ref">${I.repo}<span>${esc(it.repo)}</span><span class="muted">#${it.number}</span>${extTag(it)}</div><h1>${esc(it.title)}</h1>
+    <div class="i-meta"><span class="pill ${it.state}">${it.state === 'open' ? I.open : I.closed} ${it.state === 'open' ? 'Open' : 'Closed'}</span><span><b>${esc(it.author)}</b> opened this ${it.created} days ago · assigned to ${esc(it.assignee ?? 'nobody')}</span>${labelsHTML(it, 9)}</div>
+    <div class="i-grid"><div class="i-main"><div class="i-body">${paras}</div>${inView ? `<div class="note">Prototype note: this issue is ${inView}.</div>` : ''}<div class="note">The issue page is decided elsewhere and deliberately plain here.</div></div>
+    <aside class="side">${parent}${sec('Sub-issues', visSubs(it))}${sec('Blocked by', it.blockedBy)}${sec('Blocking', it.blocking)}</aside></div></article>`;
+}
+
+// ---------- editors ----------
+function newView() {
+  if (S.variant === 'A') return openEditorA(null);
+  if (S.variant === 'C') return openEditorC(null);
+  const v = { id: 'v' + (++SEQ), name: 'New view', query: '', draft: true };
+  S.views.push(v); activate(v.id); startRename(v.id, true);
+}
+function editView(vid) {
+  if (!vid || !isView(vid)) return;
+  if (S.variant === 'A') return openEditorA(vid);
+  if (S.variant === 'C') return openEditorC(vid);
+  if (S.active !== vid) activate(vid);
+  S.pages = []; render(); focusQbar();
+}
+function askRemove(vid) { if (S.variant === 'B') removeView(vid, true); else openConfirm(vid); }
+function removeView(vid, withUndo) {
+  const i = S.views.findIndex(v => v.id === vid), v = S.views[i], run = RUNS.get(vid), draft = S.drafts[vid];
+  if (!v) return;
+  S.views.splice(i, 1); RUNS.delete(vid); delete S.drafts[vid];
+  if (S.renaming === vid) S.renaming = null;
+  if (S.active === vid) activate(S.views[Math.min(i, S.views.length - 1)]?.id ?? 'all');
+  if (withUndo && !v.draft) showUndo(`Removed the view “${v.name}”`, () => { S.views.splice(i, 0, v); if (run) RUNS.set(vid, run); if (draft != null) S.drafts[vid] = draft; activate(vid); });
+  else toast(`Removed the view “${v.name}”`);
+  render();
+}
+function commitSaved(v, q, runKey) {
+  // a changed search starts the tree afresh; the run already made for it (if any) is reused
+  if (q !== v.query) { S.lists[v.id] = null; const old = RUNS.get(v.id); if (old) old.cancelled = true; RUNS.delete(v.id); }
+  v.query = q;
+  const r = runKey && RUNS.get(runKey);
+  if (r && r.q === q) { RUNS.delete(runKey); r.key = v.id; RUNS.set(v.id, r); if (r.phase === 'done') applied(v.id); }
+  else if (runKey) RUNS.delete(runKey);
+}
+
+// A: dialog
+function openEditorA(vid) {
+  closeMenu();
+  const v = vid && viewById(vid);
+  S.editor = { vid, name: v?.name ?? '', query: v?.query ?? '', err: null, checking: false, confirm: false, key: null };
+  S.modal = 'editA';
+  const bg = el(`<div class="modal-bg top" id="edA"><div class="modal ed-a">
+    <div class="m-head"><b>${vid ? 'Edit view' : 'New view'}</b><span class="sp"></span><kbd>Esc</kbd></div>
+    <div class="ed-body">
+      <label class="fl" for="edA-name">Name</label><input id="edA-name" class="tin" placeholder="Open bugs" spellcheck="false">
+      <label class="fl" for="edA-q">GitHub search</label><input id="edA-q" class="tin mono" placeholder="is:open label:bug" spellcheck="false" autocomplete="off">
+      <div id="edA-scope"></div><div id="edA-err"></div>
+      <div class="exh">Examples <span class="muted">click one to use it</span></div>
+      <div class="exl">${EXAMPLES.map((e, i) => `<button class="ex" data-act="exA" data-arg="${i}"><code>${esc(e.q)}</code><span>${esc(e.d)}</span></button>`).join('')}</div>
+    </div>
+    <div class="m-foot" id="edA-foot"></div></div></div>`);
+  bg.onmousedown = e => { if (e.target === bg) closeEditorA(); };
+  document.body.append(bg);
+  const n = $('edA-name'), q = $('edA-q');
+  n.value = S.editor.name; q.value = S.editor.query;
+  n.oninput = () => { S.editor.name = n.value; updateEditorA(); };
+  q.oninput = () => { S.editor.query = q.value; S.editor.err = null; updateEditorA(); };
+  const keys = e => {
+    if (e.key === 'Escape') { e.preventDefault(); closeEditorA(); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.target === q)) { e.preventDefault(); saveA(); }
+    else if (e.key === 'Enter') { e.preventDefault(); q.focus(); }
+  };
+  n.onkeydown = keys; q.onkeydown = keys;
+  (vid ? q : n).focus();
+  updateEditorA();
+}
+function updateEditorA() {
+  const E = S.editor;
+  if (!E || !$('edA')) return;
+  const sc = scopeInfo(E.query);
+  $('edA-scope').innerHTML = `<div class="scope ${sc.cls}">${I.info}<span>${sc.html}</span></div>`;
+  let err = '';
+  if (E.err?.kind === 'need') err = `<div class="ederr">${esc(E.err.message)}</div>`;
+  else if (E.err?.kind === 'invalid') err = `<div class="ederr"><b>GitHub rejected this search</b><pre>${esc(E.err.message)}</pre></div>`;
+  else if (E.err?.kind === 'access') err = `<div class="ederr"><b>GitHub can't search a repository or user in this search</b><pre>${esc(E.err.message)}</pre></div>`;
+  else if (E.err) err = `<div class="ederr"><b>${E.err.kind === 'offline' ? 'Couldn’t reach GitHub to check this search' : 'GitHub returned an error while checking this search'}</b><div class="acts"><button class="btn" data-act="ed-force">Save anyway</button><button class="btn" data-act="ed-save">Try again</button></div></div>`;
+  $('edA-err').innerHTML = err;
+  const v = E.vid && viewById(E.vid);
+  $('edA-foot').innerHTML = E.confirm
+    ? `<span>Remove “${esc(v.name)}”? This can't be undone.</span><span class="sp"></span><button class="btn" data-act="ed-keep">Keep</button><button class="btn danger solid" data-act="ed-yes">Remove</button>`
+    : `${v ? `<button class="btn danger" data-act="ed-remove">Remove view…</button>` : ''}<span class="sp"></span><span class="muted" style="font-size:12px">${E.checking ? '<span class="spin"></span> Checking with GitHub…' : 'Save runs the search once'}</span><button class="btn" data-act="ed-cancel">Cancel</button><button class="btn primary" data-act="ed-save" ${E.checking ? 'disabled' : ''}>Save <kbd>⌘↵</kbd></button>`;
+}
+function closeEditorA() {
+  const E = S.editor;
+  if (E?.key) { const r = RUNS.get(E.key); if (r) r.cancelled = true; RUNS.delete(E.key); }
+  $('edA')?.remove(); S.editor = null; S.modal = null; render();
+}
+function saveA(force = false) {
+  const E = S.editor, name = E.name.trim(), q = E.query.trim(), v = E.vid && viewById(E.vid);
+  if (!name || !q) { E.err = { kind: 'need', message: 'Give the view a name and a search.' }; updateEditorA(); return; }
+  if (force || (v && v.query === q)) return commitA(null);
+  E.checking = true; E.err = null; E.key = 'tmp:' + (++SEQ); updateEditorA();
+  startRun(E.key, q, { onSearch: res => {
+    if (S.editor !== E) return;
+    E.checking = false;
+    if (res.error) { RUNS.delete(E.key); E.key = null; E.err = res.error; updateEditorA(); return; }
+    commitA(E.key);
+  } });
+}
+function commitA(runKey) {
+  const E = S.editor, name = E.name.trim(), q = E.query.trim();
+  let v = E.vid && viewById(E.vid);
+  if (!v) { v = { id: 'v' + (++SEQ), name, query: '' }; S.views.push(v); }
+  v.name = name;
+  commitSaved(v, q, runKey);
+  E.key = null;
+  const added = !E.vid;
+  $('edA')?.remove(); S.editor = null; S.modal = null; S.focus = 'main';
+  toast(added ? `Added the view “${name}”` : `Saved “${name}”`);
+  activate(v.id);
+}
+
+// B: query bar and inline rename
+const draftOf = vid => S.drafts[vid] ?? viewById(vid)?.query ?? '';
+function focusQbar() { const q = $('qb-in'); if (q) { q.focus(); q.select(); } }
+function initQbar(vid) {
+  const q = $('qb-in');
+  q.value = draftOf(vid);
+  q.oninput = () => { S.drafts[vid] = q.value; if (q.value === viewById(vid).query) delete S.drafts[vid]; S.ddIdx = -1; S.ddOpen = true; updateQbar(vid); renderSidebar(); };
+  q.onfocus = () => { S.qbFocus = true; S.ddOpen = true; S.focus = 'main'; updateQbar(vid); };
+  q.onblur = () => { S.qbFocus = false; S.ddOpen = false; S.ddIdx = -1; updateQbar(vid); };
+  q.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); if (S.ddOpen) { S.ddOpen = false; updateQbar(vid); } else q.blur(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); S.ddOpen = true; S.ddIdx = Math.min(EXAMPLES.length - 1, S.ddIdx + 1); updateQbar(vid); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); S.ddIdx = Math.max(-1, S.ddIdx - 1); updateQbar(vid); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (S.ddOpen && S.ddIdx >= 0) useExampleB(vid, S.ddIdx); else runDraft(vid); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveB(vid); }
+  };
+}
+function updateQbar(vid) {
+  const st = $('qb-state'), dd = $('qb-dd'), q = $('qb-in');
+  if (!st || !q) return;
+  const v = viewById(vid), d = q.value.trim(), mod = d !== v.query, run = RUNS.get(vid), unrun = d && d !== run?.q;
+  st.innerHTML = (unrun ? '<span><kbd>↵</kbd> runs it</span>' : '')
+    + (mod || v.draft ? `${mod && !v.draft ? '<span class="mod">Modified</span>' : ''}<button class="btn primary" data-act="qb-save" ${d ? '' : 'disabled'}>Save <kbd>⌘S</kbd></button>${v.draft ? '' : '<button class="btn" data-act="qb-revert">Revert</button>'}`
+      : (unrun ? '' : '<span><kbd>/</kbd> edit the search</span>'));
+  dd.className = 'qdd' + (S.qbFocus && S.ddOpen ? ' on' : '');
+  if (S.qbFocus && S.ddOpen) {
+    const sc = scopeInfo(q.value);
+    dd.innerHTML = `<div class="ddh">Examples · ↓ to pick one, ↵ to run it</div>${EXAMPLES.map((e, i) => `<div class="ddi ${i === S.ddIdx ? 'hi' : ''}" data-act="ddB" data-arg="${i}"><code>${esc(e.q)}</code><span>${esc(e.d)}</span></div>`).join('')}<div class="scope ${sc.cls}">${I.info}<span>${sc.html}</span></div>`;
+  }
+}
+function runDraft(vid) {
+  const q = $('qb-in').value.trim();
+  if (!q) return;
+  const run = RUNS.get(vid);
+  if (run && run.q !== q) S.lists[vid] = null;
+  S.ddOpen = false;
+  startRun(vid, q);
+  updateQbar(vid);
+}
+function useExampleB(vid, i) {
+  const e = EXAMPLES[i], q = $('qb-in'), v = viewById(vid);
+  q.value = e.q; S.drafts[vid] = e.q; S.ddIdx = -1;
+  if (v.draft && v.name === 'New view') v.name = e.name;
+  runDraft(vid); renderSidebar();
+}
+function saveB(vid) {
+  const v = viewById(vid), q = ($('qb-in')?.value ?? draftOf(vid)).trim();
+  if (!q) return;
+  const wasDraft = v.draft;
+  if (RUNS.get(vid)?.q !== q) { if (q !== v.query) S.lists[vid] = null; startRun(vid, q); }
+  v.query = q; v.draft = false; delete S.drafts[vid];
+  toast(wasDraft ? `Added the view “${v.name}”` : `Saved the search of “${v.name}”`);
+  render();
+}
+function revertB(vid) {
+  const v = viewById(vid);
+  delete S.drafts[vid];
+  const q = $('qb-in'); if (q) q.value = v.query;
+  const run = RUNS.get(vid);
+  if (run && run.q !== v.query) { S.lists[vid] = null; startRun(vid, v.query); }
+  render();
+}
+function startRename(vid, fresh = false) { S.renaming = vid; S.renameFresh = fresh; S.focus = 'sidebar'; render(); }
+function commitRename(cancel) {
+  const vid = S.renaming, inp = $('ren-in'), v = viewById(vid);
+  if (!vid) return;
+  if (v && !cancel && inp && inp.value.trim()) v.name = inp.value.trim();
+  const fresh = S.renameFresh;
+  S.renaming = null; S.renameFresh = false; S.focus = 'main';
+  render();
+  if (fresh) focusQbar();
+}
+function discardEmptyDraft(prev, next) {
+  const v = viewById(prev);
+  if (v && v.draft && prev !== next && !(S.drafts[prev] ?? '').trim()) { S.views = S.views.filter(x => x !== v); RUNS.delete(prev); toast('Discarded the new view: it had no search'); }
+}
+
+// C: editor page
+function openEditorC(vid) {
+  closeMenu();
+  const v = vid && viewById(vid);
+  if (vid) S.active = vid;
+  S.edit = { vid, name: v?.name ?? '', query: v?.query ?? '', token: ++SEQ, confirm: false, err: null, back: S.active, exName: null };
+  S.pages = []; S.focus = 'main';
+  render();
+  (vid ? $('edc-q') : $('edc-name'))?.focus();
+}
+const prevKey = () => 'prev:' + S.edit.token;
+function previewC() {
+  const q = S.edit.query.trim();
+  if (!q) return;
+  startRun(prevKey(), q);
+}
+function useExampleC(i) {
+  const e = EXAMPLES[i], E = S.edit;
+  if (!E.name.trim() || E.name === E.exName) { E.name = e.name; E.exName = e.name; $('edc-name').value = e.name; }
+  E.query = e.q; $('edc-q').value = e.q; E.err = null;
+  previewC(); renderMain(); $('edc-q').focus();
+}
+function saveC() {
+  const E = S.edit, name = E.name.trim(), q = E.query.trim();
+  if (!name || !q) { E.err = 'Give the view a name and a search.'; renderMain(); return; }
+  let v = E.vid && viewById(E.vid);
+  if (!v) { v = { id: 'v' + (++SEQ), name, query: '' }; S.views.push(v); }
+  v.name = name;
+  commitSaved(v, q, prevKey());
+  S.edit = null;
+  toast(E.vid ? `Saved “${name}”` : `Added the view “${name}”`);
+  activate(v.id);
+}
+function cancelC() {
+  const E = S.edit;
+  const r = RUNS.get(prevKey()); if (r) r.cancelled = true; RUNS.delete(prevKey());
+  S.edit = null;
+  activate(isView(E.back) || E.back === 'all' || E.back.startsWith('r:') ? E.back : 'all');
+}
+function previewHTML() {
+  const E = S.edit, run = RUNS.get(prevKey());
+  if (!run) return `<div class="prev"><div class="pe">Preview what GitHub returns: <kbd>↵</kbd> in the search field, or <b>Preview</b>. Each preview is one search request; GitHub allows 30 a minute.</div></div>`;
+  const older = E.query.trim() !== run.q ? ' <span class="muted">· for an earlier version of the search</span>' : '';
+  if (run.error) {
+    const h = { invalid: 'GitHub rejected this search', access: 'GitHub can’t search a repository or user in this search', server: 'GitHub returned an error (HTTP 500); the search may be too large', offline: 'Couldn’t reach GitHub' }[run.error.kind];
+    return `<div class="prev"><div class="ph">${I.alert}<b>${h}</b>${older}</div>${run.error.kind === 'invalid' || run.error.kind === 'access' ? `<div class="pe"><pre>${esc(run.error.message)}</pre></div>` : ''}</div>`;
+  }
+  const d = run.data;
+  if (!d || (run.phase === 'search' && !d.matches.length)) return `<div class="prev"><div class="ph"><span class="spin"></span>${run.paused ? `Search limit reached · paused until ${hhmm(run.paused)}` : 'Searching…'}</div></div>`;
+  if (!d.total) return `<div class="prev"><div class="ph"><b>No matching issues</b>${older}</div><div class="pe">GitHub silently ignores qualifiers it doesn't know, and drops repositories you can't read inside <code>OR</code> groups. Either can make a search return nothing.</div></div>`;
+  const first = d.matches.slice(0, 20);
+  return `<div class="prev"><div class="ph"><b>${fmt(d.total)} ${d.total === 1 ? 'match' : 'matches'}</b>${d.total > 1000 ? '<span>· the view shows the first 1,000</span>' : ''}<span>· the first ${first.length} in GitHub's order</span>${older}</div>`
+    + first.map(k => { const it = ISSUES.get(k); return `<div class="pr">${stIcon(it)}${repoChip(it)}<span class="num">#${it.number}</span><span class="title">${esc(it.title)}</span>${labelsHTML(it)}</div>`; }).join('') + '</div>';
+}
+
+// confirm (A and C)
+function openConfirm(vid) {
+  closeMenu();
+  const v = viewById(vid);
+  S.modal = 'confirm'; S.confirm = vid;
+  const bg = el(`<div class="modal-bg" id="cf"><div class="modal cf"><div class="m-head"><b>Remove the view “${esc(v.name)}”?</b></div><div class="cf-body">Its name and search are deleted from your settings. Tracked repositories and issues are not affected. This can't be undone.</div><div class="m-foot"><span class="sp"></span><button class="btn" data-act="cf-no">Cancel <kbd>Esc</kbd></button><button class="btn danger solid" data-act="cf-yes">Remove <kbd>↵</kbd></button></div></div></div>`);
+  bg.onmousedown = e => { if (e.target === bg) closeConfirm(); };
+  document.body.append(bg);
+}
+function closeConfirm() { $('cf')?.remove(); S.modal = null; S.confirm = null; render(); }
+function doConfirm() { const vid = S.confirm; $('cf')?.remove(); S.modal = null; S.confirm = null; removeView(vid, false); }
+
+// context menu on a view entry
+function openMenu(vid, x, y) {
+  closeMenu();
+  const items = S.variant === 'B'
+    ? [['rename', 'Rename', 'F2'], ['edit', 'Edit search', '/'], ['remove', 'Remove view', '⌫', 1]]
+    : [['edit', 'Edit view…', 'E'], ['remove', 'Remove view…', '⌫', 1]];
+  const m = el(`<div class="menu" id="menu">${items.map(([a, t, k, d]) => `<div class="mi ${d ? 'danger' : ''}" data-act="mi-${a}" data-arg="${esc(vid)}">${t}<kbd>${k}</kbd></div>`).join('')}</div>`);
+  m.style.left = x + 'px'; m.style.top = y + 'px';
+  document.body.append(m); S.menu = vid;
+}
+function closeMenu() { $('menu')?.remove(); S.menu = null; }
+function showUndo(msg, fn) {
+  clearTimeout(S.undoT);
+  S.undo = fn;
+  const u = $('undo');
+  u.innerHTML = `<span>${esc(msg)}</span><button data-act="undo">Undo <kbd>z</kbd></button>`;
+  u.classList.add('on');
+  S.undoT = setTimeout(hideUndo, 8000);
+}
+function hideUndo() { $('undo').classList.remove('on'); S.undo = null; }
+function doUndo() { const fn = S.undo; hideUndo(); fn?.(); }
+
+// ---------- render ----------
+function renderSidebar() {
+  const sb = $('sb'), keep = S.renaming ? $('ren-in') : null, hadFocus = keep && document.activeElement === keep;
+  const s0 = keep?.selectionStart, s1 = keep?.selectionEnd;
+  sb.className = 'sidebar' + (S.focus === 'sidebar' ? ' focused' : '');
+  const count = n => `<span class="count">${n}</span>`;
+  const openCount = repo => REPO_ISSUES.get(repo).filter(k => ISSUES.get(k).state === 'open').length;
+  const repoEntry = repo => { const [owner, name] = repo.split('/'); return `<div class="entry tall ${S.active === 'r:' + repo ? 'active' : ''}" data-act="entry" data-arg="r:${esc(repo)}">${I.repo}<span class="name2"><span class="n1">${esc(name)}</span><span class="n2">${esc(owner)}</span></span>${count(openCount(repo))}</div>`; };
+  const viewEntry = v => {
+    const run = RUNS.get(v.id), bad = run?.error && (run.error.kind === 'invalid' || run.error.kind === 'access');
+    const mod = S.variant === 'B' && !v.draft && S.drafts[v.id] != null && S.drafts[v.id] !== v.query;
+    const cnt = v.draft ? count('unsaved') : bad ? `<span class="warn" title="GitHub rejected this search">${I.alert}</span>`
+      : S.variant === 'B' ? '' : `<span class="count" title="${run?.data ? 'Matches in the last run' : 'Not run yet'}">${run?.data && !run.error ? fmtK(run.data.total) : '–'}</span>`;
+    const label = S.renaming === v.id ? '<span id="ren-slot"></span>'
+      : S.variant === 'C' ? `<span class="name2"><span class="n1">${esc(v.name)}</span><span class="n2 qline">${esc(v.query || 'no search yet')}</span></span>`
+      : `<span class="name">${esc(v.name)}</span>`;
+    return `<div class="entry ${S.variant === 'C' ? 'tall' : ''} ${S.active === v.id ? 'active' : ''} ${v.draft ? 'draft' : ''}" data-act="entry" data-arg="${esc(v.id)}" data-view="${esc(v.id)}" title="${esc(v.query)}">${I.view}${label}${mod ? '<span class="dotmod" title="Unsaved changes to the search"></span>' : ''}${cnt}</div>`;
+  };
+  const empty = S.views.length ? '' : `<div class="entry newview" data-act="newview">${I.plus}<span class="name">${S.variant === 'C' ? 'Start from an example…' : 'New view…'}</span></div>`;
+  sb.innerHTML = `<div class="brand"><span class="logo"></span>Verdandi<span class="sp"></span><button class="iconbtn" data-act="help" title="Help (?)">?</button></div><div class="sb-scroll">`
+    + `<div class="entry ${S.active === 'all' ? 'active' : ''}" data-act="entry" data-arg="all">${I.all}<span class="name">All</span>${count(S.tracked.reduce((s, r) => s + openCount(r), 0))}</div>`
+    + `<div class="sec"><span>Repositories</span><button class="iconbtn" disabled title="Settled in the app-shell prototype">${I.plus}</button></div>${S.tracked.map(repoEntry).join('')}`
+    + `<div class="sec"><span>Views</span><button class="iconbtn" data-act="newview" title="New view (v)">${I.plus}</button></div>${S.views.map(viewEntry).join('')}${empty}`
+    + `</div><div class="sb-foot"><kbd>Tab</kbd> sidebar ⇄ list · <kbd>v</kbd> new view · <kbd>E</kbd> edit view<br><kbd>r</kbd> refresh · right-click a view · <kbd>?</kbd> help</div>`;
+  if (S.renaming && $('ren-slot')) {
+    let inp = keep;
+    if (!inp) {
+      inp = el('<input class="ren" id="ren-in" spellcheck="false">');
+      inp.value = viewById(S.renaming).name;
+      inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); commitRename(false); } else if (e.key === 'Escape') { e.preventDefault(); commitRename(true); } e.stopPropagation(); };
+      inp.onblur = () => { if (!S.movingRen) setTimeout(() => { if (S.renaming && document.activeElement !== $('ren-in')) commitRename(false); }, 0); };
+    }
+    S.movingRen = true;
+    $('ren-slot').replaceWith(inp);
+    S.movingRen = false;
+    if (!keep || hadFocus) { inp.focus(); if (keep) inp.setSelectionRange(s0, s1); else inp.select(); }
+  }
+}
+function mainbarHTML(vid) {
+  const v = viewById(vid), run = RUNS.get(vid), d = run?.data;
+  let count = '';
+  if (d && !run.error) {
+    const loaded = d.matches.length;
+    count = run.phase === 'search' && !run.refreshing && loaded < Math.min(d.total, 1000) ? `${fmt(loaded)} of ${fmt(d.total)} matches loaded`
+      : loaded < d.total ? `${fmt(loaded)} of ${fmt(d.total)} matches shown` : `${fmt(d.total)} ${d.total === 1 ? 'match' : 'matches'}`;
+  }
+  let status = '';
+  if (run?.paused) status = `${I.pause}Paused`;
+  else if (run && run.phase !== 'done') status = `<span class="spin"></span>${run.refreshing ? 'Refreshing…' : run.phase === 'search' ? `Searching… page ${Math.min(run.page + 1, run.pages)} of ${run.pages}` : 'Loading parent issues and sub-issues…'}`;
+  else if (run?.at && !run.error && !run.stale) status = `Updated ${ago(run.at)}`;
+  const edit = S.variant === 'B' ? '' : `<button class="btn" data-act="edit">${I.pencil}Edit view <kbd>E</kbd></button>`;
+  const chip = S.variant === 'A' ? `<span class="qchip" data-act="edit" title="Edit view (E)">${esc(v.query)}</span>` : '';
+  return `<h2>${I.view}<span style="overflow:hidden;text-overflow:ellipsis">${esc(v.name)}</span>${v.draft ? '<span class="draft-tag">unsaved</span>' : ''}</h2>${chip}<span class="sub">${count}</span><span class="sp"></span><span class="status">${status}</span>${edit}<button class="iconbtn" data-act="refresh" title="Refresh (r)">${I.refresh}</button>`;
+}
+function stripsHTML(vid) {
+  const run = RUNS.get(vid);
+  if (!run) return '';
+  const d = run.data, out = [];
+  const strip = (cls, ic, main, rest = '') => `<div class="strip ${cls}">${ic}<span>${main}</span>${rest}</div>`;
+  if (run.paused) out.push(strip('', I.pause, `GitHub search limit reached · requests paused until ${hhmm(run.paused)}`, '<span class="hintx">· cached results stay browsable; loading resumes on its own</span>'));
+  if (run.stale) out.push(strip('', I.alert, `Showing data from ${hhmm(run.stale.since)} · ${run.stale.reason} ·`, '<button class="linkbtn" data-act="retry">Retry</button>'));
+  if (d && !run.error && (run.phase === 'done' || run.refreshing)) {
+    if (d.total > 1000) out.push(strip('info', I.info, `<b>${fmt(d.matches.length)} of ${fmt(d.total)} matches shown</b> · narrow the search`, `<span class="hintx">· ${d.sortExplicit ? `<code>sort:${esc(d.sort)}</code> in the search decides which 1,000` : 'without <code>sort:</code> in the search, GitHub returns the newest-created 1,000'}; context issues may match too</span>`));
+    if (d.incomplete) out.push(strip('', I.alert, 'GitHub did not return all matches ·', '<button class="linkbtn" data-act="retry">Retry</button><span class="hintx">· context issues may match too</span>'));
+    if (d.failed.size) out.push(strip('red', I.alert, `${plural(d.failed.size, 'parent issue')} could not be loaded ·`, '<button class="linkbtn" data-act="retryall">Retry</button>'));
+  }
+  return out.join('');
+}
+function bodyHTML(vid) {
+  const v = viewById(vid), run = RUNS.get(vid), editB = S.variant === 'B' ? 'Edit search' : 'Edit view';
+  const big = ic => ic.replace('class="ic"', 'class="ic big"');
+  const editBtn = `<button class="btn" data-act="edit">${I.pencil}${editB}</button>`;
+  if (!run) {
+    if (S.variant === 'B' && !draftOf(vid).trim()) return `<div class="bstate">${big(I.search)}<h3>Type a GitHub search above and press ↵</h3><p>The matches appear here. <b>Save</b> keeps the search in this view; examples drop down under the search field.</p></div>`;
+    return '';
+  }
+  if (run.error) {
+    const e = run.error;
+    if (e.kind === 'invalid') return `<div class="bstate">${big(I.alert)}<h3>GitHub rejected this search</h3><pre>${esc(e.message)}</pre><p>Nothing is retried until the search changes.</p><div class="acts">${editBtn}</div></div>`;
+    if (e.kind === 'access') return `<div class="bstate">${big(I.lock)}<h3>GitHub can't search a repository or user in this view</h3><pre>${esc(e.message)}</pre><p>Check the <code>repo:</code>, <code>org:</code> and <code>user:</code> qualifiers.</p><div class="acts">${editBtn}</div></div>`;
+    if (e.kind === 'server') return `<div class="bstate">${big(I.alert)}<h3>GitHub returned an error</h3><p>HTTP 500 with an empty body. GitHub answers very long searches this way, so the search may be too large.</p><div class="acts"><button class="btn" data-act="retry">${I.refresh}Retry</button>${editBtn}</div></div>`;
+    return `<div class="bstate">${big(I.alert)}<h3>Couldn't load this view</h3><p>Cannot reach GitHub.</p><div class="acts"><button class="btn" data-act="retry">${I.refresh}Retry</button></div></div>`;
+  }
+  const d = run.data;
+  if (!d) return `<div class="bstate"><span class="spin"></span><h3>${run.paused ? 'Waiting for GitHub’s search limit' : 'Searching GitHub…'}</h3></div>`;
+  if (!d.total && run.phase === 'done') return `<div class="bstate">${big(I.search)}<h3>No matching issues</h3><p>GitHub found nothing for <code>${esc(run.q)}</code>.</p><ul><li>GitHub silently ignores qualifiers it doesn't know: a typo such as <code>lable:bug</code> returns nothing, without an error.</li><li>Inside an <code>OR</code> group, repositories you can't read are dropped without notice.</li></ul><div class="acts">${editBtn}</div></div>`;
+  const { rows } = VROWS[S.variant](vid), ls = lstate(vid), si = selIndex(rows, ls), o = OPTS[S.variant];
+  let html = COLHEAD + rows.map((r, i) => rowHTML(r, i === si, o, d)).join('');
+  if (!run.refreshing && run.phase === 'search' && run.page < run.pages) html += `<div class="loadrow"><span class="spin"></span>Loading matches… page ${run.page + 1} of ${run.pages}</div>`;
+  if (!run.refreshing && run.phase === 'context') html += `<div class="loadrow"><span class="spin"></span>Loading parent issues and sub-issues; matches move under their parent issues</div>`;
+  return `<div class="alist">${html}</div>`;
+}
+function renderMain() {
+  const mn = $('mn');
+  mn.className = 'main' + (S.focus === 'main' ? ' focused' : '');
+  const key = S.edit ? 'editC:' + S.edit.token : S.pages.length ? 'page' : `list:${S.active}:${S.variant}`;
+  const rebuilt = mn.dataset.key !== key;
+  mn.dataset.key = key;
+  if (S.edit) return renderEditorC(mn, rebuilt);
+  if (S.pages.length) {
+    const top = S.pages.at(-1), prev = S.pages.at(-2), e = entryInfo(S.active);
+    mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="tolist" title="Back to the list">${I.back}${esc(e.kind === 'repo' ? e.repo : e.name)}${prev ? '' : '<kbd>Esc</kbd>'}</button>`
+      + (prev ? `<span class="sep">|</span><button class="btn ghost" data-act="pop" title="Back to the previous issue">‹ ${esc(prev.key)}<kbd>Esc</kbd></button>` : '')
+      + `<span class="sp"></span><button class="btn" data-act="gh" data-arg="${esc(top.key)}">${I.gh}Open on GitHub<kbd>o</kbd></button></div><div class="scroll" id="scr"></div>`;
+    const c = $('scr');
+    c.innerHTML = pageHTML(ISSUES.get(top.key), top);
+    c.scrollTop = top.scroll;
+    if (S.scrollLink) { c.querySelector('.lnk.cur')?.scrollIntoView({ block: 'nearest' }); S.scrollLink = false; }
+    c.onscroll = () => { top.scroll = c.scrollTop; };
+    return;
+  }
+  const view = isView(S.active), ls = lstate(S.active);
+  if (rebuilt) {
+    mn.innerHTML = `<div class="mainbar" id="mb"></div>${view && S.variant === 'B' ? `<div class="qbar"><div class="qwrap">${I.search}<input id="qb-in" spellcheck="false" autocomplete="off" placeholder="GitHub search, e.g. is:open assignee:@me"></div><span id="qb-state" class="qstate"></span><div id="qb-dd" class="qdd"></div></div>` : ''}<div id="bn"></div><div class="scroll" id="scr"></div>`;
+    if (view && S.variant === 'B') initQbar(S.active);
+  }
+  const c = $('scr');
+  if (view) {
+    $('mb').innerHTML = mainbarHTML(S.active);
+    $('bn').innerHTML = stripsHTML(S.active);
+    c.innerHTML = bodyHTML(S.active);
+    if (S.variant === 'B') updateQbar(S.active);
+  } else {
+    const e = entryInfo(S.active), M = plainRows(S.active), si = selIndex(M.rows, ls), o = { chips: M.all, home: M.home };
+    $('mb').innerHTML = `<h2>${e.kind === 'all' ? I.all : I.repo}${e.kind === 'repo' ? `<span><span class="owner">${esc(e.owner)}/</span>${esc(e.name)}</span>` : 'All'}</h2><span class="sub">tracked repository list, as decided</span><span class="sp"></span><button class="iconbtn" data-act="refresh" title="Refresh (r)">${I.refresh}</button>`;
+    $('bn').innerHTML = '';
+    c.innerHTML = `<div class="alist">${COLHEAD}${M.rows.map((r, i) => rowHTML(r, i === si, o)).join('')}${M.hidden ? `<div class="list-foot">${plural(M.hidden, 'closed issue')} with no open sub-issues ${M.hidden === 1 ? 'is' : 'are'} not listed</div>` : ''}</div>`;
+  }
+  c.scrollTop = ls.scroll;
+  if (S.scrollSel) { c.querySelector('.row-sel')?.scrollIntoView({ block: 'nearest' }); S.scrollSel = false; }
+  c.onscroll = () => { ls.scroll = c.scrollTop; };
+}
+function renderEditorC(mn, rebuilt) {
+  const E = S.edit, v = E.vid && viewById(E.vid), backName = v ? v.name : (isView(E.back) ? viewById(E.back).name : entryInfo(E.back).kind === 'repo' ? entryInfo(E.back).repo : 'All');
+  if (rebuilt) {
+    mn.innerHTML = `<div class="mainbar"><button class="btn ghost" data-act="edc-cancel" title="Cancel">${I.back}${esc(backName)}<kbd>Esc</kbd></button><span class="sep">|</span><h2>${I.view}${v ? 'Edit view' : 'New view'}</h2><span class="sp"></span><button class="btn" data-act="edc-cancel">Cancel</button><button class="btn primary" data-act="edc-save">Save <kbd>⌘↵</kbd></button></div>
+      <div class="scroll"><div class="edc">
+        <label class="fl" for="edc-name">Name</label><input id="edc-name" class="tin" placeholder="Open bugs" spellcheck="false">
+        <label class="fl" for="edc-q">GitHub search</label><div class="qrow"><input id="edc-q" class="tin mono" placeholder="is:open label:bug" spellcheck="false" autocomplete="off"><button class="btn" data-act="edc-preview">Preview <kbd>↵</kbd></button></div>
+        <div id="edc-scope"></div><div id="edc-err"></div>
+        ${v ? '' : `<div class="exh">Start from an example <span class="muted">fills both fields and previews it</span></div><div class="gal">${EXAMPLES.map((e, i) => `<button class="card" data-act="exC" data-arg="${i}"><b>${esc(e.name)}</b><code>${esc(e.q)}</code><span>${esc(e.d)}</span></button>`).join('')}</div>`}
+        <div class="exh">Preview</div><div id="edc-prev"></div>
+        ${v ? `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer">Examples</summary><div class="gal" style="margin-top:8px">${EXAMPLES.map((e, i) => `<button class="card" data-act="exC" data-arg="${i}"><b>${esc(e.name)}</b><code>${esc(e.q)}</code><span>${esc(e.d)}</span></button>`).join('')}</div></details>` : ''}
+        <div class="edc-foot" id="edc-foot"></div>
+      </div></div>`;
+    const n = $('edc-name'), q = $('edc-q');
+    n.value = E.name; q.value = E.query;
+    n.oninput = () => { E.name = n.value; E.err = null; renderMain(); };
+    q.oninput = () => { E.query = q.value; E.err = null; renderMain(); };
+    const keys = e => {
+      if (e.key === 'Escape') { e.preventDefault(); cancelC(); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveC(); }
+      else if (e.key === 'Enter' && e.target === q) { e.preventDefault(); previewC(); }
+      else if (e.key === 'Enter') { e.preventDefault(); q.focus(); }
+    };
+    n.onkeydown = keys; q.onkeydown = keys;
+  }
+  const sc = scopeInfo(E.query);
+  $('edc-scope').innerHTML = `<div class="scope ${sc.cls}">${I.info}<span>${sc.html}</span></div>`;
+  $('edc-err').innerHTML = E.err ? `<div class="ederr">${esc(E.err)}</div>` : '';
+  $('edc-prev').innerHTML = previewHTML();
+  $('edc-foot').innerHTML = !v ? '<span class="muted">Nothing is saved until you press Save.</span>'
+    : E.confirm ? `<span>Remove “${esc(v.name)}”? This can't be undone.</span><button class="btn" data-act="edc-keep">Keep</button><button class="btn danger solid" data-act="edc-yes">Remove</button>`
+    : `<button class="btn danger" data-act="edc-remove">Remove view…</button>`;
+}
+function render() {
+  $('app').className = 'v' + S.variant;
+  renderSidebar(); renderMain(); renderState(); renderSim(); updateEditorA();
+  $('sw-lbl').textContent = `${S.variant} · ${VARIANTS[S.variant].name}`;
+}
+function renderState() {
+  const box = $('statebox');
+  if (box.style.display !== 'block') return;
+  const run = isView(S.active) ? RUNS.get(S.active) : null, d = run?.data, k = selectedKey();
+  box.textContent = JSON.stringify({
+    variant: `${S.variant} (${VARIANTS[S.variant].name})`, focus: S.focus, active: S.active, issuePages: S.pages.map(p => p.key),
+    '// the user data file, as it would be stored': '',
+    settings: { trackedRepositories: S.tracked, views: S.views.filter(v => !v.draft).map(({ id, name, query }) => ({ id, name, query })) },
+    ...(Object.keys(S.drafts).length ? { '// B: unsaved search edits, in memory only': '', unsavedSearches: S.drafts } : {}),
+    '// the current view\'s latest search run': '',
+    run: run ? { query: run.q, phase: run.phase, refreshing: run.refreshing, searchPages: `${run.page}/${run.pages}`, totalMatches: d?.total, loadedMatches: d?.matches.length, complete: d?.complete, incompleteResults: d?.incomplete, error: run.error?.kind ?? null, stale: !!run.stale, pausedUntil: run.paused ? hhmm(run.paused) : null } : null,
+    searchLimit: `${SIM.pool}/30 left, resets ${hhmm(SIM.resetAt || Date.now())}`,
+    selectedIssue: k ? { issue: k, state: ISSUES.get(k).state, repository: isTracked(ISSUES.get(k).repo) ? 'tracked' : 'not tracked (external)', inThisView: d ? (d.set.has(k) ? 'match' : d.complete ? 'context issue: confirmed nonmatch' : 'context issue: match status unknown') : null } : null,
+  }, null, 2);
+}
+function renderSim() {
+  if ($('net').contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
+  $('net-fold').textContent = SIM.folded ? '▸' : '▾';
+  const ctl = $('net-ctl');
+  ctl.style.display = SIM.folded ? 'none' : '';
+  $('net-log').style.display = SIM.folded ? 'none' : '';
+  if (SIM.folded) return;
+  const k = selectedKey();
+  const TRK = [...TRACKED0, 'vendor/sdk', 'oss-org/parser'];
+  ctl.innerHTML = `<div class="row"><span class="lab">Speed</span>${['instant', 'normal', 'slow'].map(s => `<button class="${SIM.speed === s ? 'on' : ''}" data-act="sim-speed" data-arg="${s}">${s}</button>`).join('')}</div>`
+    + `<div class="row"><span class="lab">Search</span><select id="sim-scen">${SCEN.map(([v, t]) => `<option value="${v}" ${SIM.scenario === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>`
+    + `<div class="row"><label><input type="checkbox" id="sim-fp" ${SIM.failParent ? 'checked' : ''}>a parent issue fails to load</label></div>`
+    + `<div class="row"><button data-act="sim-nomatch" ${k ? '' : 'disabled'}>${k && SIM.nomatch.has(k) ? 'Selected issue matches again' : 'Selected issue stops matching'}</button></div>`
+    + `<div class="row"><button data-act="sim-limit">Use up search limit</button><button data-act="sim-age">Age data 6 min</button></div>`
+    + `<div class="row"><button data-act="sim-first">First run</button><button data-act="sim-reset">Reset</button><span class="lab">limit ${SIM.pool}/30</span></div>`
+    + `<div class="row"><span class="lab">Tracked repositories (views ignore them)</span></div><div class="trk">${TRK.map(r => `<label title="${r}"><input type="checkbox" data-trk="${r}" ${S.tracked.includes(r) ? 'checked' : ''}>${r}</label>`).join('')}</div>`;
+  renderSimLog();
+}
+function renderSimLog() { const n = $('net-log'); if (n && !SIM.folded) n.textContent = SIM.log.join('\n') || 'requests appear here'; }
+let toastTimer;
+function toast(msg, ms = 2800) { const t = $('toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, ms); }
+
+// ---------- variants ----------
+const COMMON = [
+  ['Root order', 'By the search rank of the first match in each tree: GitHub\'s order, newest-created first unless the search has sort:.'],
+  ['Initial expansion', 'Paths to matches start expanded. A match without a matching sub-issue starts collapsed; expanding it shows its sub-issues as context. A collapsed row with matches below says how many.'],
+  ['No duplicates', 'An issue appears once: a matching sub-issue of a match sits under it.'],
+  ['Loading', 'Matches appear page by page in search order, then move under their parent issues once those load.'],
+  ['Scope', 'Only the search text decides what a view covers; tracked repositories never narrow it. Issues from repositories you do not track get an outlined repository chip.'],
+  ['States', 'Header, strips and body states from "Decide refresh, partial loading and rate-limit recovery": N of M shown, incomplete results, invalid search, empty, stale, paused, failed. GitHub\'s messages here are simulated.'],
+];
+const VARIANTS = {
+  A: {
+    name: 'Dialog',
+    blurb: 'A · Dialog: create and edit in a dialog that checks the search with GitHub on Save · every ancestor with all its sub-issues · context dimmed; closed matches not dimmed in a view',
+    stances: [
+      ['Create and edit', 'A dialog: name, GitHub search, a line saying what the search covers, and examples. Save runs the search once. If GitHub rejects it, the dialog stays open with GitHub\'s message; if GitHub can\'t be reached, it offers Save anyway. The view opens with the results Save fetched.'],
+      ['Remove', 'From the dialog, the right-click menu, or ⌫ on the sidebar entry; always confirmed.'],
+      ['Starter views', 'None. With no views, the Views section shows a "New view…" entry.'],
+      ['Sidebar entry', 'Name and the last run\'s match count ("–" before the view has run).'],
+      ['Header', 'The search text next to the name; clicking it edits the view.'],
+      ['Tree', 'Every match under its whole ancestry. An ancestor on the way to a match starts expanded and shows all its sub-issues in GitHub\'s order; the ones that don\'t match are context.'],
+      ['Match vs context', 'Context issues are dimmed as a whole row. Closed matches are not dimmed in a view, so dimming means only "context" here.'],
+      ['Unknown status', 'Dimmed, with a "?" after the number.'],
+    ],
+  },
+  B: {
+    name: 'Query bar',
+    blurb: 'B · Query bar: the search is an editable bar above the tree; inline rename; Undo instead of confirm · only paths to matches, the rest folded · a dot marks each match',
+    stances: [
+      ['Create and edit', 'The search is an editable bar above the tree; / jumps to it and ↵ runs it right there. An edited search is marked Modified until Save (⌘S) or Revert. Examples drop down under the bar. A new view starts as "New view" in inline rename and exists once first saved.'],
+      ['Rename', 'Inline in the sidebar: F2, double-click, or the right-click menu.'],
+      ['Remove', 'Immediately, from the right-click menu or ⌫ on the sidebar entry, with Undo (z) for eight seconds.'],
+      ['Starter views', 'Three, written when the settings file is first created: Assigned to me, Created by me, Mentioning me. Ordinary views otherwise. (Simulated GitHub → First run.)'],
+      ['Sidebar entry', 'Name only; a dot marks unsaved edits. No count.'],
+      ['Tree', 'Ancestors only along the paths to matches; their other sub-issues fold into one "N other sub-issues" row, which → or ↵ unfolds in GitHub\'s order.'],
+      ['Match vs context', 'A blue dot before the state icon marks a match; context issues are dimmed and unmarked. Closed issues keep the list\'s closed dimming; a closed match keeps its dot.'],
+      ['Unknown status', 'A dashed ring instead of the dot.'],
+    ],
+  },
+  C: {
+    name: 'Editor page',
+    blurb: 'C · Editor page: create and edit on a page with preview and example gallery · matches grouped under one path header per parent issue · context faint and italic',
+    stances: [
+      ['Create and edit', 'An editor page replaces the list (Esc cancels): name, GitHub search, a preview of the first 20 matches (↵ in the search field, or Preview), and a gallery of examples. Clicking an example fills both fields and previews it.'],
+      ['Remove', 'From the editor page, the right-click menu, or ⌫ on the sidebar entry; confirmed.'],
+      ['Starter views', 'None. With no views, the Views section offers "Start from an example…", which opens the gallery.'],
+      ['Sidebar entry', 'Name, the search text under it, and the last run\'s match count.'],
+      ['Tree', 'Matches are the rows. Matches under the same parent issue share one dimmed path header naming their ancestors; → on it shows the parent\'s other sub-issues. Below a match, context issues are ordinary rows.'],
+      ['Match vs context', 'Context rows are faint and italic, without labels or count columns. Closed issues keep the list\'s closed dimming.'],
+      ['Unknown status', 'A "match?" tag.'],
+    ],
+  },
+};
+const KEYS = Object.keys(VARIANTS);
+function setVariant(v) {
+  closeHelp(false); closeMenu();
+  if (S.editor) closeEditorA();
+  if (S.edit) { const r = RUNS.get(prevKey()); if (r) r.cancelled = true; RUNS.delete(prevKey()); S.edit = null; }
+  if (S.renaming) { S.renaming = null; }
+  S.variant = v;
+  const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
+  S.scrollSel = true; render(); toast(VARIANTS[v].blurb, 6000);
+}
+const cycle = d => setVariant(KEYS[(KEYS.indexOf(S.variant) + d + KEYS.length) % KEYS.length]);
+function openHelp() {
+  closeHelp(false);
+  S.modal = 'help';
+  const rows = (h, rs, bold) => `<div class="h-sec">${h}</div>` + rs.map(([k, d]) => `<div class="h-k">${bold ? `<b>${esc(k)}</b>` : `<kbd>${esc(k)}</kbd>`}</div><div>${esc(d)}</div>`).join('');
+  const keys = [
+    ['v', 'New view'], ['E', 'Edit the current view' + (S.variant === 'B' ? ' (focuses the search bar)' : '')], ...(S.variant === 'B' ? [['/', 'Edit the search'], ['⌘S', 'Save the search']] : []),
+    ['⌫', 'In the sidebar: remove the focused view'], ['F2', S.variant === 'B' ? 'In the sidebar: rename' : 'In the sidebar: edit'], ['r', 'Refresh'],
+    ['Tab', 'Move focus between the sidebar and the list'], ['j k / ↑ ↓', 'Move; in the sidebar this switches lists'], ['← →', 'Collapse / expand; ← on a sub-issue jumps to its parent issue'],
+    ['e', 'Expand or collapse every tree'], ['↵', 'Open the issue page (on a fold row: unfold)'], ['Esc ⌫ [', 'Back one step'], ['o', 'Open the issue on GitHub'],
+  ];
+  const proto = [['⇧← ⇧→', 'Switch variant'], ['`', 'Show / hide the state panel'], ['?', 'This help']];
+  const bg = el(`<div class="modal-bg"><div class="modal help"><div class="m-head"><b>Variant ${S.variant}: ${esc(VARIANTS[S.variant].name)}</b><span class="sp"></span><kbd>Esc</kbd></div><div class="help-body">${rows('What this variant decides', VARIANTS[S.variant].stances, true)}${rows('Common to all three, also up for review', COMMON, true)}${rows('Keys', keys)}${rows('Prototype only', proto)}</div></div></div>`);
+  bg.id = 'help'; bg.onmousedown = e => { if (e.target === bg) closeHelp(); };
+  document.body.append(bg);
+}
+function closeHelp(rerender = true) { $('help')?.remove(); if (S.modal === 'help') S.modal = null; if (rerender) render(); }
+function toggleState() { const b = $('statebox'); b.style.display = b.style.display === 'block' ? 'none' : 'block'; renderState(); }
+
+// ---------- actions ----------
+function activate(id) {
+  closeMenu();
+  const prev = S.active;
+  if (S.edit && id !== S.edit.vid) { const r = RUNS.get(prevKey()); if (r) r.cancelled = true; RUNS.delete(prevKey()); S.edit = null; }
+  if (S.variant === 'B') discardEmptyDraft(prev, id);
+  S.active = id; S.pages = [];
+  if (isView(id)) ensureRun(id);
+  render();
+}
+function openIssue(k) { S.pages.push({ key: k, link: -1, scroll: 0 }); S.focus = 'main'; render(); }
+function popPage() { S.pages.pop(); render(); }
+function toList() { S.pages = []; render(); }
+function gh(k) { if (!k) return; const it = ISSUES.get(k); toast(`Would open https://github.com/${it.repo}/issues/${it.number} in the browser`); }
+function toggleRow(id) {
+  const ls = lstate(S.active);
+  if (id.startsWith('more:')) ls.unfolded.add(id.slice(5));
+  else ls.expanded.has(id) ? ls.expanded.delete(id) : ls.expanded.add(id);
+  render();
+}
+function refresh() {
+  if (S.pages.length) { toast('Refreshed the issue page'); return; }
+  if (isView(S.active)) { const run = RUNS.get(S.active), q = run?.q ?? viewById(S.active).query; if (q) startRun(S.active, q); }
+  else toast('Refreshed (repository lists are not this prototype’s question)');
+}
+function moveSel(d) {
+  const rows = curRows(), ls = lstate(S.active), idxs = rows.map((r, i) => r.id ? i : -1).filter(i => i >= 0);
+  if (!idxs.length) return;
+  const p = idxs.indexOf(selIndex(rows, ls));
+  ls.sel = rows[idxs[Math.max(0, Math.min(idxs.length - 1, p + d))]].id; S.scrollSel = true; render();
+}
+function goRight() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows, ls), r = rows[i];
+  if (!r) return;
+  if (r.kind === 'fold') { ls.unfolded.add(r.k); render(); return; }
+  if (r.kids && !r.exp) ls.expanded.add(r.id);
+  else if (rows[i + 1] && rows[i + 1].d > r.d) { ls.sel = rows[i + 1].id; S.scrollSel = true; }
+  render();
+}
+function goLeft() {
+  const rows = curRows(), ls = lstate(S.active), i = selIndex(rows, ls), r = rows[i];
+  if (!r) return;
+  if (r.exp && r.kids) ls.expanded.delete(r.id);
+  else if (r.d > 0) for (let j = i - 1; j >= 0; j--) if (rows[j].id && rows[j].d === r.d - 1) { ls.sel = rows[j].id; S.scrollSel = true; break; }
+  render();
+}
+function enterRow(rid) {
+  const rows = curRows(), ls = lstate(S.active);
+  if (rid) ls.sel = rid;
+  const r = rows[selIndex(rows, ls)];
+  if (!r) return;
+  if (r.kind === 'fold') { ls.unfolded.add(r.k); render(); }
+  else if (r.kind === 'unavail' || (r.kind === 'path' && r.cut && !r.k)) { if (r.cut.kind === 'failed') retryParent(S.active, r.cut.k); else toast('The parent issue is not visible to you'); }
+  else if (r.kind === 'path') openIssue(r.k);
+  else openIssue(r.k);
+}
+function toggleAll() {
+  const ls = lstate(S.active), rows = curRows();
+  if (rows.some(r => r.kids && !r.exp)) {
+    const add = k => { const it = ISSUES.get(k); if (visSubs(it).length) { ls.expanded.add(k); visSubs(it).forEach(add); } };
+    rows.forEach(r => { if (r.kind === 'issue' && r.d === 0) add(r.k); else if (r.kind === 'path' && r.kids) ls.expanded.add(r.id); else if (r.kind === 'issue') add(r.k); });
+  } else { ls.expanded.clear(); ls.unfolded.clear(); }
+  S.scrollSel = true; render();
+}
+
+// ---------- events ----------
+const isDown = e => e.key === 'ArrowDown' || e.key === 'j';
+const isUp = e => e.key === 'ArrowUp' || e.key === 'k';
+function keyMain(e) {
+  if (S.focus === 'sidebar') {
+    const ord = sbOrder();
+    if (isDown(e) || isUp(e)) { activate(ord[Math.max(0, Math.min(ord.length - 1, ord.indexOf(S.active) + (isDown(e) ? 1 : -1)))]); return true; }
+    if (e.key === 'Enter' || e.key === 'ArrowRight' || e.key === 'l' || e.key === 'Escape') { S.focus = 'main'; render(); return true; }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && isView(S.active)) { askRemove(S.active); return true; }
+    if (e.key === 'F2' && isView(S.active)) { S.variant === 'B' ? startRename(S.active) : editView(S.active); return true; }
+    return false;
+  }
+  if (S.pages.length) {
+    const top = S.pages.at(-1), links = pageLinks(ISSUES.get(top.key));
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === '[') { popPage(); return true; }
+    if (isDown(e) && links.length) { top.link = Math.min(links.length - 1, top.link + 1); S.scrollLink = true; render(); return true; }
+    if (isUp(e) && links.length) { top.link = Math.max(0, top.link - 1); S.scrollLink = true; render(); return true; }
+    if (e.key === 'Enter' && top.link >= 0) { openIssue(links[top.link]); return true; }
+    if (e.key === 'o') { gh(top.key); return true; }
+    return false;
+  }
+  if (isDown(e)) { moveSel(1); return true; }
+  if (isUp(e)) { moveSel(-1); return true; }
+  if (e.key === 'ArrowRight' || e.key === 'l') { goRight(); return true; }
+  if (e.key === 'ArrowLeft' || e.key === 'h') { goLeft(); return true; }
+  if (e.key === 'Enter') { enterRow(); return true; }
+  if (e.key === 'e') { toggleAll(); return true; }
+  if (e.key === 'o') { gh(selectedKey()); return true; }
+  return false;
+}
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (S.menu && e.key === 'Escape') { closeMenu(); e.preventDefault(); return; }
+  if (e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { cycle(e.key === 'ArrowRight' ? 1 : -1); e.preventDefault(); return; }
+  if (S.modal === 'help') { if (e.key === 'Escape' || e.key === '?') { closeHelp(); e.preventDefault(); } return; }
+  if (S.modal === 'confirm') { if (e.key === 'Enter') doConfirm(); else if (e.key === 'Escape') closeConfirm(); e.preventDefault(); return; }
+  if (S.modal === 'editA') { if (e.key === 'Escape') { closeEditorA(); e.preventDefault(); } return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && S.edit) { saveC(); e.preventDefault(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '?') { openHelp(); e.preventDefault(); return; }
+  if (e.key === '`') { toggleState(); e.preventDefault(); return; }
+  if (e.key === 'Tab') { S.focus = S.focus === 'main' ? 'sidebar' : 'main'; render(); e.preventDefault(); return; }
+  if (e.key === 'z' && S.undo) { doUndo(); e.preventDefault(); return; }
+  if (S.edit) { if (e.key === 'Escape') { cancelC(); e.preventDefault(); } return; }
+  if (e.key === 'v') { newView(); e.preventDefault(); return; }
+  if (e.key === 'E' && isView(S.active)) { editView(S.active); e.preventDefault(); return; }
+  if (e.key === '/' && S.variant === 'B' && isView(S.active) && !S.pages.length) { focusQbar(); e.preventDefault(); return; }
+  if (e.key === 'r') { refresh(); e.preventDefault(); return; }
+  if (keyMain(e)) e.preventDefault();
+});
+// clicked buttons must not keep focus, or Enter would both press them and act on the list
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('#menu')) closeMenu();
+  if (e.target.closest('button') || e.target.closest('.ddi')) e.preventDefault();
+});
+let lastClick = { id: null, t: 0 };
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  if (!t) return;
+  const arg = t.dataset.arg;
+  switch (t.dataset.act) {
+    case 'entry': {
+      const dbl = lastClick.id === arg && Date.now() - lastClick.t < 400;
+      lastClick = { id: arg, t: Date.now() };
+      if (S.renaming && S.renaming !== arg) commitRename(false);
+      if (dbl && isView(arg)) { S.variant === 'B' ? startRename(arg) : editView(arg); break; }
+      S.focus = 'sidebar'; if (S.active !== arg || S.pages.length || S.edit) activate(arg); else render();
+      break;
+    }
+    case 'newview': newView(); break;
+    case 'row': S.focus = 'main'; if (e.target.closest('[data-act="retryparent"]')) break; enterRow(arg); break;
+    case 'toggle': e.stopPropagation(); toggleRow(arg); break;
+    case 'open': openIssue(arg); break;
+    case 'gh': gh(arg); break;
+    case 'tolist': toList(); break;
+    case 'pop': popPage(); break;
+    case 'help': openHelp(); break;
+    case 'edit': editView(S.active); break;
+    case 'refresh': refresh(); break;
+    case 'retry': { const run = RUNS.get(S.active); if (run) startRun(S.active, run.q); break; }
+    case 'retryparent': retryParent(S.active, arg); break;
+    case 'retryall': RUNS.get(S.active)?.data?.failed.forEach(pk => retryParent(S.active, pk)); break;
+    case 'exA': { const x = EXAMPLES[+arg], E = S.editor; E.query = x.q; $('edA-q').value = x.q; if (!E.name.trim() || E.name === E.exName) { E.name = x.name; E.exName = x.name; $('edA-name').value = x.name; } E.err = null; updateEditorA(); $('edA-q').focus(); break; }
+    case 'ed-save': saveA(); break;
+    case 'ed-force': saveA(true); break;
+    case 'ed-cancel': closeEditorA(); break;
+    case 'ed-remove': S.editor.confirm = true; updateEditorA(); break;
+    case 'ed-keep': S.editor.confirm = false; updateEditorA(); break;
+    case 'ed-yes': { const vid = S.editor.vid; closeEditorA(); removeView(vid, false); break; }
+    case 'qb-save': saveB(S.active); break;
+    case 'qb-revert': revertB(S.active); break;
+    case 'ddB': useExampleB(S.active, +arg); break;
+    case 'cf-yes': doConfirm(); break;
+    case 'cf-no': closeConfirm(); break;
+    case 'mi-edit': closeMenu(); if (S.variant === 'B') { activate(arg); focusQbar(); } else editView(arg); break;
+    case 'mi-rename': closeMenu(); startRename(arg); break;
+    case 'mi-remove': closeMenu(); askRemove(arg); break;
+    case 'undo': doUndo(); break;
+    case 'edc-save': saveC(); break;
+    case 'edc-cancel': cancelC(); break;
+    case 'edc-preview': previewC(); break;
+    case 'exC': useExampleC(+arg); break;
+    case 'edc-remove': S.edit.confirm = true; renderMain(); break;
+    case 'edc-keep': S.edit.confirm = false; renderMain(); break;
+    case 'edc-yes': { const vid = S.edit.vid; S.edit = null; removeView(vid, false); break; }
+    case 'sim-fold': SIM.folded = !SIM.folded; renderSim(); break;
+    case 'sim-speed': SIM.speed = arg; renderSim(); break;
+    case 'sim-nomatch': { const k = selectedKey(); if (!k) break; SIM.nomatch.has(k) ? SIM.nomatch.delete(k) : SIM.nomatch.add(k); log(`${k} ${SIM.nomatch.has(k) ? 'stopped matching' : 'matches again'}`); toast('Changed on GitHub. The view updates on the next refresh (r)'); renderSim(); break; }
+    case 'sim-limit': refill(); SIM.pool = 0; log('search limit used up'); toast(`Search limit used up; it resets at ${hhmm(SIM.resetAt)}. Refresh a view to see the pause.`); renderSim(); break;
+    case 'sim-age': RUNS.forEach(r => { if (r.at) r.at -= 6 * 60000; }); toast('All data is now 6+ minutes old: opening a view or focusing the window revalidates it'); render(); break;
+    case 'sim-first': {
+      RUNS.forEach(r => { r.cancelled = true; }); RUNS.clear(); S.lists = {}; S.drafts = {}; S.pages = []; S.edit = null;
+      S.views = S.variant === 'B' ? STARTERS.map((s, i) => ({ id: 's' + (i + 1), ...s })) : [];
+      toast(S.variant === 'B' ? 'Fresh settings file: three starter views were written' : 'Fresh settings file: no views yet');
+      activate(S.views[0]?.id ?? 'all');
+      break;
+    }
+    case 'sim-reset': location.reload(); break;
+  }
+});
+document.addEventListener('contextmenu', e => {
+  const t = e.target.closest('[data-view]');
+  if (!t) return;
+  e.preventDefault();
+  if (S.active !== t.dataset.view) activate(t.dataset.view);
+  openMenu(t.dataset.view, e.clientX, e.clientY);
+});
+$('net').addEventListener('change', e => {
+  if (e.target.id === 'sim-scen') { SIM.scenario = e.target.value; e.target.blur(); toast(SIM.scenario === 'normal' ? 'GitHub answers normally again' : `The next searches: ${SCEN.find(s => s[0] === SIM.scenario)[1]}. Refresh (r) to run one.`); renderSim(); }
+  else if (e.target.id === 'sim-fp') { SIM.failParent = e.target.checked; toast(SIM.failParent ? 'The next run cannot load one parent issue. Refresh (r).' : 'Parent issues load again'); }
+  else if (e.target.dataset.trk) {
+    const r = e.target.dataset.trk;
+    S.tracked = e.target.checked ? [...S.tracked, r] : S.tracked.filter(x => x !== r);
+    toast(`${e.target.checked ? 'Tracking' : 'No longer tracking'} ${r}. Views keep their searches and results; only the repository chips change.`, 4000);
+    if (S.active === 'r:' + r) activate('all'); else render();
+  }
+});
+window.addEventListener('focus', () => { if (isView(S.active) && !S.pages.length && !S.edit) ensureRun(S.active); });
+setInterval(() => { refill(); renderSim(); if (isView(S.active) && !S.pages.length && !S.edit && !S.qbFocus) { const mb = $('mb'); if (mb) mb.innerHTML = mainbarHTML(S.active); } }, 15000);
+$('sw-prev').onclick = () => cycle(-1);
+$('sw-next').onclick = () => cycle(1);
+$('sw-help').onclick = openHelp;
+$('sw-state').onclick = toggleState;
+
+const params = new URL(location.href).searchParams;
+S.variant = KEYS.includes(params.get('variant')) ? params.get('variant') : 'A';
+if (SPEED[params.get('speed')] !== undefined) SIM.speed = params.get('speed');
+const startView = params.get('view');
+activate(startView && sbOrder().includes(startView) ? startView : 'v1');
+toast(VARIANTS[S.variant].blurb, 6000);
+</script>
+</body>
+</html>
