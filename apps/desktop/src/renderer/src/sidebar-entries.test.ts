@@ -1,6 +1,6 @@
 import type { RepositoryEntry } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
-import { countLabel, entryOrder } from "./sidebar-entries";
+import { countLabel, entryOrder, matchCountLabel } from "./sidebar-entries";
 
 function entry(owner: string, name: string): RepositoryEntry {
   return {
@@ -80,5 +80,40 @@ describe("count label", () => {
     expect(
       countLabel({ status: "failed", message: "Cannot reach GitHub" }),
     ).toBe("–");
+  });
+});
+
+describe("views", () => {
+  it("follow the Repositories section in the settings file's order, each with its last match count", () => {
+    const bugs = { id: "bugs", name: "Bugs", query: "label:bug" };
+    const mine = { id: "mine", name: "Mine", query: "assignee:@me" };
+    expect(
+      entryOrder({
+        status: "read",
+        views: [
+          { view: bugs, matches: { status: "known", count: 4213 } },
+          { view: mine, matches: { status: "unknown" } },
+        ],
+        settings: { status: "writable" },
+        firstLaunch: false,
+        all: { openIssues: { status: "known", count: 1 } },
+        repositories: [entry("acme", "api")],
+      }).slice(2),
+    ).toEqual([
+      {
+        scope: { kind: "view", view: bugs },
+        matches: { status: "known", count: 4213 },
+      },
+      { scope: { kind: "view", view: mine }, matches: { status: "unknown" } },
+    ]);
+  });
+
+  it("show GitHub's total abbreviated, and – until the view has run", () => {
+    expect(
+      [0, 7, 999, 1000, 4213, 42_130, 1_234_567].map((count) =>
+        matchCountLabel({ status: "known", count }),
+      ),
+    ).toEqual(["0", "7", "999", "1k", "4.2k", "42.1k", "1.2M"]);
+    expect(matchCountLabel({ status: "unknown" })).toBe("–");
   });
 });

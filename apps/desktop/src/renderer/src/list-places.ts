@@ -1,5 +1,4 @@
-import type { Scope } from "@verdandi/core/contract";
-import { scopeLabel } from "./scope";
+import { scopeLabel, type SidebarScope as Scope } from "./scope";
 
 /** Where the user is in a list: its selection and scroll position. */
 export interface ListPlace {

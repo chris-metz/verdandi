@@ -24,6 +24,7 @@ export function problemOf(error: RequestError): Problem {
     case "rate-limited":
     case "server-error":
     case "http":
+    case "invalid-search":
     case "graphql":
     case "unexpected-response":
       return { kind: "error", message: describeGitHubError(error) };

@@ -22,6 +22,7 @@ import {
   type RateLimitBudget,
   type RepositoryAccess,
   type RepositorySummary,
+  type SearchPage,
   type SuggestionPage,
 } from "../github/port.ts";
 
@@ -73,6 +74,16 @@ export interface FakeRepositoryOptions {
    */
   issuesDenied?: boolean;
 }
+
+/** What GitHub's issue search answers to one search text, as a test declares it. */
+export type FakeSearch =
+  | {
+      matches: string[];
+      total?: number;
+      incomplete?: boolean;
+      pullRequests?: number;
+    }
+  | { rejected: string };
 
 /** A synthetic comment as a test declares it. */
 export interface FakeComment {
@@ -140,6 +151,15 @@ export interface FakeGitHub extends GitHubAccess {
    * its issues.
    */
   addPullRequest(nameWithOwner: string, number: number): void;
+  /**
+   * What GitHub's issue search answers to this exact search text from now
+   * on: its matches in order, as `owner/name#number` of declared issues, up
+   * to 100 a page, with GitHub's total (their number unless said otherwise)
+   * and whether it reports the results incomplete, and how many pull
+   * requests each page also matches; or its rejection (HTTP 422) with
+   * GitHub's message. Any other search matches nothing.
+   */
+  setSearch(query: string, answer: FakeSearch): void;
   /** Every read fails with this error from now on, or succeeds again. */
   failWith(error: GitHubError | undefined): void;
   /** The next reads fail with this error, then reads succeed again. */
@@ -174,7 +194,7 @@ export interface FakeGitHub extends GitHubAccess {
    * issue's body and its second comment's), `fetchRepositorySummaries
    * acme/api acme/web`, `fetchRepositoryAccess acme/api` or
    * `fetchRepositorySuggestions after 100` (the first page's without a
-   * cursor).
+   * cursor), or `searchIssues page 1 is:open label:bug`.
    */
   readonly received: readonly string[];
   /**
@@ -247,6 +267,8 @@ export function createFakeGitHub({
   /** The addresses GitHub follows to where a repository is now. */
   const redirects = new Map<string, string>();
   let organizations: string[] = [];
+  /** What the issue search answers, by search text. */
+  const searches = new Map<string, FakeSearch>();
 
   /** Where a repository is now, following renames and transfers. */
   function resolve(nameWithOwner: string): string {
@@ -340,7 +362,11 @@ export function createFakeGitHub({
         answered = {
           ...result,
           budget: { pool, ...budget },
-          viewerLogin: namesViewer(result) ? viewer : undefined,
+          // REST answers, such as a search's, never name the account.
+          viewerLogin:
+            method !== "searchIssues" && namesViewer(result)
+              ? viewer
+              : undefined,
         };
       }
     }
@@ -963,6 +989,64 @@ export function createFakeGitHub({
         return { ok: true, value: names.map(accessOf) };
       });
     },
+    setSearch(query, searchAnswer) {
+      searches.set(query, searchAnswer);
+    },
+    searchIssues(query, page) {
+      return answer(
+        "searchIssues",
+        `page ${String(page)} ${query}`,
+        (): GitHubResult<SearchPage> => {
+          const searched = searches.get(query) ?? { matches: [] };
+          if ("rejected" in searched) {
+            return {
+              ok: false,
+              error: { kind: "invalid-search", message: searched.rejected },
+            };
+          }
+          const shown = searched.matches.slice((page - 1) * 100, page * 100);
+          return {
+            ok: true,
+            value: {
+              total: searched.total ?? searched.matches.length,
+              incomplete: searched.incomplete ?? false,
+              pullRequests: searched.pullRequests ?? 0,
+              issues: shown.flatMap((ref) => {
+                const issue = find(ref);
+                if (!issue || hiding(ref)) return [];
+                // A search answers without the issues each match relates to.
+                const {
+                  id,
+                  repository,
+                  number,
+                  title,
+                  state,
+                  url,
+                  updatedAt,
+                  labels,
+                  subIssuesSummary,
+                  issueDependenciesSummary,
+                } = read(ref.split("#")[0] ?? "", issue);
+                return [
+                  {
+                    id,
+                    repository,
+                    number,
+                    title,
+                    state,
+                    url,
+                    updatedAt,
+                    labels,
+                    subIssuesSummary,
+                    issueDependenciesSummary,
+                  },
+                ];
+              }),
+            },
+          };
+        },
+      );
+    },
     fetchRepositorySuggestions(after) {
       return answer(
         "fetchRepositorySuggestions",
@@ -1014,6 +1098,7 @@ function reachesGitHub(error: GitHubError): boolean {
     case "rate-limited":
     case "server-error":
     case "http":
+    case "invalid-search":
     case "graphql":
     case "unexpected-response":
       return true;
@@ -1038,6 +1123,7 @@ function namesViewer(result: GitHubResult<unknown>): boolean {
     case "rate-limited":
     case "server-error":
     case "http":
+    case "invalid-search":
     case "unexpected-response":
       return false;
   }

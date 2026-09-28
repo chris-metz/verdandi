@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type {
   Contract,
   CoreEventName,
   CoreEvents,
+  SavedView,
   Screen,
 } from "./contract.ts";
 import type { HostEnvironment } from "./directories.ts";
@@ -33,6 +35,7 @@ import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
 import { createSidebar, type Sidebar } from "./sidebar.ts";
 import { createSidebarSelection } from "./sidebar-selection.ts";
+import { createViewLists, type ViewLists } from "./view-lists.ts";
 
 /** At most this many `gh` processes run at once. */
 const maxConcurrentRequests = 4;
@@ -79,6 +82,8 @@ interface Session {
   lists: IssueLists;
   /** The issue pages. */
   pages: IssuePages;
+  /** The views' screens. */
+  views: ViewLists;
   /** The repository picker's suggestions, checks and additions. */
   picker: RepositoryPicker;
   /** Sends a request for the session, as long as it lasts. */
@@ -170,6 +175,7 @@ export function createCore({
   function openShown() {
     if (shown?.kind === "list") session.lists.open(shown.scope);
     if (shown?.kind === "issue") session.pages.open(shown.issueId);
+    if (shown?.kind === "view") session.views.open(shown.viewId);
   }
 
   // Every request waits until gh is usable and signed in, and has what
@@ -221,6 +227,7 @@ export function createCore({
       request: sessionRequest,
       clock,
       mayRevalidate,
+      viewMatches: (view) => views.matchesOf(view),
       push: (entries) => {
         emit("sidebarChanged", entries);
         lists.repositoriesChanged();
@@ -268,6 +275,19 @@ export function createCore({
         sidebar.openIssuesLoaded(repository, openIssues, readAt);
       },
     });
+    const views = createViewLists({
+      request: sessionRequest,
+      clock,
+      shown: () => shown,
+      mayRevalidate,
+      readSettings: async () => (await settings.read()).value,
+      push: (list) => {
+        emit("viewChanged", list);
+      },
+      matchesChanged: () => {
+        sidebar.viewsChanged();
+      },
+    });
     const picker = createRepositoryPicker({
       settings,
       request: sessionRequest,
@@ -281,6 +301,7 @@ export function createCore({
       sidebar,
       lists,
       pages,
+      views,
       picker,
       request: sessionRequest,
       end() {
@@ -293,6 +314,7 @@ export function createCore({
   let session = createSession();
   const selection = createSidebarSelection(settings, localState);
   async function settingsChanged() {
+    session.views.settingsChanged((await settings.read()).value);
     await session.lists.settingsChanged();
     await session.pages.settingsChanged();
     await session.sidebar.reload();
@@ -382,6 +404,77 @@ export function createCore({
       await settingsChanged();
       return { ok: true, selection: await selection.getSelectedSidebarEntry() };
     },
+    async saveView(draft, { force = false } = {}) {
+      const name = draft.name.trim();
+      const query = draft.query.trim();
+      if (!name || !query) {
+        return {
+          status: "failed",
+          message: "Give the view a name and a search.",
+        };
+      }
+      const read = await settings.read();
+      if (!read.ok) return { status: "failed", message: read.message };
+      if (read.status.status !== "writable") {
+        return { status: "failed", message: read.status.message };
+      }
+      const existing =
+        draft.id === undefined
+          ? undefined
+          : read.value.views.find(({ id }) => id === draft.id);
+      if (draft.id !== undefined && !existing) {
+        return {
+          status: "failed",
+          message: "The view is no longer in settings.json.",
+        };
+      }
+      const view = {
+        id: existing?.id ?? newViewId(read.value.views),
+        name,
+        query,
+      };
+      const { views } = session;
+      // Only a new or changed search is checked with GitHub.
+      const checked =
+        force || existing?.query === query
+          ? undefined
+          : await views.check(query);
+      if (checked && !checked.result.ok) {
+        const { error } = checked.result;
+        return error.kind === "invalid-search"
+          ? { status: "rejected", message: error.message }
+          : { status: "unchecked", problem: problemOf(error) };
+      }
+      const result = await settings.saveView(view);
+      if (!result.ok) return { status: "failed", message: result.message };
+      if (checked?.result.ok) {
+        views.take(view, checked.result.value, checked.readAt);
+      }
+      await settingsChanged();
+      return { status: "saved", view };
+    },
+    async removeView(viewId) {
+      const selected = await selection.getSelectedSidebarEntry();
+      const { value } = await settings.read();
+      const index = value.views.findIndex(({ id }) => id === viewId);
+      if (index < 0) return { ok: true, selection: selected };
+      const result = await settings.removeView(viewId);
+      if (!result.ok) return result;
+      if (selected.kind === "view" && selected.view.id === viewId) {
+        const neighbour = value.views[index + 1] ?? value.views[index - 1];
+        await selection.selectSidebarEntry(
+          neighbour ? { kind: "view", id: neighbour.id } : { kind: "all" },
+        );
+      }
+      await settingsChanged();
+      return { ok: true, selection: await selection.getSelectedSidebarEntry() };
+    },
+    openView(viewId) {
+      show({ kind: "view", viewId });
+      session.views.open(viewId);
+      session.sidebar.revalidate();
+      return Promise.resolve();
+    },
     async skipRepositoryPicker() {
       const result = await settings.createIfMissing();
       await session.sidebar.reload();
@@ -469,6 +562,7 @@ export function createCore({
       const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.refresh(screen.scope);
       if (screen?.kind === "issue") pages.refresh(screen.issueId);
+      if (screen?.kind === "view") session.views.refresh(screen.viewId);
       sidebar.refresh();
       return Promise.resolve();
     },
@@ -478,6 +572,7 @@ export function createCore({
       const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.revalidate(screen.scope);
       if (screen?.kind === "issue") pages.revalidate(screen.issueId);
+      if (screen?.kind === "view") session.views.revalidate(screen.viewId);
       sidebar.revalidate();
       return Promise.resolve();
     },
@@ -486,6 +581,7 @@ export function createCore({
       const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.retry(screen.scope);
       if (screen?.kind === "issue") pages.retry(screen.issueId);
+      if (screen?.kind === "view") session.views.retry(screen.viewId);
       sidebar.retry();
       return Promise.resolve();
     },
@@ -494,6 +590,17 @@ export function createCore({
     },
     on: events.on,
   };
+}
+
+/**
+ * A short ID for a new view, which no other view has: the app makes it up,
+ * and it stays with the view.
+ */
+function newViewId(views: readonly SavedView[]): string {
+  for (;;) {
+    const id = randomUUID().replaceAll("-", "").slice(0, 12);
+    if (!views.some((view) => view.id === id)) return id;
+  }
 }
 
 /** Sends one read through GitHub access. */

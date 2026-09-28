@@ -2625,3 +2625,210 @@ describe("gh adapter: the repository picker", () => {
     });
   });
 });
+
+describe("gh adapter: issue search", () => {
+  const searchHeaders = [
+    "Content-Type: application/json; charset=utf-8",
+    "X-Ratelimit-Limit: 30",
+    "X-Ratelimit-Remaining: 29",
+    "X-Ratelimit-Reset: 1790510601",
+    "X-Ratelimit-Resource: search",
+  ];
+
+  /** A `gh` that answers REST calls with a result, recording their arguments. */
+  function ghSearching(result: CommandResult, calls: string[][] = []) {
+    return createGhAdapter({
+      gh: ghPath,
+      runCommand: (command, args, options) => {
+        if (command !== ghPath || options?.input !== undefined) {
+          throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        }
+        calls.push([...args]);
+        return Promise.resolve(result);
+      },
+    });
+  }
+
+  /** An item of GitHub's issue search, as REST returns it. */
+  function searchItem(number: number, extra: Record<string, unknown> = {}) {
+    return {
+      url: `https://api.github.com/repos/acme/api/issues/${String(number)}`,
+      repository_url: "https://api.github.com/repos/acme/api",
+      html_url: `https://github.com/acme/api/issues/${String(number)}`,
+      node_id: `I_kwDOsearch${String(number)}`,
+      number,
+      title: `Issue ${String(number)}`,
+      state: "open",
+      labels: [{ name: "bug", color: "d73a4a", default: true }],
+      updated_at: "2026-09-15T03:26:56Z",
+      sub_issues_summary: { total: 3, completed: 1, percent_completed: 33 },
+      issue_dependencies_summary: {
+        blocked_by: 1,
+        total_blocked_by: 2,
+        blocking: 0,
+        total_blocking: 0,
+      },
+      ...extra,
+    };
+  }
+
+  it("runs the search text verbatim through advanced REST search, 100 matches a page", async () => {
+    const calls: string[][] = [];
+    const github = ghSearching(
+      {
+        kind: "exited",
+        exitCode: 0,
+        stdout: transcript(
+          "200 OK",
+          searchHeaders,
+          JSON.stringify({
+            total_count: 0,
+            incomplete_results: false,
+            items: [],
+          }),
+        ),
+        stderr: "",
+      },
+      calls,
+    );
+
+    await github.searchIssues("is:open (repo:acme/api OR repo:@me/x)", 1);
+
+    expect(calls).toEqual([
+      [
+        "api",
+        "--method",
+        "GET",
+        "--hostname",
+        "github.com",
+        "--include",
+        "search/issues",
+        "-f",
+        "q=is:open (repo:acme/api OR repo:@me/x)",
+        "-f",
+        "advanced_search=true",
+        "-f",
+        "per_page=100",
+        "-f",
+        "page=1",
+      ],
+    ]);
+  });
+
+  it("reads GitHub's total, whether results are incomplete, and the matched issues in order", async () => {
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 0,
+      stdout: transcript(
+        "200 OK",
+        searchHeaders,
+        JSON.stringify({
+          total_count: 4213,
+          incomplete_results: true,
+          items: [
+            searchItem(7),
+            searchItem(9, {
+              pull_request: { url: "https://api.github.com/x" },
+            }),
+            searchItem(3, {
+              state: "closed",
+              repository_url: "https://api.github.com/repos/other/lib",
+              html_url: "https://github.com/other/lib/issues/3",
+            }),
+          ],
+        }),
+      ),
+      stderr: "",
+    });
+
+    expect(await github.searchIssues("label:bug", 2)).toEqual({
+      ok: true,
+      value: {
+        total: 4213,
+        incomplete: true,
+        issues: [
+          {
+            id: "I_kwDOsearch7",
+            repository: { owner: "acme", name: "api" },
+            number: 7,
+            title: "Issue 7",
+            state: "open",
+            url: "https://github.com/acme/api/issues/7",
+            updatedAt: "2026-09-15T03:26:56Z",
+            labels: [{ name: "bug", color: "d73a4a" }],
+            subIssuesSummary: { total: 3, completed: 1 },
+            issueDependenciesSummary: {
+              blockedBy: 1,
+              totalBlockedBy: 2,
+              blocking: 0,
+              totalBlocking: 0,
+            },
+          },
+          expect.objectContaining({
+            id: "I_kwDOsearch3",
+            repository: { owner: "other", name: "lib" },
+            state: "closed",
+          }),
+        ],
+        pullRequests: 1,
+      },
+      budget: {
+        pool: "search",
+        limit: 30,
+        remaining: 29,
+        resetAt: Date.parse("2026-09-27T12:03:21Z"),
+      },
+      viewerLogin: undefined,
+    });
+  });
+
+  it("reports a search GitHub rejects with its own message", async () => {
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 1,
+      stdout: transcript(
+        "422 Unprocessable Entity",
+        searchHeaders,
+        JSON.stringify({
+          message: "Validation Failed",
+          errors: [
+            {
+              message: "The search query contains invalid syntax.",
+              resource: "Search",
+              field: "q",
+              code: "invalid",
+            },
+          ],
+          documentation_url: "https://docs.github.com/v3/search/",
+          status: "422",
+        }),
+      ),
+      stderr: "gh: Validation Failed (HTTP 422)",
+    });
+
+    expect(await github.searchIssues("is:open (", 1)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "invalid-search",
+        message: "The search query contains invalid syntax.",
+      },
+    });
+  });
+
+  it("reports other failures as any other read's", async () => {
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 1,
+      stdout: "",
+      stderr: "error connecting to api.github.com",
+    });
+
+    expect(await github.searchIssues("is:open", 1)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "gh-failed",
+        message: "error connecting to api.github.com",
+      },
+    });
+  });
+});

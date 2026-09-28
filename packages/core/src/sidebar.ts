@@ -6,6 +6,7 @@ import type {
   SidebarEntries,
   SavedView,
   SettingsStatus,
+  ViewMatchCount,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import type { GitHubResult, RepositorySummary } from "./github/port.ts";
@@ -68,6 +69,8 @@ export interface Sidebar {
   refresh(): void;
   /** Asks GitHub again for the counts that failed, of the sidebar as last read. */
   retry(): void;
+  /** Pushes the sidebar again as a view's match count changed. */
+  viewsChanged(): void;
   /**
    * Takes a repository's open-issue count from its open issues, just loaded,
    * with when their read started.
@@ -88,6 +91,8 @@ export interface SidebarOptions {
    * while the rate-limit budget is low.
    */
   mayRevalidate: () => boolean;
+  /** How many matches a view's search had when it last ran. */
+  viewMatches: (view: SavedView) => ViewMatchCount;
   /** Pushes the sidebar to the interfaces. */
   push: (sidebar: SidebarEntries) => void;
 }
@@ -122,6 +127,7 @@ export function createSidebar({
   request,
   clock,
   mayRevalidate,
+  viewMatches,
   push,
 }: SidebarOptions): Sidebar {
   /** Each repository's count, by `repositoryKey`. */
@@ -141,7 +147,7 @@ export function createSidebar({
   function entries(repositories: RepositoryAddress[]): SidebarEntries {
     return {
       status: "read",
-      views,
+      views: views.map((view) => ({ view, matches: viewMatches(view) })),
       settings: settingsStatus,
       firstLaunch,
       all: { openIssues: allCount(repositories, countOf) },
@@ -366,6 +372,9 @@ export function createSidebar({
     },
     retry() {
       if (tracked && ask(tracked.filter(failed))) pushTracked();
+    },
+    viewsChanged() {
+      pushTracked();
     },
     openIssuesLoaded(repository, openIssues, readAt) {
       const key = repositoryKey(repository);

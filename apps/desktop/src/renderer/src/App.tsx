@@ -1,4 +1,5 @@
 import type {
+  SavedView,
   SidebarEntryKey,
   SidebarDestination,
   Screen,
@@ -15,12 +16,13 @@ import {
   type Pane,
 } from "./pane-navigation";
 import { RepositoryPicker } from "./RepositoryPicker";
-import { RemoveRepositoryDialog } from "./RemoveRepositoryDialog";
+import { RemoveEntryDialog, type RemovableEntry } from "./RemoveEntryDialog";
 import { forgetPlace } from "./list-places";
 import { sameScope, scopeLabel, type SidebarScope as Scope } from "./scope";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder } from "./sidebar-entries";
+import { ViewDialog } from "./ViewDialog";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
 const modifier = shortcutModifier(window.desktop.platform);
@@ -52,9 +54,10 @@ export function App() {
     if (shownIssueId !== undefined) {
       return { kind: "issue", issueId: shownIssueId };
     }
-    return selected && selected.kind !== "view"
-      ? { kind: "list", scope: selected }
-      : undefined;
+    if (selected?.kind === "view") {
+      return { kind: "view", viewId: selected.view.id };
+    }
+    return selected && { kind: "list", scope: selected };
   }, [selected, shownIssueId]);
   const [focused, setFocused] = useState<Pane>("sidebar");
   const shortcutsShown = useShortcutsShown();
@@ -62,8 +65,15 @@ export function App() {
   const sidebarPane = useRef<HTMLElement>(null);
   const mainPane = useRef<HTMLElement>(null);
   const [picking, setPicking] = useState(false);
-  const [removing, setRemoving] = useState<TrackedRepository>();
+  /** The sidebar entry whose removal is being confirmed. */
+  const [removing, setRemoving] = useState<RemovableEntry>();
   const removalPending = useRef(false);
+  /** The view dialog, open for a view or, without one, for a new view. */
+  const [viewDialog, setViewDialog] = useState<{
+    view: SavedView | undefined;
+  }>();
+  const dialogOpen =
+    picking || removing !== undefined || viewDialog !== undefined;
   const login =
     setup?.status === "ready" && setup.account.status === "known"
       ? setup.account.account.login
@@ -94,13 +104,44 @@ export function App() {
     focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
   }
 
-  function confirmRemoval(repository: TrackedRepository) {
+  /** Asks to confirm removing a repository or view, if settings are writable. */
+  function confirmRemoval(entry: RemovableEntry) {
     if (
       !blocked &&
       sidebar?.status === "read" &&
       sidebar.settings.status === "writable"
     )
-      setRemoving(repository);
+      setRemoving(entry);
+  }
+
+  function confirmRepositoryRemoval(repository: TrackedRepository) {
+    confirmRemoval({ kind: "repository", repository });
+  }
+
+  function confirmViewRemoval(view: SavedView) {
+    confirmRemoval({ kind: "view", view });
+  }
+
+  /** Opens the view dialog, unless the setup blocker is up. */
+  function openViewDialog(view: SavedView | undefined) {
+    if (!blocked && sidebar?.status === "read") setViewDialog({ view });
+  }
+
+  /** Closes the view dialog, giving the pane that had the keyboard it again. */
+  function closeViewDialog() {
+    setViewDialog(undefined);
+    focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+  }
+
+  /** Shows a view just saved, with its list in front of any issue page. */
+  function showSaved(view: SavedView) {
+    setViewDialog(undefined);
+    const scope = { kind: "view" as const, view };
+    if (selected && sameScope(selected, scope)) {
+      setSelected(scope);
+      navigate({ kind: "list" });
+    } else select(scope);
+    focusPane(mainPane.current);
   }
 
   /** Selects an entry, whose list starts without issue pages on top. */
@@ -207,7 +248,7 @@ export function App() {
     function onKeyDown(event: KeyboardEvent) {
       // A key the focused pane has handled is not the window's, and none is
       // while the setup blocker or the picker is up.
-      if (event.defaultPrevented || blocked || picking || removing) return;
+      if (event.defaultPrevented || blocked || dialogOpen) return;
       if (
         event.target instanceof Element &&
         event.target.closest(
@@ -242,7 +283,16 @@ export function App() {
           openPicker();
           break;
         case "remove-repository":
-          confirmRemoval(command.repository);
+          confirmRepositoryRemoval(command.repository);
+          break;
+        case "new-view":
+          openViewDialog(undefined);
+          break;
+        case "edit-view":
+          openViewDialog(command.view);
+          break;
+        case "remove-view":
+          confirmViewRemoval(command.view);
           break;
       }
     }
@@ -274,7 +324,12 @@ export function App() {
             onSelect={select}
             onReorder={reorder}
             onAddRepository={openPicker}
-            onRemoveRepository={confirmRemoval}
+            onRemoveRepository={confirmRepositoryRemoval}
+            onNewView={() => {
+              openViewDialog(undefined);
+            }}
+            onEditView={openViewDialog}
+            onRemoveView={confirmViewRemoval}
             settingsError={settingsError}
             focused={focused === "sidebar"}
             shortcutsShown={shortcutsShown}
@@ -296,14 +351,7 @@ export function App() {
             focused === "main" && focusedPaneMark,
           )}
         >
-          {selected?.kind === "view" ? (
-            <header className="border-b p-4">
-              <h1 className="font-semibold">{selected.view.name}</h1>
-              <p className="mt-1 text-muted-foreground">
-                {selected.view.query}
-              </p>
-            </header>
-          ) : selected ? (
+          {selected ? (
             // A new scope starts from a fresh list, never the previous one's.
             <MainArea
               key={scopeLabel(selected)}
@@ -317,15 +365,16 @@ export function App() {
               onRemoveRepository={
                 sidebar?.status === "read" &&
                 sidebar.settings.status === "writable"
-                  ? confirmRemoval
+                  ? confirmRepositoryRemoval
                   : undefined
               }
+              onEditView={() => {
+                if (selected.kind === "view") openViewDialog(selected.view);
+              }}
               stack={stack}
               login={login}
               onNavigate={navigate}
-              hasKeyboard={
-                focused === "main" && !removing && !picking && !blocked
-              }
+              hasKeyboard={focused === "main" && !dialogOpen && !blocked}
             />
           ) : (
             <p className="m-auto text-muted-foreground">
@@ -350,26 +399,48 @@ export function App() {
         />
       )}
       {removing && (
-        <RemoveRepositoryDialog
-          repository={removing}
+        <RemoveEntryDialog
+          entry={removing}
           returnFocus={sidebarPane}
           onRemove={async () => {
             removalPending.current = true;
             try {
-              return await window.verdandi.removeRepository(removing);
+              return await (removing.kind === "repository"
+                ? window.verdandi.removeRepository(removing.repository)
+                : window.verdandi.removeView(removing.view.id));
             } finally {
               removalPending.current = false;
             }
           }}
           onRemoved={(selection) => {
-            const scope = { kind: "repository" as const, repository: removing };
-            forgetPlace(scope);
-            if (selected && sameScope(selected, scope)) select(selection);
+            forgetPlace(removing);
+            if (selected && sameScope(selected, removing)) select(selection);
             setRemoving(undefined);
           }}
           onClose={() => {
             setRemoving(undefined);
           }}
+        />
+      )}
+      {viewDialog && (
+        <ViewDialog
+          view={viewDialog.view}
+          tracked={
+            sidebar?.status === "read"
+              ? sidebar.repositories.map(({ repository }) => repository)
+              : []
+          }
+          removable={
+            sidebar?.status === "read" && sidebar.settings.status === "writable"
+          }
+          modifier={modifier}
+          onSaved={showSaved}
+          onRemove={() => {
+            const { view } = viewDialog;
+            setViewDialog(undefined);
+            if (view) confirmViewRemoval(view);
+          }}
+          onClose={closeViewDialog}
         />
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}

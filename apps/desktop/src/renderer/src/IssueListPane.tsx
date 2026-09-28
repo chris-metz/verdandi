@@ -6,36 +6,17 @@ import type {
   RepositoryLoading,
   Scope,
 } from "@verdandi/core/contract";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { listFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
-import {
-  commandForKey,
-  followSelection,
-  selectionIndex,
-  visibleRows,
-  type ListCommand,
-} from "./list-navigation";
-import { rememberedPlace, rememberPlace } from "./list-places";
 import { listStatus } from "./list-status";
 import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { presentScope, repositoryLabel, sameScope } from "./scope";
-import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
-
-/** The row the selection is on. */
-const selectedRow = '[aria-selected="true"]';
+import { useListPane } from "./use-list-pane";
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
@@ -67,28 +48,22 @@ export function IssueListPane({
   hasKeyboard: boolean;
 }) {
   const list = useList(scope);
-  const [place] = useState(() => rememberedPlace(scope));
-  const [selectedId, setSelectedId] = useState(place.selectedId);
-  const scroller = useRef<HTMLDivElement>(null);
-  const revealSelection = useRef(false);
-
   const trees = useMemo(() => list?.trees ?? [], [list]);
-  const rows = useMemo(() => visibleRows(trees), [trees]);
-  // The selection follows its issue as the list changes under it.
-  const [shownTrees, setShownTrees] = useState(trees);
-  if (trees !== shownTrees) {
-    setShownTrees(trees);
-    const followed = followSelection(shownTrees, trees, selectedId);
-    if (followed !== selectedId) setSelectedId(followed);
-  }
-  const selected = useMemo(
-    () => selectionIndex(trees, rows, selectedId),
-    [trees, rows, selectedId],
+  const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
+    {
+      scope,
+      list,
+      trees,
+      hasKeyboard,
+      onOpen,
+      onSetExpanded: (issueId, expanded) => {
+        void window.verdandi.setExpanded(scope, issueId, expanded);
+      },
+      onSetAllExpanded: (expanded) => {
+        void window.verdandi.setAllExpanded(scope, expanded);
+      },
+    },
   );
-
-  const select = useCallback((issueId: string) => {
-    setSelectedId(issueId);
-  }, []);
   const toggle = useCallback(
     (issueId: string, expanded: boolean) => {
       void window.verdandi.setExpanded(scope, issueId, expanded);
@@ -98,86 +73,6 @@ export function IssueListPane({
   const retry = useCallback(() => {
     void window.verdandi.retry({ kind: "list", scope });
   }, [scope]);
-
-  function run(command: ListCommand) {
-    switch (command.kind) {
-      case "openIssue":
-        select(command.issue.id);
-        onOpen(command.issue);
-        break;
-      case "select":
-        revealSelection.current = true;
-        select(command.issueId);
-        break;
-      case "setExpanded":
-        toggle(command.issueId, command.expanded);
-        break;
-      case "setAllExpanded":
-        revealSelection.current = true;
-        void window.verdandi.setAllExpanded(scope, command.expanded);
-        break;
-      case "openOnGitHub":
-        window.desktop.openExternal(command.url);
-        break;
-    }
-  }
-
-  function onKeyDown(event: KeyboardEvent) {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const command = commandForKey(event.key, rows, selected, trees);
-    if (!command) return;
-    event.preventDefault();
-    run(command);
-  }
-
-  // Opened while the sidebar has the keyboard, e.g. by its ↑/↓, the list
-  // leaves it there.
-  useEffect(() => {
-    if (hasKeyboard) scroller.current?.focus({ preventScroll: true });
-  }, [hasKeyboard]);
-
-  // Back where the user left this list, once it is there to scroll.
-  const restored = useRef(false);
-  useLayoutEffect(() => {
-    if (!list || restored.current || !scroller.current) return;
-    restored.current = true;
-    scroller.current.scrollTop = place.scrollTop;
-  }, [list, place]);
-
-  // The selection is remembered wherever it goes, also when it follows its
-  // issue to a neighbour.
-  useEffect(() => {
-    rememberPlace(scope, {
-      selectedId,
-      scrollTop:
-        restored.current && scroller.current
-          ? scroller.current.scrollTop
-          : place.scrollTop,
-    });
-  }, [scope, selectedId, place]);
-
-  // A selection moved by keyboard is scrolled into sight.
-  useLayoutEffect(() => {
-    if (!revealSelection.current) return;
-    revealSelection.current = false;
-    scroller.current
-      ?.querySelector(selectedRow)
-      ?.scrollIntoView({ block: "nearest" });
-  });
-
-  // What the cursor is on stays where it is on screen as the content changes
-  // under it; where it is is noted after every render and scroll.
-  const anchor = useRef<ScrollAnchor>(undefined);
-  useLayoutEffect(() => {
-    if (scroller.current)
-      keepAnchored(scroller.current, anchor.current, selectedRow);
-  }, [list]);
-  useLayoutEffect(noteScroll);
-  function noteScroll() {
-    anchor.current = scroller.current
-      ? noteAnchor(scroller.current, selectedRow)
-      : undefined;
-  }
 
   const { label, repositoryChips } = presentScope(scope);
   const repository =
@@ -228,13 +123,7 @@ export function IssueListPane({
         tabIndex={0}
         data-pane-focus
         onKeyDown={onKeyDown}
-        onScroll={(event) => {
-          noteScroll();
-          rememberPlace(scope, {
-            selectedId,
-            scrollTop: event.currentTarget.scrollTop,
-          });
-        }}
+        onScroll={onScroll}
         className="group min-h-0 flex-1 overflow-y-auto outline-none"
       >
         {failure && (repository?.unavailable || rows.length === 0) ? (

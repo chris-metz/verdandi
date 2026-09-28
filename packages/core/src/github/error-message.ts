@@ -17,6 +17,8 @@ export function describeGitHubError(error: GitHubError): string {
       return `GitHub rate limit reached: ${error.message}`;
     case "server-error":
       return `GitHub failed to answer: ${error.message}`;
+    case "invalid-search":
+      return `GitHub rejected the search: ${error.message}`;
     case "http":
       return `GitHub answered with HTTP ${String(error.status)}: ${error.message}`;
     case "graphql":

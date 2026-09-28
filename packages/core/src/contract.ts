@@ -189,7 +189,8 @@ export type SidebarEntries =
        * file's order.
        */
       repositories: RepositoryEntry[];
-      views: SavedView[];
+      /** The Views section: the saved views, in the settings file's order. */
+      views: ViewEntry[];
       settings: SettingsStatus;
       /**
        * Whether the settings file does not exist yet: Verdandi is launched
@@ -211,6 +212,51 @@ export interface SavedView {
   name: string;
   query: string;
 }
+
+/** A saved view as the sidebar lists it. */
+export interface ViewEntry {
+  view: SavedView;
+  matches: ViewMatchCount;
+}
+
+/**
+ * How many matches a view's search had when it last ran, as GitHub counts
+ * them: unknown until it has run in this session (no search runs at
+ * startup), or while its last run could not be completed; or GitHub rejected
+ * the search. A view whose search changed has not run yet.
+ */
+export type ViewMatchCount =
+  | { status: "unknown" }
+  | { status: "known"; count: number }
+  | { status: "rejected"; message: string };
+
+/**
+ * A view's name and search as the user entered them, to save: a new view
+ * without an `id`, or the view with that `id`, which keeps it.
+ */
+export interface ViewDraft {
+  id?: string;
+  name: string;
+  query: string;
+}
+
+/**
+ * What became of saving a view. Nothing is saved unless it says `saved`.
+ *
+ * - `saved`: it is saved, a new one at the end of the Views section, as its
+ *   search ran, or without running it when only its name changed or it was
+ *   saved anyway.
+ * - `rejected`: GitHub rejected the search, saying why.
+ * - `unchecked`: the search could not be run, e.g. GitHub could not be
+ *   reached or failed; it can be saved anyway, or tried again.
+ * - `failed`: it cannot be saved, e.g. as the settings file cannot be
+ *   written, or it has no name or search.
+ */
+export type ViewSave =
+  | { status: "saved"; view: SavedView }
+  | { status: "rejected"; message: string }
+  | { status: "unchecked"; problem: Problem }
+  | { status: "failed"; message: string };
 
 /** All is fixed and cannot be the source or destination of a move. */
 export type SidebarEntryKey =
@@ -265,9 +311,11 @@ export type Scope =
 /** The selected sidebar entry, with the current view text when it is a view. */
 export type SidebarSelection = Scope | { kind: "view"; view: SavedView };
 
-/** What the main area shows: a scope's list, or an issue page. */
+/** What the main area shows: a scope's list, a view, or an issue page. */
 export type Screen =
-  { kind: "list"; scope: Scope } | { kind: "issue"; issueId: string };
+  | { kind: "list"; scope: Scope }
+  | { kind: "view"; viewId: string }
+  | { kind: "issue"; issueId: string };
 
 /** A GitHub label. */
 export interface Label {
@@ -495,6 +543,35 @@ export interface IssueList {
    * list, whose loading is the list's own.
    */
   repositories: RepositoryLoading[];
+}
+
+/**
+ * A view's screen: the issues its search matches, from any repository,
+ * tracked or not, in GitHub's order, as far as its search has run. For now
+ * each match shows on its own, without its parent issue or sub-issues.
+ */
+export interface ViewList {
+  /** The view, as the settings file names it now. */
+  view: SavedView;
+  trees: IssueTree[];
+  /**
+   * How many issues and pull requests GitHub counts as matches, once the
+   * search has run; pull requests are not listed.
+   */
+  matchCount: number | undefined;
+  /**
+   * How many of the matches GitHub answered with are pull requests, which
+   * are not listed; a search says `is:issue` to leave them out.
+   */
+  pullRequests: number;
+  /** GitHub's message, when it rejected the search, which it is not run again for. */
+  rejected: string | undefined;
+  /**
+   * How far the search has run, and how current its matches are. It failed
+   * when GitHub rejected the search or it could not be run, with nothing to
+   * show from before.
+   */
+  loading: LoadingState;
 }
 
 /** Metadata read when an issue page is opened. */
@@ -912,6 +989,35 @@ export interface CoreRequests {
     { ok: true; selection: SidebarSelection } | { ok: false; message: string }
   >;
   /**
+   * Saves a view, after running its search once as GitHub's advanced search,
+   * unless only its name changed or `force` says to save it anyway. Its
+   * search is stored as given, never rewritten or limited to the tracked
+   * repositories. The search's matches are handed to the view, so that
+   * opening it does not search again, and its count to the sidebar.
+   */
+  saveView: (
+    draft: ViewDraft,
+    options?: { force?: boolean },
+  ) => Promise<ViewSave>;
+  /**
+   * Removes a view after the interface has confirmed it. Tracked
+   * repositories and cached issues stay. A removed selection moves to the
+   * next view, the previous if last, or All.
+   */
+  removeView: (
+    viewId: string,
+  ) => Promise<
+    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
+  >;
+  /**
+   * Opens a view: its current state is pushed as `viewChanged` at once, and
+   * again as its search answers. Its search runs when it has not run in this
+   * session, runs again in the background when its matches are older than
+   * five minutes, and at once when it failed. The sidebar's counts are read
+   * again too if they are older than five minutes.
+   */
+  openView: (viewId: string) => Promise<void>;
+  /**
    * **Skip** on first launch: creates the settings file empty, so that the
    * picker does not open on its own again. An existing file is left as it
    * is.
@@ -987,6 +1093,8 @@ export interface CoreEvents {
   listChanged: IssueList;
   /** An issue page's state, when it is opened and whenever it changes. */
   issuePageChanged: IssuePage;
+  /** A view's state, when it is opened and whenever it changes. */
+  viewChanged: ViewList;
   /**
    * The sidebar whenever settings or an open-issue count change: on hand
    * edits, writes and recovery, as counts arrive, and when a list loads.
@@ -1043,12 +1151,16 @@ const requests: Record<keyof CoreRequests, true> = {
   addRepositories: true,
   removeRepository: true,
   skipRepositoryPicker: true,
+  saveView: true,
+  removeView: true,
+  openView: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,
   notice: true,
   listChanged: true,
   issuePageChanged: true,
+  viewChanged: true,
   sidebarChanged: true,
   rateLimitsChanged: true,
   repositorySuggestionsChanged: true,

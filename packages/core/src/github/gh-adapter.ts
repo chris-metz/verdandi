@@ -24,6 +24,8 @@ import {
   type RateLimitBudget,
   type RepositoryAccess,
   type RepositorySummary,
+  type SearchMatch,
+  type SearchPage,
   type SuggestionPage,
 } from "./port.ts";
 
@@ -41,6 +43,9 @@ const issuesPerPage = 100;
 
 /** The most comments GitHub returns in one page. */
 const commentsPerPage = 100;
+
+/** The most matches GitHub's search returns in one page. */
+const matchesPerPage = 100;
 
 /**
  * An issue GitHub left out of its answer without saying why, as it may for
@@ -189,6 +194,48 @@ export function createGhAdapter({
   }
 
   return {
+    async searchIssues(query, page) {
+      // `-f` passes the search as a plain string, whatever it starts with.
+      const result = await runCommand(gh, [
+        "api",
+        "--method",
+        "GET",
+        "--hostname",
+        "github.com",
+        "--include",
+        "search/issues",
+        "-f",
+        `q=${query}`,
+        "-f",
+        "advanced_search=true",
+        "-f",
+        `per_page=${String(matchesPerPage)}`,
+        "-f",
+        `page=${String(page)}`,
+      ]);
+      if (result.kind !== "exited") return failed(runFailure(result));
+      const response = parseTranscript(result.stdout);
+      if (!response) return failed(exitFailure(result));
+      const { status, headers, body } = response;
+      const budget = budgetFromHeaders(headers, "search");
+      if (status === 422) {
+        return failed(
+          {
+            kind: "invalid-search",
+            message: readValidationMessage(body) ?? "Validation Failed",
+          },
+          budget,
+        );
+      }
+      if (status >= 400) {
+        const message = readMessage(body) ?? `HTTP ${String(status)}`;
+        return failed(httpError(status, message, headers), budget);
+      }
+      const matches = readSearchPage(parseJson(body));
+      return matches
+        ? { ok: true, value: matches, budget, viewerLogin: undefined }
+        : failed({ kind: "unexpected-response" }, budget);
+    },
     async fetchAuthStatus() {
       const result = await runCommand(
         gh,
@@ -1287,6 +1334,115 @@ function parseJson(body: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What GitHub says of a search it rejected: the messages of its validation
+ * errors, or else its own message.
+ */
+function readValidationMessage(body: string): string | undefined {
+  const parsed = parseJson(body);
+  const errors = isObject(parsed) ? parsed.errors : undefined;
+  const messages = Array.isArray(errors)
+    ? errors.flatMap((error) =>
+        isObject(error) && typeof error.message === "string"
+          ? [error.message]
+          : [],
+      )
+    : [];
+  return messages.length > 0 ? messages.join(" ") : readMessage(body);
+}
+
+/** Reads a page of a REST issue search, or `undefined` if it is not one. */
+function readSearchPage(body: unknown): SearchPage | undefined {
+  if (!isObject(body)) return undefined;
+  const { total_count, incomplete_results, items } = body;
+  if (
+    typeof total_count !== "number" ||
+    typeof incomplete_results !== "boolean" ||
+    !Array.isArray(items)
+  ) {
+    return undefined;
+  }
+  const issues: SearchMatch[] = [];
+  let pullRequests = 0;
+  for (const item of items) {
+    if (isObject(item) && item.pull_request != null) {
+      pullRequests++;
+      continue;
+    }
+    const issue = readSearchMatch(item);
+    if (!issue) return undefined;
+    issues.push(issue);
+  }
+  return {
+    total: total_count,
+    incomplete: incomplete_results,
+    issues,
+    pullRequests,
+  };
+}
+
+/** Reads an issue a REST search matched, or `undefined` if it is not one. */
+function readSearchMatch(item: unknown): SearchMatch | undefined {
+  if (!isObject(item)) return undefined;
+  const {
+    node_id,
+    number,
+    title,
+    state,
+    html_url,
+    repository_url,
+    updated_at,
+    labels,
+    sub_issues_summary,
+    issue_dependencies_summary,
+  } = item;
+  const repository =
+    typeof repository_url === "string"
+      ? parseRepositoryAddress(
+          repository_url.replace(/^https:\/\/api\.github\.com\/repos\//, ""),
+        )
+      : undefined;
+  const subIssues = readCounts(sub_issues_summary, ["total", "completed"]);
+  const dependencies = readCounts(issue_dependencies_summary, [
+    "blocked_by",
+    "total_blocked_by",
+    "blocking",
+    "total_blocking",
+  ]);
+  const labelList = Array.isArray(labels) ? labels.map(readLabel) : undefined;
+  if (
+    typeof node_id !== "string" ||
+    typeof number !== "number" ||
+    typeof title !== "string" ||
+    (state !== "open" && state !== "closed") ||
+    typeof html_url !== "string" ||
+    typeof updated_at !== "string" ||
+    !repository ||
+    !labelList ||
+    labelList.some((label) => label === undefined)
+  ) {
+    return undefined;
+  }
+  return {
+    id: node_id,
+    repository,
+    number,
+    title,
+    state,
+    url: html_url,
+    updatedAt: updated_at,
+    labels: labelList as Label[],
+    // GitHub leaves out summaries it has not computed, e.g. for old issues.
+    subIssuesSummary: subIssues ?? { total: 0, completed: 0 },
+    issueDependenciesSummary: {
+      blockedBy: dependencies?.blocked_by ?? 0,
+      totalBlockedBy: dependencies?.total_blocked_by ?? 0,
+      blocking: dependencies?.blocking ?? 0,
+      totalBlocking: dependencies?.total_blocking ?? 0,
+    },
+  };
 }
 
 /**

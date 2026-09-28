@@ -1,11 +1,12 @@
 import type {
+  SavedView,
   Setup,
   SidebarEntries,
   SidebarEntryKey,
   SidebarDestination,
   TrackedRepository,
 } from "@verdandi/core/contract";
-import { TriangleAlert } from "lucide-react";
+import { ListFilter, TriangleAlert } from "lucide-react";
 import { problemText } from "./problem-text";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -19,7 +20,11 @@ import {
   type ScopePresentation,
   type SidebarScope as Scope,
 } from "./scope";
-import { countLabel, type SidebarItem } from "./sidebar-entries";
+import {
+  countLabel,
+  matchCountLabel,
+  type SidebarItem,
+} from "./sidebar-entries";
 
 /**
  * All, pinned on top, then the sidebar's sections, Repositories and Views,
@@ -35,6 +40,9 @@ export function Sidebar({
   onReorder,
   onAddRepository,
   onRemoveRepository,
+  onNewView,
+  onEditView,
+  onRemoveView,
   settingsError,
   focused,
   shortcutsShown,
@@ -54,6 +62,12 @@ export function Sidebar({
   /** Opens the repository picker. */
   onAddRepository: () => void;
   onRemoveRepository: (repository: TrackedRepository) => void;
+  /** Opens the view dialog for a new view. */
+  onNewView: () => void;
+  /** Opens the view dialog for a view. */
+  onEditView: (view: SavedView) => void;
+  /** Asks to remove a view. */
+  onRemoveView: (view: SavedView) => void;
   settingsError: string | undefined;
   /** Whether the sidebar has the keyboard. */
   focused: boolean;
@@ -93,25 +107,15 @@ export function Sidebar({
             ? setup.account.account.login
             : undefined
         }
-        onRetry={
-          item.scope.kind === "repository"
+        menu={menuOf(item)}
+        onEdit={
+          item.scope.kind === "view"
             ? () => {
-                if (item.scope.kind !== "repository") return;
-                onSelect(item.scope);
-                void window.verdandi.retry({ kind: "list", scope: item.scope });
+                if (item.scope.kind === "view") onEditView(item.scope.view);
               }
             : undefined
         }
         draggable={writable && entry !== undefined}
-        onRemove={
-          item.scope.kind === "repository"
-            ? () => {
-                if (item.scope.kind === "repository")
-                  onRemoveRepository(item.scope.repository);
-              }
-            : undefined
-        }
-        removable={writable}
         dropSide={drop?.key === key ? drop.side : undefined}
         onDragStart={(event) => {
           dragged.current = entry;
@@ -164,9 +168,61 @@ export function Sidebar({
       />
     );
   }
+  /** What an entry's context menu offers, if it has one. */
+  function menuOf(item: SidebarItem): MenuItem[] | undefined {
+    const { scope } = item;
+    if (scope.kind === "view") {
+      return [
+        {
+          label: "Edit view…",
+          onClick: () => {
+            onEditView(scope.view);
+          },
+        },
+        {
+          label: "Remove view…",
+          disabled: !writable,
+          onClick: () => {
+            onRemoveView(scope.view);
+          },
+        },
+      ];
+    }
+    if (scope.kind !== "repository") return undefined;
+    const { repository } = scope;
+    return [
+      ...("unavailable" in item && item.unavailable
+        ? [
+            {
+              label: "Retry",
+              onClick: () => {
+                onSelect(scope);
+                void window.verdandi.retry({ kind: "list", scope });
+              },
+            },
+            {
+              label: "Open on GitHub",
+              onClick: () => {
+                window.desktop.openExternal(
+                  `https://github.com/${repository.owner}/${repository.name}`,
+                );
+              },
+            },
+          ]
+        : []),
+      {
+        label: "Remove repository…",
+        disabled: !writable,
+        onClick: () => {
+          onRemoveRepository(repository);
+        },
+      },
+    ];
+  }
   const inSection = (section: ScopePresentation["entry"]["section"]) =>
     items.filter((item) => presentScope(item.scope).entry.section === section);
   const repositories = inSection("repositories");
+  const views = inSection("views");
 
   return (
     <>
@@ -228,10 +284,40 @@ export function Sidebar({
             {repositories.map(renderEntry)}
           </ul>
         )}
-        <SectionHeading>Views</SectionHeading>
-        <ul role="listbox" aria-label="Views" className="flex flex-col gap-px">
-          {inSection("views").map(renderEntry)}
-        </ul>
+        <SectionHeading
+          action={
+            sidebar?.status === "read" && (
+              <button
+                type="button"
+                aria-label="New view"
+                title="New view (v)"
+                onClick={onNewView}
+                className="-my-1 rounded px-1 text-sm leading-none text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              >
+                +
+              </button>
+            )
+          }
+        >
+          Views
+        </SectionHeading>
+        {sidebar?.status === "read" && views.length === 0 ? (
+          <button
+            type="button"
+            onClick={onNewView}
+            className="w-full rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          >
+            New view…
+          </button>
+        ) : (
+          <ul
+            role="listbox"
+            aria-label="Views"
+            className="flex flex-col gap-px"
+          >
+            {views.map(renderEntry)}
+          </ul>
+        )}
       </nav>
       <Account setup={setup} />
     </>
@@ -256,42 +342,52 @@ function SectionHeading({
   );
 }
 
+/** An action in an entry's context menu. */
+interface MenuItem {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
 /**
- * An entry: All with its icon, or a tracked repository's name with its owner
- * on a second line; then the open-issue count, or the entry's shortcut while
- * the modifier is held.
+ * An entry: All with its icon, a tracked repository's name with its owner
+ * on a second line, or a view's name with its icon; then the open-issue
+ * count, a view's match count, or the entry's shortcut while the modifier
+ * is held.
  */
 function Entry({
-  item: { scope, openIssues, unavailable },
+  item,
   login,
-  onRetry,
+  menu,
+  onEdit,
   selected,
   focused,
   shortcut,
   onSelect,
   draggable,
   dropSide,
-  onRemove,
-  removable,
   ...dragHandlers
 }: {
   item: SidebarItem;
   login: string | undefined;
-  onRetry: (() => void) | undefined;
+  /** The entry's context menu, if it has one. */
+  menu: MenuItem[] | undefined;
+  /** Edits the entry on double-click, if it can be edited. */
+  onEdit: (() => void) | undefined;
   selected: boolean;
   focused: boolean;
   shortcut: string | undefined;
   onSelect: () => void;
   draggable: boolean;
   dropSide: "before" | "after" | undefined;
-  onRemove: (() => void) | undefined;
-  removable: boolean;
   onDragStart: React.DragEventHandler<HTMLLIElement>;
   onDragOver: React.DragEventHandler<HTMLLIElement>;
   onDrop: React.DragEventHandler<HTMLLIElement>;
   onDragEnd: React.DragEventHandler<HTMLLIElement>;
 }) {
+  const { scope } = item;
   const { description, entry } = presentScope(scope);
+  const unavailable = "unavailable" in item ? item.unavailable : undefined;
   const reason = unavailable ? problemText(unavailable, login) : undefined;
   const row = (
     <li
@@ -299,13 +395,14 @@ function Entry({
       aria-selected={selected}
       title={description}
       onClick={onSelect}
+      onDoubleClick={onEdit}
       draggable={draggable}
       {...dragHandlers}
       className={cn(
         "flex items-center gap-2 rounded-md px-2 py-1 select-none",
         dropSide === "before" && "border-t-2 border-t-ring",
         dropSide === "after" && "border-b-2 border-b-ring",
-        entry.section === "pinned" ? "min-h-8" : "min-h-10",
+        entry.section === "repositories" ? "min-h-10" : "min-h-8",
         selected
           ? focused
             ? "bg-selection shadow-[inset_2px_0_0_var(--selection-edge)]"
@@ -329,6 +426,18 @@ function Entry({
             {entry.name}
           </span>
         </>
+      ) : entry.section === "views" ? (
+        <>
+          <ListFilter
+            aria-hidden
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+          <span
+            className={cn("min-w-0 flex-1 truncate", selected && "font-medium")}
+          >
+            {entry.name}
+          </span>
+        </>
       ) : (
         <span
           className={cn(
@@ -340,7 +449,7 @@ function Entry({
             {entry.name}
           </span>
           <span className="truncate text-xs text-muted-foreground">
-            {entry.section === "repositories" ? entry.owner : entry.query}
+            {entry.owner}
           </span>
         </span>
       )}
@@ -355,52 +464,57 @@ function Entry({
             className="size-4 shrink-0 text-warning"
           />
         </span>
+      ) : "matches" in item ? (
+        item.matches.status === "rejected" ? (
+          <span title={`GitHub rejected this search: ${item.matches.message}`}>
+            <TriangleAlert
+              aria-label="GitHub rejected this search"
+              className="size-4 shrink-0 text-warning"
+            />
+          </span>
+        ) : (
+          <span
+            title={
+              item.matches.status === "known"
+                ? "Matches in the last run"
+                : "Not run yet"
+            }
+            className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          >
+            {matchCountLabel(item.matches)}
+          </span>
+        )
       ) : (
         <span
           title={
-            openIssues.status === "failed" ? openIssues.message : undefined
+            item.openIssues.status === "failed"
+              ? item.openIssues.message
+              : undefined
           }
           className="shrink-0 text-xs text-muted-foreground tabular-nums"
         >
-          {countLabel(openIssues)}
+          {countLabel(item.openIssues)}
         </span>
       )}
     </li>
   );
-  if (!onRemove) return row;
+  if (!menu) return row;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={row} />
       <ContextMenu.Portal>
         <ContextMenu.Positioner className="z-50">
           <ContextMenu.Popup className="min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md outline-none">
-            {unavailable && scope.kind === "repository" && (
-              <>
-                <ContextMenu.Item
-                  onClick={onRetry}
-                  className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
-                >
-                  Retry
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  onClick={() => {
-                    window.desktop.openExternal(
-                      `https://github.com/${scope.repository.owner}/${scope.repository.name}`,
-                    );
-                  }}
-                  className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
-                >
-                  Open on GitHub
-                </ContextMenu.Item>
-              </>
-            )}
-            <ContextMenu.Item
-              disabled={!removable}
-              onClick={onRemove}
-              className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50"
-            >
-              Remove repository…
-            </ContextMenu.Item>
+            {menu.map(({ label, onClick, disabled }) => (
+              <ContextMenu.Item
+                key={label}
+                disabled={disabled}
+                onClick={onClick}
+                className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50"
+              >
+                {label}
+              </ContextMenu.Item>
+            ))}
           </ContextMenu.Popup>
         </ContextMenu.Positioner>
       </ContextMenu.Portal>

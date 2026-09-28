@@ -36,6 +36,14 @@ export interface SettingsStorage {
   removeRepository(
     repository: TrackedRepository,
   ): Promise<SettingsChangeResult>;
+  /**
+   * Saves a view: the one with its ID takes its name and search where it is;
+   * any other goes to the end of the section. Creates the file if there is
+   * none.
+   */
+  saveView(view: SavedView): Promise<SettingsChangeResult>;
+  /** Removes the view with this ID; repositories are kept verbatim. */
+  removeView(id: string): Promise<SettingsChangeResult>;
   /** Creates the file empty if there is none; an existing one stays as it is. */
   createIfMissing(): Promise<SettingsChangeResult>;
 }

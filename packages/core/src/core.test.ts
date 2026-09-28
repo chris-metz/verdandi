@@ -6544,7 +6544,11 @@ describe("removing tracked repositories", () => {
     expect(await core.getSelectedSidebarEntry()).toEqual({ kind: "all" });
     expect(await createTestCore(github).getSidebar()).toMatchObject({
       repositories: [],
-      views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web label:bug" }],
+      views: [
+        {
+          view: { id: "bugs", name: "Bugs", query: "repo:acme/web label:bug" },
+        },
+      ],
     });
   });
 });

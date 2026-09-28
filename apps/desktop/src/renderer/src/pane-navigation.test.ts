@@ -329,7 +329,7 @@ it("moves a view only within Views, even when views have the same name", () => {
   });
 });
 
-it("asks to remove only a repository with unmodified Backspace in the sidebar", () => {
+it("asks to remove a repository with unmodified Backspace in the sidebar", () => {
   expect(press(key("Backspace"), { selected: "api" })).toEqual({
     kind: "remove-repository",
     repository: { owner: "acme", name: "api" },
@@ -348,20 +348,66 @@ it("asks to remove only a repository with unmodified Backspace in the sidebar", 
       press(key("Backspace", modifiers), { selected: "api" }),
     ).toBeUndefined();
   }
-  for (const selected of [
-    { kind: "all" as const },
-    {
-      kind: "view" as const,
-      view: { id: "bugs", name: "Bugs", query: "label:bug" },
-    },
-  ]) {
-    expect(
-      commandForWindowKey(key("Backspace"), {
-        focused: "sidebar",
-        selected,
-        entries: [selected],
-        modifier: macOS,
-      }),
-    ).toBeUndefined();
+  const all = { kind: "all" as const };
+  expect(
+    commandForWindowKey(key("Backspace"), {
+      focused: "sidebar",
+      selected: all,
+      entries: [all],
+      modifier: macOS,
+    }),
+  ).toBeUndefined();
+});
+
+describe("views", () => {
+  const bugs = {
+    kind: "view" as const,
+    view: { id: "bugs", name: "Bugs", query: "label:bug" },
+  };
+  function onView(
+    pressed: KeyPress,
+    focused: Pane = "sidebar",
+    selected: Scope | typeof bugs = bugs,
+  ) {
+    return commandForWindowKey(pressed, {
+      focused,
+      selected,
+      entries: [...entries, bugs],
+      modifier: macOS,
+    });
   }
+
+  it("creates a view with v, whichever pane has the keyboard", () => {
+    expect(onView(key("v"))).toEqual({ kind: "new-view" });
+    expect(onView(key("v"), "main", repository("api"))).toEqual({
+      kind: "new-view",
+    });
+    expect(onView(key("v", { metaKey: true }))).toBeUndefined();
+    expect(onView(key("V", { shiftKey: true }))).toBeUndefined();
+  });
+
+  it("edits the selected view with E, whichever pane has the keyboard", () => {
+    const edit = { kind: "edit-view", view: bugs.view };
+    expect(onView(key("E", { shiftKey: true }))).toEqual(edit);
+    expect(onView(key("E", { shiftKey: true }), "main")).toEqual(edit);
+    expect(onView(key("e"), "sidebar")).toBeUndefined();
+    expect(
+      onView(key("E", { shiftKey: true }), "main", repository("api")),
+    ).toBeUndefined();
+  });
+
+  it("edits the focused view with F2 in the sidebar", () => {
+    expect(onView(key("F2"))).toEqual({ kind: "edit-view", view: bugs.view });
+    expect(onView(key("F2"), "main")).toBeUndefined();
+    expect(onView(key("F2"), "sidebar", repository("api"))).toBeUndefined();
+  });
+
+  it("asks to remove the focused view with unmodified Backspace in the sidebar", () => {
+    expect(onView(key("Backspace"))).toEqual({
+      kind: "remove-view",
+      view: bugs.view,
+    });
+    expect(onView(key("Backspace"), "main")).toBeUndefined();
+    expect(onView(key("Backspace", { metaKey: true }))).toBeUndefined();
+  });
 });

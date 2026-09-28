@@ -1,7 +1,4 @@
-import type {
-  TrackedRepository,
-  SidebarSelection,
-} from "@verdandi/core/contract";
+import type { SidebarSelection } from "@verdandi/core/contract";
 import { useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,19 +8,27 @@ import {
   DialogFooter,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { repositoryLabel } from "./scope";
+import { repositoryLabel, type SidebarScope } from "./scope";
 
-/** Confirmation is shared by the context menu and the sidebar's ⌫ key. */
-export function RemoveRepositoryDialog({
-  repository,
+/** A sidebar entry that can be removed: a tracked repository or a view. */
+export type RemovableEntry = Exclude<SidebarScope, { kind: "all" }>;
+
+/**
+ * The confirmation every removal of a sidebar entry goes through, from its
+ * context menu, the sidebar's ⌫ key, or the view dialog.
+ */
+export function RemoveEntryDialog({
+  entry,
   returnFocus,
   onRemove,
   onRemoved,
   onClose,
 }: {
-  repository: TrackedRepository;
+  entry: RemovableEntry;
   returnFocus: RefObject<HTMLElement | null>;
-  onRemove: () => ReturnType<typeof window.verdandi.removeRepository>;
+  onRemove: () => Promise<
+    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
+  >;
   onRemoved: (selection: SidebarSelection) => void;
   onClose: () => void;
 }) {
@@ -64,13 +69,27 @@ export function RemoveRepositoryDialog({
           return false;
         }}
       >
-        <DialogTitle className="leading-snug break-words">
-          Remove {repositoryLabel(repository)} from Verdandi?
-        </DialogTitle>
-        <DialogDescription>
-          Nothing on GitHub changes. Its issues leave All; views are not
-          changed. You can add it again at any time.
-        </DialogDescription>
+        {entry.kind === "repository" ? (
+          <>
+            <DialogTitle className="leading-snug break-words">
+              Remove {repositoryLabel(entry.repository)} from Verdandi?
+            </DialogTitle>
+            <DialogDescription>
+              Nothing on GitHub changes. Its issues leave All; views are not
+              changed. You can add it again at any time.
+            </DialogDescription>
+          </>
+        ) : (
+          <>
+            <DialogTitle className="leading-snug break-words">
+              Remove the view “{entry.view.name}”?
+            </DialogTitle>
+            <DialogDescription>
+              Its name and search are deleted from your settings. Tracked
+              repositories and issues are not affected. This can’t be undone.
+            </DialogDescription>
+          </>
+        )}
         {error && (
           <p role="alert" className="break-words text-destructive">
             {error}

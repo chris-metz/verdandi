@@ -2,6 +2,7 @@ import type {
   SidebarEntryKey,
   SidebarDestination,
   RepositoryAddress,
+  SavedView,
 } from "@verdandi/core/contract";
 import type { Platform } from "../../shared/ipc";
 import { sameScope, type SidebarScope as Scope } from "./scope";
@@ -27,6 +28,9 @@ export type WindowCommand =
   | { kind: "refresh" }
   | { kind: "add-repository" }
   | { kind: "remove-repository"; repository: RepositoryAddress }
+  | { kind: "new-view" }
+  | { kind: "edit-view"; view: SavedView }
+  | { kind: "remove-view"; view: SavedView }
   | {
       kind: "reorder";
       entry: SidebarEntryKey;
@@ -60,9 +64,11 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
 /**
  * What a key does in the window before the focused pane gets it: Tab moves
  * the keyboard to the other pane, `r` refreshes what is on screen, `a` opens
- * the repository picker, ⌘/Ctrl+1…9
+ * the repository picker, `v` opens the dialog for a new view and `E` the one
+ * for the selected view, ⌘/Ctrl+1…9
  * select the sidebar's entries in visual order, and in the sidebar ↑/↓ or
- * `j`/`k` select the entry above or below at once. Every other key is the
+ * `j`/`k` select the entry above or below at once, F2 edits the view it has
+ * and ⌫ asks to remove its entry. Every other key is the
  * focused pane's, so a list's keys work only while the main area has the
  * keyboard.
  */
@@ -107,9 +113,19 @@ export function commandForWindowKey(
   }
   if (key === "r") return { kind: "refresh" };
   if (key === "a") return { kind: "add-repository" };
+  if (key === "v" && !shiftKey) return { kind: "new-view" };
+  if (key === "E" && selected?.kind === "view") {
+    return { kind: "edit-view", view: selected.view };
+  }
   if (focused !== "sidebar") return undefined;
   if (key === "Backspace" && !shiftKey && selected?.kind === "repository") {
     return { kind: "remove-repository", repository: selected.repository };
+  }
+  if (key === "Backspace" && !shiftKey && selected?.kind === "view") {
+    return { kind: "remove-view", view: selected.view };
+  }
+  if (key === "F2" && selected?.kind === "view") {
+    return { kind: "edit-view", view: selected.view };
   }
   const index =
     selected === undefined

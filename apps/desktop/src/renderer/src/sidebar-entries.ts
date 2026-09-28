@@ -2,16 +2,22 @@ import type {
   OpenIssueCount,
   SidebarEntries,
   RepositoryEntry,
+  ViewMatchCount,
 } from "@verdandi/core/contract";
 
 import type { SidebarScope as Scope } from "./scope";
 
-/** A sidebar entry: what it selects, and its open-issue count. */
-export interface SidebarItem {
-  scope: Scope;
-  openIssues: OpenIssueCount;
-  unavailable?: RepositoryEntry["unavailable"];
-}
+/**
+ * A sidebar entry: what it selects, and its open-issue count, or a view's
+ * match count.
+ */
+export type SidebarItem =
+  | {
+      scope: Exclude<Scope, { kind: "view" }>;
+      openIssues: OpenIssueCount;
+      unavailable?: RepositoryEntry["unavailable"];
+    }
+  | { scope: Extract<Scope, { kind: "view" }>; matches: ViewMatchCount };
 
 /**
  * The sidebar's entries in visual order, which ⌘/Ctrl+1…9 and ↑/↓ follow:
@@ -36,9 +42,9 @@ export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
         ...(unavailable ? { unavailable } : {}),
       }),
     ),
-    ...sidebar.views.map((view): SidebarItem => ({
+    ...sidebar.views.map(({ view, matches }): SidebarItem => ({
       scope: { kind: "view", view },
-      openIssues: { status: "loading" },
+      matches,
     })),
   ];
 }
@@ -49,4 +55,21 @@ export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
  */
 export function countLabel(count: OpenIssueCount): string {
   return count.status === "known" ? count.count.toLocaleString("en-US") : "–";
+}
+
+const abbreviated = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/**
+ * How the sidebar shows a view's match count: GitHub's total, abbreviated
+ * (4.2k), or "–" until the view has run. A rejected search shows a warning
+ * instead.
+ */
+export function matchCountLabel(
+  matches: Exclude<ViewMatchCount, { status: "rejected" }>,
+): string {
+  if (matches.status === "unknown") return "–";
+  return abbreviated.format(matches.count).replace("K", "k");
 }

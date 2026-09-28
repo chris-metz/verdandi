@@ -101,6 +101,15 @@ export interface GitHubAccess {
   fetchRepositorySuggestions(
     after?: string,
   ): Promise<GitHubResponse<SuggestionPage>>;
+  /**
+   * Runs an issue search, its text exactly as given, through GitHub's
+   * advanced REST search: one page of up to 100 matches, counted from 1.
+   * GitHub rejects a search it cannot read (HTTP 422) with its own message.
+   */
+  searchIssues(
+    query: string,
+    page: number,
+  ): Promise<GitHubResponse<SearchPage>>;
 }
 
 /** Every rate-limit pool, in the order they are listed. */
@@ -125,6 +134,7 @@ export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchRepositorySummaries: "graphql",
   fetchRepositoryAccess: "graphql",
   fetchRepositorySuggestions: "graphql",
+  searchIssues: "search",
 };
 
 /** What a read answers with when it succeeds. */
@@ -269,6 +279,25 @@ export interface SuggestionPage {
   incomplete: GitHubError[];
 }
 
+/** A page of an issue search. */
+export interface SearchPage {
+  /** How many issues and pull requests GitHub counts as matches. */
+  total: number;
+  /** Whether GitHub says it did not search everything in time. */
+  incomplete: boolean;
+  /**
+   * The issues of the page, in GitHub's order. The pull requests a search
+   * also matches, unless it says `is:issue`, are left out: Verdandi does
+   * not show them.
+   */
+  issues: SearchMatch[];
+  /** How many pull requests of the page were left out. */
+  pullRequests: number;
+}
+
+/** An issue as a search answers it, without the issues it relates to. */
+export type SearchMatch = Omit<Issue, "parent" | "subIssues" | "incomplete">;
+
 export interface IssuePage {
   issues: Issue[];
   /** How many closed issues the repository has. */
@@ -337,6 +366,8 @@ export type GitHubError =
    * that timed out. Asking again may succeed.
    */
   | { kind: "server-error"; message: string }
+  /** GitHub rejected a search it cannot read (HTTP 422), saying why. */
+  | { kind: "invalid-search"; message: string }
   /** GitHub answered with any other HTTP error status, e.g. 401. */
   | { kind: "http"; status: number; message: string }
   /** GitHub answered a GraphQL query with any other errors. */

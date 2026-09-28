@@ -153,7 +153,7 @@ it("migrates version 0 on the next write with one exact backup and cleans up mis
   const sidebar = await core.getSidebar();
   expect(await readFile(file(), "utf8")).toBe(JSON.stringify(old));
   if (sidebar.status !== "read") throw new Error("Sidebar missing");
-  const id = sidebar.views[1]?.id;
+  const id = sidebar.views[1]?.view.id;
   if (!id) throw new Error("Second view missing");
   expect(
     await core.reorderSidebar({ kind: "view", id }, { direction: "up" }),

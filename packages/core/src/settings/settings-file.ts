@@ -265,6 +265,20 @@ export function createSettingsFile(
         );
       });
     },
+    saveView(view) {
+      return change((document) => {
+        const entry = document.views.find(({ id }) => id === view.id);
+        if (entry) {
+          entry.name = view.name;
+          entry.query = view.query;
+        } else document.views.push({ ...view });
+      });
+    },
+    removeView(id) {
+      return change((document) => {
+        document.views = document.views.filter((view) => view.id !== id);
+      });
+    },
     createIfMissing() {
       return serial(async () => {
         const empty: Document = { version: 1, repositories: [], views: [] };

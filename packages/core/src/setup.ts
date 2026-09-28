@@ -345,6 +345,7 @@ function suspectsSetup(error: GitHubError): boolean {
     case "unavailable":
     case "rate-limited":
     case "server-error":
+    case "invalid-search":
     case "graphql":
     case "unexpected-response":
       return false;

@@ -1,12 +1,12 @@
 import type {
-  Scope,
   RepositoryEntry,
   TrackedRepository,
 } from "@verdandi/core/contract";
 import { IssueListPane } from "./IssueListPane";
 import { IssuePagePane } from "./IssuePagePane";
 import type { IssueNavigation, IssueVisit } from "./issue-navigation";
-import { scopeLabel } from "./scope";
+import { presentScope, type SidebarScope as Scope } from "./scope";
+import { ViewPane } from "./ViewPane";
 
 /** One sidebar entry's list and the issue pages opened from it. */
 export function MainArea({
@@ -18,11 +18,14 @@ export function MainArea({
   repositories,
   onSelectRepository,
   onRemoveRepository,
+  onEditView,
 }: {
   scope: Scope;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
   onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
+  /** Opens the view dialog for the view shown. */
+  onEditView: () => void;
   /** The issue pages opened from the list, the one shown last. */
   stack: readonly IssueVisit[];
   /** The account GitHub is read as, if known. */
@@ -32,7 +35,17 @@ export function MainArea({
 }) {
   const current = stack.at(-1);
   if (!current)
-    return (
+    return scope.kind === "view" ? (
+      <ViewPane
+        view={scope.view}
+        login={login}
+        hasKeyboard={hasKeyboard}
+        onEdit={onEditView}
+        onOpen={(issue) => {
+          onNavigate({ kind: "open", issue });
+        }}
+      />
+    ) : (
       <IssueListPane
         scope={scope}
         repositories={repositories}
@@ -50,7 +63,7 @@ export function MainArea({
       key={`${String(stack.length)}:${current.issue.id}`}
       visit={current}
       previous={stack.at(-2)?.issue}
-      listLabel={scopeLabel(scope)}
+      listLabel={presentScope(scope).label}
       login={login}
       hasKeyboard={hasKeyboard}
       onNavigate={onNavigate}
