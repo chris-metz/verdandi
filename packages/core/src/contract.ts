@@ -530,6 +530,14 @@ export interface IssuePage {
   loading: LoadingState;
 }
 
+/**
+ * A body's HTML read again for fresh links to its images and videos, or why
+ * it could not be.
+ */
+export type RenewedMediaLinks =
+  | { status: "renewed"; bodyHTML: string }
+  | { status: "failed"; problem: Problem };
+
 /** What became of looking up an issue by its repository and number. */
 export type IssueLookup =
   /**
@@ -559,6 +567,22 @@ export interface CoreRequests {
    * keeps each visit's cursor, expansion and scroll position.
    */
   openIssuePage: (issueId: string) => Promise<void>;
+  /**
+   * Reads a body on an opened issue page again, the issue's (`bodyId` is
+   * the issue's ID) or a comment's, after one of its images or videos failed
+   * to load, and answers with its HTML: GitHub's links to uploaded media
+   * stop working five minutes after it signed them. The page is pushed with
+   * it, even though only those signatures changed.
+   *
+   * Every body on the page with signed links is read in the same one
+   * request, however many of their media fail: calls while it is read share
+   * it, and for a minute after it, a body is answered as it was read. A body
+   * without signed links has nothing to renew, and is answered as it is.
+   */
+  renewMediaLinks: (
+    issueId: string,
+    bodyId: string,
+  ) => Promise<RenewedMediaLinks>;
   /**
    * Looks up an issue by its repository and number, e.g. one a link in an
    * issue's body names, so that its page can be opened, without tracking
@@ -702,6 +726,7 @@ export interface Contract extends CoreRequests {
 
 const requests: Record<keyof CoreRequests, true> = {
   openIssuePage: true,
+  renewMediaLinks: true,
   lookUpIssue: true,
   getSetup: true,
   checkSetupAgain: true,

@@ -3,7 +3,7 @@ import type {
   Problem,
   RepositoryAddress,
 } from "@verdandi/core/contract";
-import { openOnGitHubAttribute } from "./github-html";
+import { openOnGitHubAttribute } from "./own-elements";
 import type { IssueDestination } from "./issue-navigation";
 import { linkTarget, type LinkToIssue } from "./link-target";
 

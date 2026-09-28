@@ -5174,6 +5174,163 @@ describe("issue bodies and comments", () => {
     );
   });
 
+  describe("media links", () => {
+    it("reads a body again for fresh links once one of its images failed to load, showing it although only its signatures changed", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithImages("Crashes", "a")]);
+      const core = createTestCore(github);
+      await openPageUntilLoaded(core, "I_acme/api#1");
+      const pushed: IssuePage[] = [];
+      core.on("issuePageChanged", (page) => pushed.push(page));
+
+      github.addRepository("acme/api", [issueWithImages("Crashes", "b")]);
+      const renewed = await core.renewMediaLinks(
+        "I_acme/api#1",
+        "I_acme/api#1",
+      );
+
+      expect(renewed).toEqual({
+        status: "renewed",
+        bodyHTML: withImage("Crashes", "b"),
+      });
+      expect(pushed.at(-1)?.issue?.bodyHTML).toBe(withImage("Crashes", "b"));
+    });
+
+    /** acme/api#1, whose body and first two comments show an image. */
+    function issueWithThreeImages(signature: string) {
+      return {
+        ...issueWithImages("Crashes", signature),
+        comments: [
+          { author: "octo-dev", bodyHTML: withImage("Here", signature) },
+          { author: "octo-dev", bodyHTML: withImage("There", signature) },
+          { author: "octo-dev", bodyHTML: '<p dir="auto">No image</p>' },
+        ],
+      };
+    }
+
+    it("reads every body with signed links again in one request, however many of their images fail at once", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithThreeImages("a")]);
+      const core = createTestCore(github);
+      await openPageUntilLoaded(core, "I_acme/api#1");
+      const requestsBefore = github.received.length;
+
+      github.addRepository("acme/api", [issueWithThreeImages("b")]);
+      const renewed = await Promise.all(
+        ["I_acme/api#1", "IC_acme/api#1/2", "IC_acme/api#1/1"].map((bodyId) =>
+          core.renewMediaLinks("I_acme/api#1", bodyId),
+        ),
+      );
+
+      expect(renewed).toEqual([
+        { status: "renewed", bodyHTML: withImage("Crashes", "b") },
+        { status: "renewed", bodyHTML: withImage("There", "b") },
+        { status: "renewed", bodyHTML: withImage("Here", "b") },
+      ]);
+      expect(github.received.slice(requestsBefore)).toEqual([
+        "fetchBodyHtml acme/api#1 acme/api#1/1 acme/api#1/2",
+      ]);
+    });
+
+    it("answers for a body read again less than a minute ago as it was read, and reads it again after", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithThreeImages("a")]);
+      const clock = createClock();
+      const core = createTestCore(github, { clock });
+      await openPageUntilLoaded(core, "I_acme/api#1");
+      github.addRepository("acme/api", [issueWithThreeImages("b")]);
+      await core.renewMediaLinks("I_acme/api#1", "I_acme/api#1");
+      const requestsBefore = github.received.length;
+
+      github.addRepository("acme/api", [issueWithThreeImages("c")]);
+      clock.advance(minute - 1);
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "IC_acme/api#1/1"),
+      ).toEqual({ status: "renewed", bodyHTML: withImage("Here", "b") });
+      expect(github.received.length).toBe(requestsBefore);
+
+      clock.advance(1);
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "IC_acme/api#1/1"),
+      ).toEqual({ status: "renewed", bodyHTML: withImage("Here", "c") });
+      expect(github.received.slice(requestsBefore)).toEqual([
+        "fetchBodyHtml acme/api#1 acme/api#1/1 acme/api#1/2",
+      ]);
+    });
+
+    it("says why a body could not be read again, showing it as it was, and reads it when asked again", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithImages("Crashes", "a")]);
+      const core = createTestCore(github);
+      const page = await openPageUntilLoaded(core, "I_acme/api#1");
+      const pushed: IssuePage[] = [];
+      core.on("issuePageChanged", (changed) => pushed.push(changed));
+
+      github.addRepository("acme/api", [issueWithImages("Crashes", "b")]);
+      github.failNextWith(cannotReachGitHub);
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "I_acme/api#1"),
+      ).toEqual({
+        status: "failed",
+        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      });
+      expect(pushed.at(-1)?.issue?.bodyHTML ?? page.issue?.bodyHTML).toBe(
+        withImage("Crashes", "a"),
+      );
+
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "I_acme/api#1"),
+      ).toEqual({ status: "renewed", bodyHTML: withImage("Crashes", "b") });
+    });
+
+    it("says a comment GitHub no longer shows could not be read again", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithImages("Crashes", "a")]);
+      const core = createTestCore(github);
+      await openPageUntilLoaded(core, "I_acme/api#1");
+
+      github.addRepository("acme/api", [
+        { ...issueWithImages("Crashes", "b"), comments: [] },
+      ]);
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "IC_acme/api#1/1"),
+      ).toEqual({
+        status: "failed",
+        problem: { kind: "unavailable", access: undefined },
+      });
+    });
+
+    it("reads nothing again for a page no longer on screen", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [
+        issueWithImages("Crashes", "a"),
+        { number: 2, title: "Dark mode" },
+      ]);
+      const core = createTestCore(github);
+      await openPageUntilLoaded(core, "I_acme/api#1");
+      await openPageUntilLoaded(core, "I_acme/api#2");
+      const requestsBefore = github.received.length;
+
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "I_acme/api#1"),
+      ).toEqual({ status: "failed", problem: { kind: "interrupted" } });
+      expect(github.received.length).toBe(requestsBefore);
+    });
+
+    it("answers for a body without signed links as it is, asking GitHub nothing", async () => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.addRepository("acme/api", [issueWithThreeImages("a")]);
+      const core = createTestCore(github);
+      await openPageUntilLoaded(core, "I_acme/api#1");
+      const requestsBefore = github.received.length;
+
+      expect(
+        await core.renewMediaLinks("I_acme/api#1", "IC_acme/api#1/3"),
+      ).toEqual({ status: "renewed", bodyHTML: '<p dir="auto">No image</p>' });
+      expect(github.received.length).toBe(requestsBefore);
+    });
+  });
+
   it("shows the comments that could be read when the rest could not, and reads them all on Retry", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [

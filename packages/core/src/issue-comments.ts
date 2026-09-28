@@ -62,6 +62,30 @@ export function showComments(state: CommentsState): IssueComments {
   return { comments: read.comments, loading };
 }
 
+/** Every comment shown or arriving, by ID, with its body's HTML. */
+export function commentBodies(state: CommentsState): Map<string, string> {
+  return new Map(
+    [...(state.read?.comments ?? []), ...state.arriving].map((comment) => [
+      comment.id,
+      comment.bodyHTML,
+    ]),
+  );
+}
+
+/** Shows a comment's body as read again, e.g. for fresh media links. */
+export function replaceCommentBody(
+  state: CommentsState,
+  id: string,
+  bodyHTML: string,
+) {
+  const replaced = (comment: IssueComment) =>
+    comment.id === id ? { ...comment, bodyHTML } : comment;
+  if (state.read) {
+    state.read = { ...state.read, comments: state.read.comments.map(replaced) };
+  }
+  state.arriving = state.arriving.map(replaced);
+}
+
 /**
  * Whether the comments are to be read: they have not all been read since
  * `validFrom`.

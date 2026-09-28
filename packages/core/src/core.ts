@@ -254,6 +254,9 @@ export function createCore({
       session.sidebar.revalidate();
       return Promise.resolve();
     },
+    renewMediaLinks(issueId, bodyId) {
+      return session.pages.renewMediaLinks(issueId, bodyId);
+    },
     async lookUpIssue(repository, number) {
       // Asked for, it is as urgent as what is on screen.
       const answer = await session.request(

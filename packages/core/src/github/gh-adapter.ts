@@ -50,6 +50,16 @@ const issueUnavailable: GitHubError = {
   access: undefined,
 };
 
+/**
+ * A body GitHub left out of its answer without saying why, as it may for a
+ * comment that was deleted.
+ */
+const bodyUnavailable: GitHubError = {
+  kind: "unavailable",
+  message: "Body unavailable or not accessible with this account.",
+  access: undefined,
+};
+
 /** Another issue as a relationship names it. */
 const referenceFields = "id number title state repository { nameWithOwner }";
 
@@ -240,6 +250,48 @@ export function createGhAdapter({
               errors.length > 0
                 ? graphqlError(errors, headers)
                 : { kind: "unexpected-response" },
+          };
+        },
+      );
+    },
+    fetchBodyHtml(ids) {
+      return graphql(
+        `nodes(ids: $ids) {
+          ... on Issue { bodyHTML }
+          ... on IssueComment { bodyHTML }
+        }`,
+        { ids: { type: "[ID!]!", value: ids } },
+        ({ data, errors, headers }) => {
+          const nodes = isObject(data) ? data.nodes : undefined;
+          if (!Array.isArray(nodes)) {
+            return {
+              ok: false,
+              error:
+                errors.length > 0
+                  ? graphqlError(errors, headers)
+                  : { kind: "unexpected-response" },
+            };
+          }
+          // Each body is GitHub's answer in its place, whatever the others'.
+          return {
+            ok: true,
+            value: ids.map((_, index): GitHubResult<string> => {
+              const node = (nodes as unknown[])[index];
+              if (isObject(node) && typeof node.bodyHTML === "string") {
+                return { ok: true, value: node.bodyHTML };
+              }
+              const aboutIt = errorsAbout(errors, ["nodes", index]);
+              if (aboutIt.length > 0) {
+                return { ok: false, error: graphqlError(aboutIt, headers) };
+              }
+              return {
+                ok: false,
+                error:
+                  node === null || node === undefined
+                    ? bodyUnavailable
+                    : { kind: "unexpected-response" },
+              };
+            }),
           };
         },
       );

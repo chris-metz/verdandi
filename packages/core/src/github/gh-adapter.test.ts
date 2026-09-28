@@ -1998,6 +1998,63 @@ describe("gh adapter: bodies and comments", () => {
     });
   });
 
+  it("reads the HTML of issues' and comments' bodies by node ID, each in its place", async () => {
+    const signed =
+      "https://private-user-images.githubusercontent.com/1/2-3f2a.png?jwt=b";
+    const requests: GraphqlRequest[] = [];
+    const message =
+      "Could not resolve to a node with the global id of 'IC_kwDOAbCdEs4AAAAC'";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 1,
+          stderr: `gh: ${message}\n`,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                nodes: [
+                  { bodyHTML: `<p dir="auto"><img src="${signed}"></p>` },
+                  null,
+                  { bodyHTML: "" },
+                ],
+              },
+              errors: [{ type: "NOT_FOUND", path: ["nodes", 1], message }],
+            }),
+          ),
+        },
+        requests,
+      ),
+    });
+
+    const read = await github.fetchBodyHtml([
+      "I_kwDOAbCdEs4AAAAZ",
+      "IC_kwDOAbCdEs4AAAAC",
+      "IC_kwDOAbCdEs4AAAAD",
+    ]);
+
+    expect(read).toMatchObject({
+      ok: true,
+      value: [
+        { ok: true, value: `<p dir="auto"><img src="${signed}"></p>` },
+        {
+          ok: false,
+          error: { kind: "unavailable", message, access: undefined },
+        },
+        { ok: true, value: "" },
+      ],
+    });
+    expect(requests[0]?.query).toMatch(/\.\.\. on Issue \{ bodyHTML \}/);
+    expect(requests[0]?.query).toMatch(/\.\.\. on IssueComment \{ bodyHTML \}/);
+    expect(requests[0]?.variables).toEqual({
+      ids: ["I_kwDOAbCdEs4AAAAZ", "IC_kwDOAbCdEs4AAAAC", "IC_kwDOAbCdEs4AAAAD"],
+    });
+  });
+
   it("reports a page of comments it cannot read", async () => {
     const github = createGhAdapter({
       gh: ghPath,

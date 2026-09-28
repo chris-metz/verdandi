@@ -32,6 +32,15 @@ export interface GitHubAccess {
     after?: string,
   ): Promise<GitHubResponse<CommentPage>>;
   /**
+   * Reads the HTML GitHub renders for up to 100 bodies, of issues or
+   * comments, by node ID, with freshly signed links to their media. A body
+   * GitHub cannot resolve or read gets its own error, in its place among
+   * the others, which are still read.
+   */
+  fetchBodyHtml(
+    ids: readonly string[],
+  ): Promise<GitHubResponse<GitHubResult<string>[]>>;
+  /**
    * Reads what a repository numbers so, following renames: an issue, or a
    * pull request, which shares their numbers.
    */
@@ -82,6 +91,7 @@ export type GitHubRead = Exclude<keyof GitHubAccess, "fetchAuthStatus">;
 export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchIssueDetails: "graphql",
   fetchIssueComments: "graphql",
+  fetchBodyHtml: "graphql",
   fetchIssueByNumber: "graphql",
   fetchOpenIssues: "graphql",
   fetchIssues: "graphql",

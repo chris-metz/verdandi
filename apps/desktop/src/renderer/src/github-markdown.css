@@ -602,14 +602,103 @@
     border-radius: 0 0 6px 6px;
   }
 
-  /* Images and videos, which load in a later version */
+  /* Images, videos and attachments */
+
+  /* At their own size at most, shrunk to the column, keeping their shape. */
+  .markdown-body img.media-image {
+    display: inline;
+    max-width: 100%;
+    height: auto;
+    box-sizing: content-box;
+    vertical-align: middle;
+  }
+
+  .markdown-body img.media-image[role="button"] {
+    cursor: zoom-in;
+  }
+
+  .markdown-body img.media-image:focus-visible,
+  .markdown-body .attachment:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .markdown-body video.media-video {
+    display: block;
+    max-width: 100%;
+    max-height: 640px;
+    border-radius: 6px;
+  }
+
+  .markdown-body details > video.media-video {
+    margin-top: 8px;
+  }
+
+  .markdown-body .attachment {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 0 8px;
+    font-size: 12px;
+    line-height: 22px;
+    color: var(--foreground);
+    text-decoration: none;
+    vertical-align: middle;
+    border: 1px solid var(--gh-border);
+    border-radius: 6px;
+  }
+
+  .markdown-body .attachment:hover {
+    background-color: var(--gh-neutral-muted);
+  }
+
+  .markdown-body .attachment .octicon {
+    flex-shrink: 0;
+    color: var(--gh-fg-muted);
+  }
+
+  /* Where an image or video does not show, and why */
 
   .markdown-body .media-placeholder {
-    display: inline-block;
-    padding: 2px 8px;
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    max-width: 100%;
+    padding: 2px 4px 2px 8px;
     font-size: 12px;
+    vertical-align: middle;
     color: var(--gh-fg-muted);
     border: 1px dashed var(--gh-border);
     border-radius: 6px;
+  }
+
+  .markdown-body .media-placeholder-name {
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+  }
+
+  .markdown-body .media-placeholder-reason::before {
+    content: "· ";
+  }
+
+  .markdown-body .media-placeholder button {
+    padding: 0 6px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .markdown-body .media-placeholder button:hover:not([aria-disabled="true"]) {
+    color: var(--foreground);
+    background-color: var(--gh-neutral-muted);
+  }
+
+  .markdown-body .media-placeholder button:focus-visible {
+    outline: 2px solid var(--ring);
+  }
+
+  .markdown-body .media-placeholder button[aria-disabled="true"] {
+    cursor: progress;
   }
 }

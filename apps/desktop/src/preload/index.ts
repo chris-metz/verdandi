@@ -41,6 +41,11 @@ const desktop: DesktopApi = {
       DesktopApi["chooseGhExecutable"]
     >;
   },
+  loadImage(url) {
+    return ipcRenderer.invoke(ipcChannels.loadImage, url) as ReturnType<
+      DesktopApi["loadImage"]
+    >;
+  },
   // Other Unix systems, which Electron does not ship for, count as Linux.
   platform:
     process.platform === "darwin" || process.platform === "win32"

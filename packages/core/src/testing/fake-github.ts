@@ -131,7 +131,9 @@ export interface FakeGitHub extends GitHubAccess {
    * The reads GitHub has received so far, in order, each as its method and
    * what it asks about: `fetchOpenIssues acme/api`, `fetchIssues acme/api#2
    * other/lib#5`, `fetchIssueDetails acme/api#1`, `fetchIssueComments
-   * acme/api#1 after 100` or `fetchRepositorySummaries acme/api acme/web`.
+   * acme/api#1 after 100`, `fetchBodyHtml acme/api#1 acme/api#1/2` (the
+   * issue's body and its second comment's) or `fetchRepositorySummaries
+   * acme/api acme/web`.
    */
   readonly received: readonly string[];
   /**
@@ -415,6 +417,29 @@ export function createFakeGitHub({
     };
   }
 
+  /**
+   * The HTML of a body by node ID: an issue's, `I_owner/name#number`, or a
+   * comment's, `IC_owner/name#number/n`.
+   */
+  function bodyHtml(id: string): GitHubResult<string> {
+    const comment = /^IC_(.+)\/(\d+)$/.exec(id);
+    const ref = comment?.[1] ?? id.replace(/^I_/, "");
+    const message = `Could not resolve to a node with the global id of '${id}'.`;
+    const hides = unavailable(ref, message);
+    if (hides) return { ok: false, error: hides };
+    const issue = find(ref);
+    const bodyHTML = comment
+      ? issue?.comments?.[Number(comment[2]) - 1]?.bodyHTML
+      : issue && (issue.metadata?.bodyHTML ?? "");
+    if (bodyHTML === undefined) {
+      return {
+        ok: false,
+        error: { kind: "unavailable", message, access: undefined },
+      };
+    }
+    return { ok: true, value: bodyHTML };
+  }
+
   return {
     signInAs(login, source = "stored") {
       viewer = login;
@@ -561,6 +586,24 @@ export function createFakeGitHub({
               nextPage: end < all.length ? String(end) : undefined,
             },
           };
+        },
+      );
+    },
+    fetchBodyHtml(ids) {
+      return answer(
+        "fetchBodyHtml",
+        ids.map((id) => id.replace(/^IC?_/, "")).join(" "),
+        () => {
+          if (ids.length > 100) {
+            return {
+              ok: false,
+              error: {
+                kind: "graphql",
+                messages: ["You may not request more than 100 nodes at once."],
+              },
+            };
+          }
+          return { ok: true, value: ids.map(bodyHtml) };
         },
       );
     },

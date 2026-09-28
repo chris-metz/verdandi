@@ -1,3 +1,13 @@
+import { attachmentOf, mediaSource } from "./media";
+import {
+  mediaImage,
+  mediaPlaceholder,
+  mediumName,
+  openOnGitHubAttribute,
+  ownButton,
+  thirdPartyPlaceholder,
+} from "./own-elements";
+
 /**
  * Verdandi's own allowlist for the HTML GitHub renders for issue bodies and
  * comments (ADR 0003). That HTML is untrusted. It is parsed into an inert
@@ -10,8 +20,13 @@
  * GitHub's own structures come through as its stylesheet expects them:
  * highlighted code, task lists, alerts, tables, footnotes and `<details>`.
  * What github.com renders in the browser, such as Mermaid diagrams and math,
- * shows as its source with **Open on GitHub**. Images and videos show as
- * placeholders, and emoji GitHub draws as images as their names.
+ * shows as its source with **Open on GitHub**. Emoji GitHub draws as images
+ * show as their names.
+ *
+ * Images and videos load from GitHub's media hosts only, as `mediaSource`
+ * says; an image from anywhere else shows as a placeholder that loads it
+ * once asked. Images open in the viewer, unless they are in a link, and
+ * attached files show as chips.
  */
 export function sanitizeGitHubHtml(
   html: string,
@@ -22,9 +37,6 @@ export function sanitizeGitHubHtml(
   appendChildren(fragment, source.body, document);
   return fragment;
 }
-
-/** Marks the buttons that open what a body or comment shows on GitHub. */
-export const openOnGitHubAttribute = "data-open-on-github";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
 const htmlNamespace = "http://www.w3.org/1999/xhtml";
@@ -235,8 +247,22 @@ function appendElement(target: Node, element: Element, document: Document) {
       target.appendChild(image(element, document));
       return;
     case "video":
-      target.appendChild(placeholder("Video", undefined, document));
+      target.appendChild(video(element, document));
       return;
+    case "a": {
+      if (wrapsItsImage(element)) {
+        appendChildren(target, element, document);
+        return;
+      }
+      const href = safeHref(element.getAttribute("href") ?? "") ?? "";
+      const attachment = attachmentOf(href);
+      if (attachment) {
+        const name = attachment.name ?? element.textContent.trim();
+        target.appendChild(attachmentChip(href, name, document));
+        return;
+      }
+      break;
+    }
     case "input":
       if (element.getAttribute("type") === "checkbox") {
         target.appendChild(checkbox(element, document));
@@ -416,11 +442,13 @@ function sourceBlock(
   header.className = "client-rendered-header";
   const title = document.createElement("span");
   title.textContent = name;
-  const open = document.createElement("button");
-  open.type = "button";
-  open.setAttribute(openOnGitHubAttribute, "");
-  open.textContent = "Open on GitHub";
-  header.append(title, open);
+  header.append(
+    title,
+    ownButton(
+      { label: "Open on GitHub", attribute: openOnGitHubAttribute },
+      document,
+    ),
+  );
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   code.textContent = source;
@@ -430,28 +458,112 @@ function sourceBlock(
 }
 
 /**
+ * Whether a link is the one GitHub puts around an image, to the image
+ * itself, which Verdandi's viewer shows instead.
+ */
+function wrapsItsImage(link: Element): boolean {
+  const href = link.getAttribute("href") ?? "";
+  return (
+    mediaSource("image", href).kind === "github" &&
+    link.querySelector("img") !== null
+  );
+}
+
+/**
  * An image: an emoji GitHub draws as one shows as its name, e.g.
- * `:octocat:`; any other as a placeholder with its description.
+ * `:octocat:`. One on GitHub's media hosts loads, at its own size at most,
+ * and opens in the viewer unless it is in a link. One from elsewhere loads
+ * only once asked, and any other shows as a placeholder.
  */
 function image(element: Element, document: Document): Node {
   const alt = element.getAttribute("alt") ?? "";
   if (element.classList.contains("emoji")) return document.createTextNode(alt);
-  return placeholder("Image", alt, document);
+  const source = mediaSource("image", element.getAttribute("src") ?? "");
+  switch (source.kind) {
+    case "github": {
+      const link = element.closest("a[href]");
+      const img = mediaImage(document, {
+        src: source.url,
+        alt,
+        inLink: link !== null && !wrapsItsImage(link),
+      });
+      for (const dimension of ["width", "height"]) {
+        const value = element.getAttribute(dimension);
+        if (value !== null && /^\d{1,5}$/.test(value)) {
+          img.setAttribute(dimension, value);
+        }
+      }
+      return img;
+    }
+    case "third-party":
+      return thirdPartyPlaceholder(document, {
+        url: source.url,
+        alt,
+        reason: `On ${new URL(source.url).host}`,
+      });
+    case "none":
+      return cannotShow(mediumName("Image", alt), document);
+  }
 }
 
-/** Where an image or video would show, named, and its description. */
-function placeholder(
-  kind: string,
-  description: string | undefined,
+/**
+ * A video on GitHub's media hosts, with controls, which never plays on its
+ * own, named by its file as GitHub names it above it; any other as a
+ * placeholder.
+ */
+function video(element: Element, document: Document): Node {
+  const source = mediaSource("video", element.getAttribute("src") ?? "");
+  const summary = element.closest("details")?.querySelector("summary");
+  const name = summary?.textContent.trim() ?? "";
+  if (source.kind !== "github") {
+    return cannotShow(mediumName("Video", name), document);
+  }
+  const copy = document.createElement("video");
+  copy.className = "media-video";
+  copy.setAttribute("src", source.url);
+  copy.setAttribute("controls", "");
+  copy.setAttribute("preload", "metadata");
+  if (name) copy.setAttribute("aria-label", name);
+  return copy;
+}
+
+/** Where an image or video that cannot load here would show. */
+function cannotShow(name: string, document: Document): HTMLElement {
+  return mediaPlaceholder(document, {
+    name,
+    reason: "Cannot be shown here",
+    buttons: [{ label: "Open on GitHub", attribute: openOnGitHubAttribute }],
+  });
+}
+
+/** The shape of GitHub's `file` Octicon. */
+const fileIcon =
+  "M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z";
+
+/**
+ * An attached file, as a chip with a file icon and its name, whose link
+ * opens it in the browser, where GitHub's session lets the user download it.
+ */
+function attachmentChip(
+  href: string,
+  name: string,
   document: Document,
-): HTMLElement {
-  const span = document.createElement("span");
-  span.className = "media-placeholder";
-  span.textContent =
-    description && description.toLowerCase() !== kind.toLowerCase()
-      ? `${kind}: ${description}`
-      : kind;
-  return span;
+): HTMLAnchorElement {
+  const chip = document.createElement("a");
+  chip.className = "attachment";
+  chip.setAttribute("href", href);
+  chip.setAttribute("title", "Opens in the browser");
+  const svg = document.createElementNS(svgNamespace, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("class", "octicon octicon-file");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(svgNamespace, "path");
+  path.setAttribute("d", fileIcon);
+  svg.appendChild(path);
+  chip.append(svg, name || "Attachment");
+  return chip;
 }
 
 /** A task list's checkbox, which only shows whether the task is done. */

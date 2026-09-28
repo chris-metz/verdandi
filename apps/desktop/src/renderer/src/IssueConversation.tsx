@@ -59,6 +59,9 @@ export function IssueConversation({
               url={issue.url}
               login={login}
               onOpenIssue={onOpenIssue}
+              onRenewMedia={() =>
+                window.verdandi.renewMediaLinks(issue.id, issue.id)
+              }
             />
           )}
         </article>
@@ -75,6 +78,7 @@ export function IssueConversation({
             {comments.comments.map((comment) => (
               <Comment
                 key={comment.id}
+                issueId={issue.id}
                 comment={comment}
                 login={login}
                 onOpenIssue={onOpenIssue}
@@ -134,10 +138,13 @@ export function IssueConversation({
  * body. It shows again only when it changed.
  */
 const Comment = memo(function Comment({
+  issueId,
   comment,
   login,
   onOpenIssue,
 }: {
+  /** The issue it is on. */
+  issueId: string;
   comment: IssueComment;
   login: string | undefined;
   onOpenIssue: (link: LinkToIssue) => Promise<Problem | undefined>;
@@ -170,6 +177,9 @@ const Comment = memo(function Comment({
           url={comment.url}
           login={login}
           onOpenIssue={onOpenIssue}
+          onRenewMedia={() =>
+            window.verdandi.renewMediaLinks(issueId, comment.id)
+          }
         />
       </div>
     </li>

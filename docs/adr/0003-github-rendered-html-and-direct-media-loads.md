@@ -4,6 +4,8 @@ Issue bodies and comments are displayed from the HTML GitHub renders for them (G
 
 The issue-page metadata in [issue #25](https://github.com/chris-metz/verdandi/issues/25) extends this direct-image exception to `https://avatars.githubusercontent.com` for assignee avatars returned by GitHub. These requests carry no GitHub token or referrer. The renderer's CSP names that host explicitly; external avatar URLs on other hosts do not load. This adds GitHub's own avatar service to the original media-host allowance without allowing arbitrary image hosts.
 
+The media ticket, [issue #32](https://github.com/chris-metz/verdandi/issues/32), lets an image without a Camo link load after an explicit click on its placeholder. Nothing loads until the user clicks. The main process then fetches the image with Node's own `fetch`, outside the window's session. The fetch is `https://` only, including redirects, and sends no cookies, credentials or referrer. The file must be an image of at most 10 MB. The renderer shows it as a `blob:` URL, which its CSP allows for this, so the CSP still names no other image host. The renderer itself still contacts no host named in issue content. The click reveals the user's IP address to that host, as opening the image in a browser would.
+
 ## Considered Options
 
 - **Render the raw Markdown locally:** it would have to rebuild GitHub's reference resolution, emoji and highlighting, and it gets no Camo links. Private media would then only be reachable by fetching `github.com/user-attachments` URLs with gh's token, which is undocumented and reportedly fails with fine-grained tokens.

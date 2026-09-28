@@ -15,6 +15,8 @@ export const ipcChannels = {
   openExternal: "desktop:open-external",
   /** Renderer → main: `()` to let the user choose gh in a file dialog. */
   chooseGhExecutable: "desktop:choose-gh-executable",
+  /** Renderer → main: `(url)` of an image to load from elsewhere than GitHub. */
+  loadImage: "desktop:load-image",
 } as const;
 
 /**
@@ -48,9 +50,21 @@ export interface DesktopApi {
    * it is a usable gh.
    */
   chooseGhExecutable: () => Promise<GhChoice | { status: "canceled" }>;
+  /**
+   * Loads an image a body shows from elsewhere than GitHub's media hosts,
+   * once the user asked: the window's Content Security Policy would not let
+   * it load there. It is an `https://` one, fetched without credentials or
+   * referrer, at most 10 MB.
+   */
+  loadImage: (url: string) => Promise<LoadedImage>;
   /** The operating system, e.g. for ⌘ or Ctrl in shortcuts. */
   platform: Platform;
 }
+
+/** An image loaded for the renderer, or why it could not be. */
+export type LoadedImage =
+  | { status: "loaded"; bytes: Uint8Array<ArrayBuffer>; type: string }
+  | { status: "failed"; reason: string };
 
 /** The operating systems Verdandi runs on, as Node names them. */
 export type Platform = "darwin" | "win32" | "linux";

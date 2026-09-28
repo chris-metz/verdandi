@@ -2,10 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Images and videos load only from GitHub's media hosts (ADR 0003), and
+      images the user asked to load from elsewhere only as blobs, which the
+      app fetched for them.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; font-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://avatars.githubusercontent.com https://private-user-images.githubusercontent.com https://user-images.githubusercontent.com https://camo.githubusercontent.com; media-src https://private-user-images.githubusercontent.com https://user-images.githubusercontent.com; font-src 'self' data:"
     />
+    <meta name="referrer" content="no-referrer" />
     <title>Verdandi</title>
   </head>
   <body>

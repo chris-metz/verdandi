@@ -28,6 +28,7 @@ import {
   rendererRequestNames,
   type DesktopApi,
 } from "../shared/ipc";
+import { loadImage } from "./load-image";
 
 const host: HostEnvironment = {
   platform: process.platform,
@@ -57,6 +58,8 @@ ipcMain.on(ipcChannels.openExternal, (_event, url: unknown) => {
 ipcMain.handle(ipcChannels.chooseGhExecutable, (event) =>
   chooseGhExecutable(BrowserWindow.fromWebContents(event.sender)),
 );
+// An image from elsewhere than GitHub's media hosts, once the user asked.
+ipcMain.handle(ipcChannels.loadImage, (_event, url: unknown) => loadImage(url));
 
 void app.whenReady().then(() => {
   createWindow();

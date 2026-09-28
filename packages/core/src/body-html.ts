@@ -1,15 +1,4 @@
-/**
- * The link to an uploaded image or video in GitHub's HTML, as it signs it
- * anew in every answer: the same address, with another signature in its
- * query string.
- */
-const signedMediaLink =
-  /(https:\/\/private-user-images\.githubusercontent\.com\/[^\s"'<>?#]*)\?[^\s"'<>#]*/g;
-
-/** GitHub's HTML without the signatures of its media links. */
-function withoutSignatures(html: string): string {
-  return html.replace(signedMediaLink, "$1");
-}
+import { sameExceptSignatures } from "./signed-links.ts";
 
 /**
  * The HTML read before, unless the HTML read now differs from it in more
@@ -20,8 +9,7 @@ export function keepUnlessChanged(
   before: string | undefined,
   now: string,
 ): string {
-  return before !== undefined &&
-    withoutSignatures(before) === withoutSignatures(now)
+  return before !== undefined && sameExceptSignatures(before, now)
     ? before
     : now;
 }

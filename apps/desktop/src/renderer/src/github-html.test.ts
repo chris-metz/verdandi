@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { sanitizeGitHubHtml } from "./github-html";
+import {
+  imageAltAttribute,
+  loadImageAttribute,
+  openOnGitHubAttribute,
+} from "./own-elements";
 
 /** GitHub's HTML as Verdandi inserts it. */
 function inserted(html: string): HTMLElement {
@@ -68,6 +73,13 @@ const hostileCorpus = [
   "<dialog open>x</dialog>",
   '<frameset onload="alert(1)"></frameset>',
   '<p data-open-on-github="">x</p>',
+  '<button type="button" data-load-image="https://evil.example/x.png">Load image</button>',
+  '<img src="https://private-user-images.githubusercontent.com/1/2.png?jwt=x" onerror="alert(1)" srcset="https://evil.example/2x.png 2x" usemap="#m" ismap style="position: fixed">',
+  '<video src="https://private-user-images.githubusercontent.com/1/2.mp4?jwt=x" autoplay loop onplay="alert(1)" poster="https://evil.example/x.png"><track src="https://evil.example/t.vtt"></video>',
+  '<video src="https://camo.githubusercontent.com/x.mp4" autoplay></video>',
+  '<img src="https://camo.githubusercontent.com.evil.example/x.png">',
+  '<img src="https://octo:secret@camo.githubusercontent.com/x.png">',
+  '<a href="https://camo.githubusercontent.com/x"><img src="https://evil.example/x.png"></a>',
   "<!-- <img src=x onerror=alert(1)> -->",
 ];
 
@@ -86,6 +98,39 @@ const loadingAttributes = [
   "ping",
   "xlink:href",
 ];
+
+/** Images and videos loaded from GitHub's media hosts, by their tag. */
+const mediaHosts: Record<string, RegExp> = {
+  img: /^https:\/\/(private-user-images|user-images|camo)\.githubusercontent\.com\//,
+  video:
+    /^https:\/\/(private-user-images|user-images)\.githubusercontent\.com\//,
+};
+
+/** The attributes Verdandi's own buttons carry. */
+const buttonAttributes = [
+  "type",
+  openOnGitHubAttribute,
+  loadImageAttribute,
+  imageAltAttribute,
+];
+
+/**
+ * Whether Verdandi made an element, rather than kept it: its own buttons,
+ * which carry its attributes only, and images and videos from GitHub's
+ * media hosts.
+ */
+function isVerdandis(element: Element): boolean {
+  if (element.localName === "button") {
+    return (
+      element.getAttribute("type") === "button" &&
+      [...element.attributes].every(({ name }) =>
+        buttonAttributes.includes(name),
+      )
+    );
+  }
+  const host = mediaHosts[element.localName];
+  return host?.test(element.getAttribute("src") ?? "") ?? false;
+}
 
 describe("GitHub's HTML", () => {
   it("keeps GitHub's formatting of text", () => {
@@ -175,14 +220,77 @@ describe("GitHub's HTML", () => {
     );
   });
 
-  it("shows images and videos as placeholders, loading nothing", () => {
-    const signed =
-      "https://private-user-images.githubusercontent.com/1/2-3f2a.png?jwt=abc";
-    const html = `<p dir="auto"><a target="_blank" rel="noopener noreferrer" href="${signed}"><img src="${signed}" alt="Screenshot" style="max-width: 100%;"></a> <img src="${signed}" alt="Image"></p>\n<details open="" class="details-reset border rounded-2"><summary class="py-2 px-3"><span aria-label="Video description demo.mp4" class="m-1">demo.mp4</span></summary><video src="${signed}" data-canonical-src="${signed}" controls="controls" muted="muted" class="d-block"></video></details>`;
+  const signed =
+    "https://private-user-images.githubusercontent.com/1/2-3f2a.png?jwt=abc";
+  const legacy = "https://user-images.githubusercontent.com/1/2-9c1d.png";
+  const camo =
+    "https://camo.githubusercontent.com/8f1a/68747470733a2f2f6578616d706c652e636f6d2f782e706e67";
+
+  it("shows uploaded images to open in the viewer, instead of GitHub's link around them", () => {
+    const html = `<p dir="auto"><a target="_blank" rel="noopener noreferrer" href="${signed}"><img src="${signed}" alt="Screenshot" style="max-width: 100%;"></a> <img width="320" height="200" alt="Image" src="${legacy}" class="js-gh-image-fallback" style="aspect-ratio: 8 / 5; background-color: var(--bgColor-muted);"></p>`;
 
     expect(sanitized(html)).toBe(
-      `<p dir="auto"><a href="${signed}"><span class="media-placeholder">Image: Screenshot</span></a> <span class="media-placeholder">Image</span></p>\n<details open=""><summary><span>demo.mp4</span></summary><span class="media-placeholder">Video</span></details>`,
+      `<p dir="auto"><img class="media-image" src="${signed}" alt="Screenshot" tabindex="0" role="button"> <img class="media-image" src="${legacy}" alt="Image" tabindex="0" role="button" width="320" height="200"></p>`,
     );
+  });
+
+  it("shows third-party images through Camo, following a link around one that leads elsewhere", () => {
+    const badge = camo.replace("8f1a", "7e2b");
+    const html = `<p dir="auto"><a target="_blank" rel="noopener noreferrer nofollow" href="${camo}"><img src="${camo}" data-canonical-src="https://example.com/x.png" alt="Diagram" style="max-width: 100%;"></a> <a href="https://ci.example/build" rel="nofollow"><img src="${badge}" data-canonical-src="https://ci.example/badge.svg" alt="CI"></a></p>`;
+
+    expect(sanitized(html)).toBe(
+      `<p dir="auto"><img class="media-image" src="${camo}" alt="Diagram" tabindex="0" role="button"> <a href="https://ci.example/build"><img class="media-image" src="${badge}" alt="CI"></a></p>`,
+    );
+  });
+
+  it("shows uploaded videos with controls, named by their file, never playing on their own", () => {
+    const video = signed.replace(".png", ".mp4");
+    const html = `<details open="" class="details-reset border rounded-2"><summary class="py-2 px-3"><span aria-label="Video description demo.mp4" class="m-1">demo.mp4</span></summary><video src="${video}" data-canonical-src="${video}" controls="controls" muted="muted" autoplay loop poster="https://example.com/p.png" class="d-block"></video></details>`;
+
+    expect(sanitized(html)).toBe(
+      `<details open=""><summary><span>demo.mp4</span></summary><video class="media-video" src="${video}" controls="" preload="metadata" aria-label="demo.mp4"></video></details>`,
+    );
+  });
+
+  it("loads an image from anywhere else only once asked", () => {
+    expect(
+      sanitized('<p><img src="https://example.com/logo.png" alt="Logo"></p>'),
+    ).toBe(
+      '<p><span class="media-placeholder"><span class="media-placeholder-name">Image: Logo</span><span class="media-placeholder-reason">On example.com</span><button type="button" data-load-image="https://example.com/logo.png" data-image-alt="Logo">Load image</button></span></p>',
+    );
+  });
+
+  it.each([
+    ['<img src="http://example.com/old.png" alt="Old">', "Image: Old"],
+    ['<video src="https://example.com/demo.mp4"></video>', "Video"],
+  ])("shows %s, which cannot load, with Open on GitHub", (html, name) => {
+    expect(sanitized(html)).toBe(
+      `<span class="media-placeholder"><span class="media-placeholder-name">${name}</span><span class="media-placeholder-reason">Cannot be shown here</span><button type="button" data-open-on-github="">Open on GitHub</button></span>`,
+    );
+  });
+
+  it("shows attached files as chips, named by their file, that open in the browser", () => {
+    const html =
+      '<p dir="auto">See <a href="https://github.com/user-attachments/files/17/crash%20report.log">the logs</a> and <a href="https://github.com/user-attachments/assets/3f2a-9c1d">demo</a>.</p>';
+
+    expect(
+      [...inserted(html).querySelectorAll("a.attachment")].map((chip) => ({
+        href: chip.getAttribute("href"),
+        name: chip.textContent,
+        icon: chip.querySelector("svg.octicon-file") !== null,
+      })),
+    ).toEqual([
+      {
+        href: "https://github.com/user-attachments/files/17/crash%20report.log",
+        name: "crash report.log",
+        icon: true,
+      },
+      {
+        href: "https://github.com/user-attachments/assets/3f2a-9c1d",
+        name: "demo",
+        icon: true,
+      },
+    ]);
   });
 
   it("resolves links relative to github.com", () => {
@@ -199,6 +307,7 @@ describe("GitHub's HTML", () => {
     it("keeps no element that runs script, loads, embeds or takes input", () => {
       expect(
         all()
+          .filter((element) => !isVerdandis(element))
           .map((element) => element.localName)
           .filter((name) =>
             /^(script|style|iframe|frame|frameset|object|embed|form|button|textarea|select|link|meta|base|template|noscript|img|video|audio|source|picture|dialog)$/.test(
@@ -228,8 +337,15 @@ describe("GitHub's HTML", () => {
     });
 
     it("keeps no attribute that runs script, loads something or restyles", () => {
+      // Only Verdandi's own elements load from GitHub, or act when clicked.
       const attributes = all().flatMap((element) =>
-        [...element.attributes].map(({ name }) => name.toLowerCase()),
+        [...element.attributes]
+          .map(({ name }) => name.toLowerCase())
+          .filter(
+            (name) =>
+              !isVerdandis(element) ||
+              !(name === "src" || buttonAttributes.includes(name)),
+          ),
       );
       expect(
         attributes.filter(
@@ -241,6 +357,12 @@ describe("GitHub's HTML", () => {
             name.startsWith("data-") ||
             loadingAttributes.includes(name),
         ),
+      ).toEqual([]);
+    });
+
+    it("never plays a video on its own", () => {
+      expect(
+        all().filter((element) => element.hasAttribute("autoplay")),
       ).toEqual([]);
     });
 

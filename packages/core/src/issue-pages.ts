@@ -5,21 +5,25 @@ import type {
   IssueTree,
   LoadingState,
   Problem,
+  RenewedMediaLinks,
   Screen,
   UnreadIssue,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import { keepUnlessChanged } from "./body-html.ts";
 import {
+  commentBodies,
   commentsOutdated,
   noComments,
   readComments,
+  replaceCommentBody,
   showComments,
   type CommentsState,
 } from "./issue-comments.ts";
 import type { Issue } from "./github/port.ts";
 import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
+import { createMediaLinks, type MediaLinks } from "./media-links.ts";
 import {
   atOrAfter,
   fiveMinutesAgo,
@@ -75,6 +79,11 @@ export interface IssuePages {
    * or left out, however recently.
    */
   retry(issueId: string): void;
+  /**
+   * Reads a body of an opened issue page again for fresh links to its
+   * media, as `MediaLinks` does, and answers with it.
+   */
+  renewMediaLinks(issueId: string, bodyId: string): Promise<RenewedMediaLinks>;
 }
 
 export interface IssuePagesOptions {
@@ -124,6 +133,8 @@ interface PageState {
   background: boolean;
   /** Its issue's comments, as far as they have been read. */
   comments: CommentsState;
+  /** The links to its bodies' media, read again as they expire. */
+  media: MediaLinks;
 }
 
 /** At most this many issues are read by ID in one request. */
@@ -510,6 +521,27 @@ export function createIssuePages({
       problem: undefined,
       background: false,
       comments: noComments(),
+      media: createMediaLinks({
+        bodies: () =>
+          new Map([
+            ...(state.metadata
+              ? [[issueId, state.metadata.value.bodyHTML] as const]
+              : []),
+            ...commentBodies(state.comments),
+          ]),
+        replace: (bodyId, html) => {
+          if (bodyId === issueId && state.metadata) {
+            const { value, readAt } = state.metadata;
+            state.metadata = { value: { ...value, bodyHTML: html }, readAt };
+          } else replaceCommentBody(state.comments, bodyId, html);
+        },
+        push: () => {
+          push(build(state));
+        },
+        request,
+        clock,
+        urgency: () => urgencyOf(state, "visible"),
+      }),
     };
     pages.set(issueId, state);
     void load(state);
@@ -536,6 +568,15 @@ export function createIssuePages({
       // Asked for, what is read is no longer read in the background.
       known.background = false;
       retry(known, build(known));
+    },
+    renewMediaLinks(issueId, bodyId) {
+      const known = pages.get(issueId);
+      return known
+        ? known.media.renew(bodyId)
+        : Promise.resolve({
+            status: "failed",
+            problem: { kind: "interrupted" },
+          });
     },
   };
 }
