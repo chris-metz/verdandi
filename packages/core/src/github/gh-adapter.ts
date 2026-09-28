@@ -3,19 +3,23 @@ import type {
   IssueActor,
   IssueMetadata,
   Label,
+  RateLimitPool,
 } from "../contract.ts";
 import { isObject } from "../json.ts";
 import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandResult, CommandRunner } from "./command-runner.ts";
-import type {
-  AuthStatus,
-  GitHubAccess,
-  GitHubError,
-  GitHubResult,
-  Issue,
-  IssuePage,
-  IssueReference,
-  RepositorySummary,
+import {
+  rateLimitPools,
+  type AuthStatus,
+  type GitHubAccess,
+  type GitHubError,
+  type GitHubResponse,
+  type GitHubResult,
+  type Issue,
+  type IssuePage,
+  type IssueReference,
+  type RateLimitBudget,
+  type RepositorySummary,
 } from "./port.ts";
 
 export interface GhAdapterOptions {
@@ -53,6 +57,12 @@ const repositorySummaryFields = `
   issues(states: OPEN) { totalCount }
 `;
 
+/**
+ * The budget left in GraphQL's pool, which GitHub answers with every query
+ * without charging for it.
+ */
+const rateLimitSelection = "rateLimit { limit remaining resetAt }";
+
 /** The GitHub-access port implemented with `gh api`. */
 export function createGhAdapter({
   runCommand,
@@ -61,20 +71,22 @@ export function createGhAdapter({
   /**
    * Runs one GraphQL query, keeping the data GitHub sends at HTTP 200
    * alongside errors about parts of the query, such as a repository it
-   * cannot resolve, for each method to place. Errors fail it only when there
-   * is no data. Every query also reads `viewer { login }`. Values reach
-   * GitHub as typed variables, never spliced into the query.
+   * cannot resolve, for `read` to place. Errors fail it only when there is
+   * no data. Every query also reads `viewer { login }`, and the budget left
+   * in GraphQL's pool, which the answer carries. Values reach GitHub as
+   * typed variables, never spliced into the query.
    */
-  async function graphql(
+  async function graphql<T>(
     selection: string,
-    variables: Variables = {},
-  ): Promise<GitHubResult<GraphqlAnswer>> {
+    variables: Variables,
+    read: (answer: GraphqlAnswer) => GitHubResult<T>,
+  ): Promise<GitHubResponse<T>> {
     const entries = Object.entries(variables);
     const declarations = entries.map(([name, { type }]) => `$${name}: ${type}`);
     const operation = entries.length
       ? `query(${declarations.join(", ")})`
       : "query";
-    const query = `${operation} { viewer { login } ${selection} }`;
+    const query = `${operation} { viewer { login } ${rateLimitSelection} ${selection} }`;
     const values = entries.length
       ? Object.fromEntries(entries.map(([name, { value }]) => [name, value]))
       : undefined;
@@ -92,27 +104,36 @@ export function createGhAdapter({
       { input: JSON.stringify({ query, variables: values }) },
     );
     if (result.kind !== "exited") {
-      return { ok: false, error: runFailure(result) };
+      return { ok: false, error: runFailure(result), budget: undefined };
     }
     const response = parseTranscript(result.stdout);
-    if (!response) return { ok: false, error: exitFailure(result) };
+    if (!response) {
+      return { ok: false, error: exitFailure(result), budget: undefined };
+    }
     const { status, headers } = response;
+    const body =
+      status >= 400
+        ? undefined
+        : (parseJson(response.body) as GraphqlBody | undefined);
+    const budget =
+      budgetFromRateLimit(body?.data?.rateLimit) ??
+      budgetFromHeaders(headers, "graphql");
     if (status >= 400) {
       const message = readMessage(response.body) ?? `HTTP ${String(status)}`;
-      return { ok: false, error: httpError(status, message, headers) };
+      return { ok: false, error: httpError(status, message, headers), budget };
     }
-    const body = parseJson(response.body) as GraphqlBody | undefined;
     const errors = body?.errors ?? [];
     const viewerLogin = body?.data?.viewer?.login;
     if (typeof viewerLogin !== "string") {
-      if (errors.length > 0) {
-        return { ok: false, error: graphqlError(errors, headers) };
-      }
-      return { ok: false, error: { kind: "unexpected-response" } };
+      const error: GitHubError =
+        errors.length > 0
+          ? graphqlError(errors, headers)
+          : { kind: "unexpected-response" };
+      return { ok: false, error, budget };
     }
     return {
-      ok: true,
-      value: { viewerLogin, data: body?.data, errors, headers },
+      ...read({ viewerLogin, data: body?.data, errors, headers }),
+      budget,
     };
   }
 
@@ -141,8 +162,8 @@ export function createGhAdapter({
       }
       return readAuthStatus(parseJson(result.stdout));
     },
-    async fetchIssueDetails(id) {
-      const result = await graphql(
+    fetchIssueDetails(id) {
+      return graphql(
         `node(id: $id) { ... on Issue {
           ${issueFields}
           stateReason createdAt
@@ -152,20 +173,27 @@ export function createGhAdapter({
           comments { totalCount }
         } }`,
         { id: { type: "ID!", value: id } },
+        ({ data, errors, headers }) => {
+          const node = isObject(data) ? data.node : undefined;
+          const read = readIssueNode(
+            node,
+            errorsAbout(errors, ["node"]),
+            headers,
+          );
+          if (!read.ok) return read;
+          const metadata = readMetadata(
+            node,
+            read.value.incomplete !== undefined,
+          );
+          if (!metadata) {
+            return { ok: false, error: { kind: "unexpected-response" } };
+          }
+          return { ok: true, value: { ...read.value, ...metadata } };
+        },
       );
-      if (!result.ok) return result;
-      const { data, errors, headers } = result.value;
-      const node = isObject(data) ? data.node : undefined;
-      const read = readIssueNode(node, errorsAbout(errors, ["node"]), headers);
-      if (!read.ok) return read;
-      const metadata = readMetadata(node, read.value.incomplete !== undefined);
-      if (!metadata) {
-        return { ok: false, error: { kind: "unexpected-response" } };
-      }
-      return { ok: true, value: { ...read.value, ...metadata } };
     },
-    async fetchOpenIssues({ owner, name }, after) {
-      const result = await graphql(
+    fetchOpenIssues({ owner, name }, after) {
+      return graphql(
         // Ordered by creation, which never changes while the pages are
         // read; the list orders its issues itself.
         `repository(owner: $owner, name: $name) {
@@ -185,51 +213,51 @@ export function createGhAdapter({
           name: { type: "String!", value: name },
           after: { type: "String", value: after },
         },
+        ({ data, errors, headers }) => {
+          const page = readIssuePage(data, errors, headers);
+          if (page) return { ok: true, value: page };
+          // GitHub answered without the repository, or without its issues.
+          const aboutIt = errorsAbout(errors, ["repository"]);
+          return {
+            ok: false,
+            error:
+              aboutIt.length > 0
+                ? graphqlError(aboutIt, headers)
+                : { kind: "unexpected-response" },
+          };
+        },
       );
-      if (!result.ok) return result;
-      const { data, errors, headers } = result.value;
-      const page = readIssuePage(data, errors, headers);
-      if (page) return { ok: true, value: page };
-      // GitHub answered without the repository, or without its issues.
-      const aboutIt = errorsAbout(errors, ["repository"]);
-      return {
-        ok: false,
-        error:
-          aboutIt.length > 0
-            ? graphqlError(aboutIt, headers)
-            : { kind: "unexpected-response" },
-      };
     },
-    async fetchIssues(ids) {
-      const result = await graphql(
+    fetchIssues(ids) {
+      return graphql(
         `nodes(ids: $ids) { ... on Issue { ${issueFields} } }`,
         { ids: { type: "[ID!]!", value: ids } },
+        ({ data, errors, headers }) => {
+          const nodes = isObject(data) ? data.nodes : undefined;
+          if (!Array.isArray(nodes)) {
+            return {
+              ok: false,
+              error:
+                errors.length > 0
+                  ? graphqlError(errors, headers)
+                  : { kind: "unexpected-response" },
+            };
+          }
+          // Each issue is GitHub's answer in its place, whatever the others'.
+          return {
+            ok: true,
+            value: ids.map((_, index) =>
+              readIssueNode(
+                (nodes as unknown[])[index],
+                errorsAbout(errors, ["nodes", index]),
+                headers,
+              ),
+            ),
+          };
+        },
       );
-      if (!result.ok) return result;
-      const { data, errors, headers } = result.value;
-      const nodes = isObject(data) ? data.nodes : undefined;
-      if (!Array.isArray(nodes)) {
-        return {
-          ok: false,
-          error:
-            errors.length > 0
-              ? graphqlError(errors, headers)
-              : { kind: "unexpected-response" },
-        };
-      }
-      // Each issue is GitHub's answer in its place, whatever the others'.
-      return {
-        ok: true,
-        value: ids.map((_, index) =>
-          readIssueNode(
-            (nodes as unknown[])[index],
-            errorsAbout(errors, ["nodes", index]),
-            headers,
-          ),
-        ),
-      };
     },
-    async fetchRepositorySummaries(repositories) {
+    fetchRepositorySummaries(repositories) {
       // One aliased `repository` per repository, so GitHub reports a missing
       // one on its own path and still answers for the others.
       const variables: Variables = {};
@@ -241,27 +269,28 @@ export function createGhAdapter({
           ${repositorySummaryFields}
         }`;
       });
-      const result = await graphql(selections.join("\n"), variables);
-      if (!result.ok) return result;
-      const { data, errors, headers } = result.value;
-      return {
-        ok: true,
-        value: repositories.map((_, index) => {
-          const alias = `r${String(index)}`;
-          const summary = isObject(data)
-            ? readRepositorySummary(data[alias])
-            : undefined;
-          if (summary) return { ok: true, value: summary };
-          const aboutIt = errorsAbout(errors, [alias]);
-          return {
-            ok: false,
-            error:
-              aboutIt.length > 0
-                ? graphqlError(aboutIt, headers)
-                : { kind: "unexpected-response" },
-          };
+      return graphql(
+        selections.join("\n"),
+        variables,
+        ({ data, errors, headers }) => ({
+          ok: true,
+          value: repositories.map((_, index) => {
+            const alias = `r${String(index)}`;
+            const summary = isObject(data)
+              ? readRepositorySummary(data[alias])
+              : undefined;
+            if (summary) return { ok: true, value: summary };
+            const aboutIt = errorsAbout(errors, [alias]);
+            return {
+              ok: false,
+              error:
+                aboutIt.length > 0
+                  ? graphqlError(aboutIt, headers)
+                  : { kind: "unexpected-response" },
+            };
+          }),
         }),
-      };
+      );
     },
   };
 }
@@ -599,7 +628,7 @@ function readCounts<K extends string>(
 
 /** A GraphQL response body, as far as it can be trusted. */
 interface GraphqlBody {
-  data?: { viewer?: { login?: unknown } } | null;
+  data?: { viewer?: { login?: unknown }; rateLimit?: unknown } | null;
   errors?: GraphqlError[];
 }
 
@@ -647,8 +676,9 @@ function graphqlError(
   const rateLimited = errors.find((error) =>
     error.type?.startsWith("RATE_LIMIT"),
   );
-  if (rateLimited)
-    return { kind: "rate-limited", message: rateLimited.message };
+  if (rateLimited) {
+    return rateLimitError(rateLimited.message, headers, "graphql");
+  }
   const denied = errors.find(
     (error) => error.type === "NOT_FOUND" || error.type === "FORBIDDEN",
   );
@@ -682,7 +712,7 @@ function httpError(
     (headers.get("x-ratelimit-remaining") === "0" ||
       headers.has("retry-after") ||
       /rate limit/i.test(message));
-  if (rateLimited) return { kind: "rate-limited", message };
+  if (rateLimited) return rateLimitError(message, headers, "http");
   if (status === 403 || status === 404 || status === 410) {
     return {
       kind: "unavailable",
@@ -692,6 +722,79 @@ function httpError(
   }
   if (status >= 500) return { kind: "server-error", message };
   return { kind: "http", status, message };
+}
+
+/**
+ * A rate limit GitHub answered with: primary once the pool's budget is used
+ * up, and secondary otherwise, with how long GitHub asks to wait when it
+ * says. GraphQL's own rate-limit error, at HTTP 200, is primary unless it
+ * says otherwise, also when a query costs more than is left; at an HTTP error
+ * status, the headers say whether the budget is used up.
+ */
+function rateLimitError(
+  message: string,
+  headers: ResponseHeaders,
+  answer: "graphql" | "http",
+): GitHubError {
+  const secondary =
+    /\bsecondary rate limit\b/i.test(message) ||
+    (answer === "http" && headers.get("x-ratelimit-remaining") !== "0");
+  if (!secondary) return { kind: "rate-limited", limit: "primary", message };
+  const seconds = /^\d+$/.exec(headers.get("retry-after") ?? "");
+  return {
+    kind: "rate-limited",
+    limit: "secondary",
+    message,
+    retryAfter: seconds ? Number(seconds[0]) * 1000 : undefined,
+  };
+}
+
+/**
+ * The budget left in a pool, as GitHub's `x-ratelimit-*` headers report it;
+ * in `pool` unless their `x-ratelimit-resource` names another.
+ */
+function budgetFromHeaders(
+  headers: ResponseHeaders,
+  pool: RateLimitPool,
+): RateLimitBudget | undefined {
+  const [limit, remaining, reset] = [
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+  ].map((name) => {
+    const value = headers.get(name);
+    return value !== undefined && /^\d+$/.test(value) ? Number(value) : NaN;
+  });
+  if (
+    limit === undefined ||
+    remaining === undefined ||
+    reset === undefined ||
+    [limit, remaining, reset].some(Number.isNaN)
+  ) {
+    return undefined;
+  }
+  const resource = headers.get("x-ratelimit-resource");
+  const named =
+    resource === undefined
+      ? pool
+      : rateLimitPools.find((known) => known === resource);
+  if (named === undefined) return undefined;
+  return { pool: named, limit, remaining, resetAt: reset * 1000 };
+}
+
+/** The budget left in GraphQL's pool, as a query's `rateLimit` reports it. */
+function budgetFromRateLimit(value: unknown): RateLimitBudget | undefined {
+  if (!isObject(value)) return undefined;
+  const { limit, remaining, resetAt } = value;
+  const reset = typeof resetAt === "string" ? Date.parse(resetAt) : NaN;
+  if (
+    typeof limit !== "number" ||
+    typeof remaining !== "number" ||
+    Number.isNaN(reset)
+  ) {
+    return undefined;
+  }
+  return { pool: "graphql", limit, remaining, resetAt: reset };
 }
 
 /**

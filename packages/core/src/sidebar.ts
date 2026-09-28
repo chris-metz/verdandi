@@ -4,12 +4,7 @@ import type {
   SidebarEntries,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
-import { describeGitHubError } from "./github/error-message.ts";
-import type {
-  GitHubResult,
-  RepositorySummary,
-  SendRequest,
-} from "./github/port.ts";
+import type { GitHubResult, RepositorySummary } from "./github/port.ts";
 import {
   atOrAfter,
   fiveMinutesAgo,
@@ -22,6 +17,8 @@ import {
   repositoryKey,
   sameRepository,
 } from "./repository-address.ts";
+import { describeRequestError } from "./problems.ts";
+import type { RequestResult, SendRequest } from "./request-queue.ts";
 import type { SettingsStorage } from "./settings/port.ts";
 
 /**
@@ -32,6 +29,8 @@ import type { SettingsStorage } from "./settings/port.ts";
  * when reading them failed, as a screen is retried, opened or shown again.
  * A count also follows the repository's open issues each time they load, for
  * its list or for All. A known count stays shown while it is read again.
+ * While the rate-limit budget is low, known counts are read again only on a
+ * refresh.
  */
 export interface Sidebar {
   /**
@@ -64,6 +63,11 @@ export interface SidebarOptions {
   settings: SettingsStorage;
   request: SendRequest;
   clock: Clock;
+  /**
+   * Whether what is outdated may be read again on its own, which it may not
+   * while the rate-limit budget is low.
+   */
+  mayRevalidate: () => boolean;
   /** Pushes the sidebar to the interfaces. */
   push: (sidebar: SidebarEntries) => void;
 }
@@ -93,6 +97,7 @@ export function createSidebar({
   settings,
   request,
   clock,
+  mayRevalidate,
   push,
 }: SidebarOptions): Sidebar {
   /** Each repository's count, by `repositoryKey`. */
@@ -121,10 +126,17 @@ export function createSidebar({
     if (tracked) push(entries(tracked));
   }
 
-  /** Whether a count is known, but older than five minutes. */
-  function outdated(repository: RepositoryAddress): boolean {
+  /**
+   * Whether a count is known, but older than five minutes, and so read again
+   * on its own, unless the rate-limit budget is low.
+   */
+  function dueAgain(repository: RepositoryAddress): boolean {
     const readAt = counts.get(repositoryKey(repository))?.readAt;
-    return readAt !== undefined && !atOrAfter(readAt, fiveMinutesAgo(clock));
+    return (
+      readAt !== undefined &&
+      !atOrAfter(readAt, fiveMinutesAgo(clock)) &&
+      mayRevalidate()
+    );
   }
 
   /** Whether reading a count failed. */
@@ -132,9 +144,9 @@ export function createSidebar({
     return countOf(repository).status === "failed";
   }
 
-  /** Whether a count is unknown, or older than five minutes. */
-  function unknownOrOutdated(repository: RepositoryAddress): boolean {
-    return countOf(repository).status !== "known" || outdated(repository);
+  /** Whether a count is unknown, or due to be read again. */
+  function unknownOrDue(repository: RepositoryAddress): boolean {
+    return countOf(repository).status !== "known" || dueAgain(repository);
   }
 
   /**
@@ -169,8 +181,10 @@ export function createSidebar({
   /** Asks GitHub for some repositories' counts in one request. */
   async function requestCounts(repositories: RepositoryAddress[]) {
     const askedAt = clock();
-    const result = await request((github) =>
-      github.fetchRepositorySummaries(repositories),
+    const result = await request(
+      "fetchRepositorySummaries",
+      [repositories],
+      () => "background",
     );
     let changed = false;
     for (const [index, repository] of repositories.entries()) {
@@ -180,12 +194,12 @@ export function createSidebar({
       // Open issues that loaded meanwhile gave a count at least as recent.
       if (count.readAt && atOrAfter(count.readAt, askedAt)) continue;
       // Each repository fails on its own, unless the whole request did.
-      const summary: GitHubResult<RepositorySummary> = result.ok
+      const summary: RequestResult<RepositorySummary> = result.ok
         ? (result.value[index] ?? unanswered)
         : result;
       const answer: OpenIssueCount = summary.ok
         ? { status: "known", count: summary.value.openIssueCount }
-        : { status: "failed", message: describeGitHubError(summary.error) };
+        : { status: "failed", message: describeRequestError(summary.error) };
       if (!sameCount(count.count, answer)) changed = true;
       count.count = answer;
       count.readAt = summary.ok ? askedAt : undefined;
@@ -201,11 +215,11 @@ export function createSidebar({
         return { status: "failed", message: result.message };
       }
       tracked = result.value.repositories;
-      ask(tracked.filter(unknownOrOutdated));
+      ask(tracked.filter(unknownOrDue));
       return entries(tracked);
     },
     revalidate() {
-      if (tracked && ask(tracked.filter((one) => failed(one) || outdated(one))))
+      if (tracked && ask(tracked.filter((one) => failed(one) || dueAgain(one))))
         pushTracked();
     },
     refresh() {

@@ -20,6 +20,8 @@ export interface Forest {
    * of the scope's open issues, in any repository.
    */
   missing: IssueReference[];
+  /** Of the missing issues, those that would show only below collapsed ones. */
+  belowCollapsed: ReadonlySet<string>;
 }
 
 export interface ForestOptions {
@@ -61,6 +63,7 @@ export function buildForest({
   const isExternal = (address: RepositoryAddress) =>
     !isTracked(address) && !isOwn(address);
   const missing = new Map<string, IssueReference>();
+  const belowCollapsed = new Set<string>();
 
   // The ancestors of each open issue are read up to the top, through other
   // repositories too, to find the closed parent issues in the scope's own.
@@ -116,18 +119,27 @@ export function buildForest({
 
   let closedShown = 0;
   const placed = new Set<string>();
-  function place(issue: Issue): IssueNode & { unread?: undefined } {
+  /** Places an issue with its sub-issues, below collapsed ones or not. */
+  function place(
+    issue: Issue,
+    collapsedAbove: boolean,
+  ): IssueNode & { unread?: undefined } {
     placed.add(issue.id);
     if (issue.state === "closed" && isOwn(issue.repository)) closedShown++;
+    const expanded = isExpanded(issue.id);
+    const hidden = collapsedAbove || !expanded;
     const subIssues: IssueNode[] = [];
     for (const reference of issue.subIssues) {
       if (placed.has(reference.id)) continue;
       const subIssue = lookup(reference.id);
       if (subIssue) {
-        subIssues.push(place(subIssue));
+        subIssues.push(place(subIssue, hidden));
         continue;
       }
       placed.add(reference.id);
+      // A missing ancestor of an open issue shows as its parent issue.
+      if (hidden && !missing.has(reference.id))
+        belowCollapsed.add(reference.id);
       missing.set(reference.id, reference);
       subIssues.push({
         issue: identifyIssue(reference, {
@@ -145,7 +157,7 @@ export function buildForest({
         external: isExternal(issue.repository),
       }),
       subIssues,
-      expanded: isExpanded(issue.id),
+      expanded,
     };
   }
 
@@ -153,11 +165,16 @@ export function buildForest({
     .filter((issue) => !nested.has(issue.id))
     .sort(topLevelOrder)
     .map((issue): IssueTree => ({
-      ...place(issue),
+      ...place(issue, false),
       parent: issue.parent && nameParent(issue.parent),
     }));
 
-  return { trees, closedShown, missing: [...missing.values()] };
+  return {
+    trees,
+    closedShown,
+    missing: [...missing.values()],
+    belowCollapsed,
+  };
 }
 
 /** Parent issues first, then the most recently updated. */

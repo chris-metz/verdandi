@@ -56,6 +56,14 @@ const graphqlHeaders = [
   "X-Ratelimit-Used: 289",
 ];
 
+/** The budget `graphqlHeaders` report: 4,711 of 5,000 left until 12:03:21. */
+const graphqlBudget = {
+  pool: "graphql",
+  limit: 5000,
+  remaining: 4711,
+  resetAt: Date.parse("2026-09-27T12:03:21Z"),
+};
+
 /**
  * An issue node as GitHub returns it for the issue fields Verdandi reads, in
  * `acme/api` and without relationships unless given.
@@ -195,6 +203,7 @@ describe("gh adapter", () => {
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "graphql", messages: [message] },
     });
@@ -345,6 +354,7 @@ describe("gh adapter: what GitHub will not show", () => {
     expect(
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: {
         kind: "unavailable",
@@ -373,6 +383,7 @@ describe("gh adapter: what GitHub will not show", () => {
     expect(
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: {
         kind: "unavailable",
@@ -406,6 +417,7 @@ describe("gh adapter: what GitHub will not show", () => {
     expect(
       await github.fetchOpenIssues({ owner: "acme", name: "gone" }),
     ).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "unavailable", message, access: undefined },
     });
@@ -423,6 +435,7 @@ describe("gh adapter: what GitHub will not show", () => {
     });
 
     expect(await github.fetchIssueDetails("I_kwDOAbCdEs4AAAAZ")).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "unavailable", message, access: undefined },
     });
@@ -455,6 +468,7 @@ describe("gh adapter: failures worth trying again", () => {
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "server-error", message },
     });
@@ -462,50 +476,217 @@ describe("gh adapter: failures worth trying again", () => {
 });
 
 describe("gh adapter: rate limits", () => {
-  it("reports an exhausted REST rate limit, never as unavailable", async () => {
-    const message =
-      "API rate limit exceeded for user ID 1234567. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555 and timestamp 2026-09-28 06:20:48 UTC.";
+  /** The headers of a GraphQL pool GitHub says is used up until 12:03:21. */
+  const exhaustedHeaders = [
+    "X-Ratelimit-Limit: 5000",
+    "X-Ratelimit-Remaining: 0",
+    "X-Ratelimit-Reset: 1790510601",
+    "X-Ratelimit-Resource: graphql",
+    "X-Ratelimit-Used: 5000",
+  ];
+
+  it("reads the budget left in GraphQL's pool from rateLimit, asked with every query", async () => {
+    const requests: GraphqlRequest[] = [];
     const github = createGhAdapter({
       gh: ghPath,
-      runCommand: ghAnsweringHttp("403 Forbidden", message, [
-        "X-Ratelimit-Limit: 5000",
-        "X-Ratelimit-Remaining: 0",
-        "X-Ratelimit-Reset: 1790510601",
-      ]),
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                rateLimit: {
+                  limit: 5000,
+                  remaining: 4708,
+                  resetAt: "2026-09-27T12:03:21Z",
+                },
+                nodes: [issueNode({ number: 1 })],
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    const read = await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"]);
+
+    expect(read.budget).toEqual({
+      pool: "graphql",
+      limit: 5000,
+      remaining: 4708,
+      resetAt: Date.parse("2026-09-27T12:03:21Z"),
+    });
+    expect(requests[0]?.query).toMatch(
+      /\brateLimit \{ limit remaining resetAt \}/,
+    );
+  });
+
+  it("reads the budget from the x-ratelimit headers when GitHub answers without rateLimit", async () => {
+    const message = "Field 'bodyText' doesn't exist on type 'Issue'";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(null, [{ message }]),
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
-      error: { kind: "rate-limited", message },
+      error: { kind: "graphql", messages: [message] },
+      budget: graphqlBudget,
     });
   });
 
-  it("reports a secondary rate limit, never as unavailable", async () => {
+  it("reports no budget when GitHub's answer does not say", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("502 Bad Gateway", "Server Error"),
+    });
+
+    const read = await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"]);
+
+    expect(read.ok).toBe(false);
+    expect(read.budget).toBeUndefined();
+  });
+
+  it("reports an exhausted pool with when it resets, never as unavailable", async () => {
+    const message =
+      "API rate limit exceeded for user ID 1234567. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555 and timestamp 2026-09-28 06:20:48 UTC.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("403 Forbidden", message, exhaustedHeaders),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", limit: "primary", message },
+      budget: { ...graphqlBudget, remaining: 0 },
+    });
+  });
+
+  it("reports an exhausted GraphQL pool that arrives with HTTP 200", async () => {
+    const message = "API rate limit exceeded for user ID 1234567.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          [
+            "Content-Type: application/json; charset=utf-8",
+            ...exhaustedHeaders,
+          ],
+          JSON.stringify({ errors: [{ type: "RATE_LIMITED", message }] }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", limit: "primary", message },
+      budget: { ...graphqlBudget, remaining: 0 },
+    });
+  });
+
+  it("reports GraphQL's rate limit at HTTP 200 as the used-up pool, also when a query costs more than is left", async () => {
+    const message =
+      "API rate limit exceeded for user ID 1234567. The query cost 3, but only 2 points remain.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          "200 OK",
+          [
+            "Content-Type: application/json; charset=utf-8",
+            "X-Ratelimit-Limit: 5000",
+            "X-Ratelimit-Remaining: 2",
+            "X-Ratelimit-Reset: 1790510601",
+            "X-Ratelimit-Resource: graphql",
+          ],
+          JSON.stringify({ errors: [{ type: "RATE_LIMITED", message }] }),
+        ),
+        stderr: `gh: ${message}\n`,
+      }),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", limit: "primary", message },
+      budget: { ...graphqlBudget, remaining: 2 },
+    });
+  });
+
+  it("reports a secondary rate limit with how long GitHub asks to wait, never as unavailable", async () => {
     const message =
       "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.";
     const github = createGhAdapter({
       gh: ghPath,
       runCommand: ghAnsweringHttp("403 Forbidden", message, [
         "Retry-After: 60",
+        ...graphqlHeaders.slice(3),
       ]),
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
-      error: { kind: "rate-limited", message },
+      error: {
+        kind: "rate-limited",
+        limit: "secondary",
+        message,
+        retryAfter: 60 * 1000,
+      },
+      budget: graphqlBudget,
     });
   });
 
-  it("reports an exhausted GraphQL rate limit that arrives with HTTP 200", async () => {
-    const message = "API rate limit exceeded for user ID 1234567.";
+  it("reports a secondary rate limit when GitHub does not say how long to wait", async () => {
+    const message =
+      "You have exceeded a secondary rate limit. Please wait a few minutes before you try again. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555.";
     const github = createGhAdapter({
       gh: ghPath,
-      runCommand: ghAnsweringGraphql(null, [{ type: "RATE_LIMITED", message }]),
+      runCommand: ghAnsweringHttp("403 Forbidden", message, [
+        ...graphqlHeaders.slice(3),
+      ]),
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
-      error: { kind: "rate-limited", message },
+      error: {
+        kind: "rate-limited",
+        limit: "secondary",
+        message,
+        retryAfter: undefined,
+      },
+      budget: graphqlBudget,
+    });
+  });
+
+  it("reports HTTP 429 with retry-after as a secondary rate limit", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp(
+        "429 Too Many Requests",
+        "Too Many Requests",
+        ["Retry-After: 120"],
+      ),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: {
+        kind: "rate-limited",
+        limit: "secondary",
+        message: "Too Many Requests",
+        retryAfter: 120 * 1000,
+      },
     });
   });
 });
@@ -658,6 +839,7 @@ describe("gh adapter: more reads", () => {
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "unexpected-response" },
     });
@@ -763,6 +945,7 @@ describe("gh adapter: more reads", () => {
     expect(
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
+      budget: graphqlBudget,
       ok: true,
       value: {
         issues: [
@@ -911,6 +1094,7 @@ describe("gh adapter: more reads", () => {
     expect(
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
+      budget: graphqlBudget,
       ok: false,
       error: { kind: "unexpected-response" },
     });
@@ -1087,6 +1271,7 @@ describe("gh adapter: repository summaries", () => {
         { owner: "acme", name: "web" },
       ]),
     ).toEqual({
+      budget: graphqlBudget,
       ok: true,
       value: [
         {
@@ -1239,7 +1424,11 @@ describe("gh adapter: repository summaries", () => {
         { owner: "acme", name: "api" },
         { owner: "acme", name: "web" },
       ]),
-    ).toEqual({ ok: false, error: { kind: "graphql", messages: [message] } });
+    ).toEqual({
+      ok: false,
+      error: { kind: "graphql", messages: [message] },
+      budget: graphqlBudget,
+    });
   });
 });
 

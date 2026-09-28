@@ -2,6 +2,7 @@ import type { Problem } from "./contract.ts";
 import type { GitHubResult, Issue } from "./github/port.ts";
 import { atOrAfter, type Moment } from "./moments.ts";
 import { problemOf } from "./problems.ts";
+import type { RequestResult } from "./request-queue.ts";
 
 /**
  * The one in-memory store of issues read from GitHub, keyed by node ID, so an
@@ -16,10 +17,10 @@ export interface IssueStore {
    */
   put(issues: readonly Issue[], askedAt: Moment): void;
   /**
-   * Keeps why issues could not be read, with when GitHub was asked. An issue
-   * GitHub would not show to this account is forgotten, so that nothing
-   * shows what the account may no longer read; any other failure keeps what
-   * was read before.
+   * Keeps why issues could not be read, with when GitHub was asked, unless
+   * it was asked again since. An issue GitHub would not show to this account
+   * is forgotten, so that nothing shows what the account may no longer read;
+   * any other failure keeps what was read before.
    */
   fail(ids: readonly string[], problem: Problem, askedAt: Moment): void;
   /** An issue read earlier in this session, unless GitHub no longer shows it. */
@@ -72,6 +73,7 @@ export function createIssueStore(): IssueStore {
       for (const id of ids) {
         const known = entry(id);
         if (known.read && atOrAfter(known.read.at, askedAt)) continue;
+        if (known.failure && atOrAfter(known.failure.at, askedAt)) continue;
         known.failure = { problem, at: askedAt };
         if (problem.kind === "unavailable") known.read = undefined;
       }
@@ -95,7 +97,7 @@ export function createIssueStore(): IssueStore {
 export function keepAnswer(
   store: IssueStore,
   ids: readonly string[],
-  answer: GitHubResult<GitHubResult<Issue>[]>,
+  answer: RequestResult<GitHubResult<Issue>[]>,
   askedAt: Moment,
 ) {
   if (!answer.ok) {

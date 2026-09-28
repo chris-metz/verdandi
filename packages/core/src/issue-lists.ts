@@ -7,10 +7,11 @@ import type {
   RepositoryAddress,
   RepositoryLoading,
   Scope,
+  Screen,
   UnreadIssue,
 } from "./contract.ts";
 import { buildForest, type Forest } from "./forest.ts";
-import type { IssueReference, SendRequest } from "./github/port.ts";
+import type { IssueReference } from "./github/port.ts";
 import { createIssueLoader, type RepositoryIssues } from "./issue-loader.ts";
 import type { Failure, IssueStore } from "./issue-store.ts";
 import {
@@ -25,6 +26,13 @@ import {
   repositoryKey,
   sameRepository,
 } from "./repository-address.ts";
+import {
+  mostUrgent,
+  screenUrgency,
+  type ScreenPart,
+  type SendRequest,
+  type Urgency,
+} from "./request-queue.ts";
 import type { SettingsStorage } from "./settings/port.ts";
 
 /**
@@ -33,7 +41,11 @@ import type { SettingsStorage } from "./settings/port.ts";
  * with its expansion, and read again when it is refreshed or has grown old.
  * What of it failed is read again when it is retried, opened again or shown
  * again. The issue loader reads a repository's open issues for its own list
- * or for All, whichever needs them, and they serve both.
+ * or for All, whichever needs them, and they serve both. Only the list on
+ * screen asks GitHub for anything: what it shows first, then what it would
+ * show below collapsed issues, and, when it has grown old, all of it in the
+ * background. A list left before it has loaded keeps what it has, marked
+ * interrupted where it lacks something, until it shows again.
  */
 export interface IssueLists {
   /**
@@ -50,8 +62,8 @@ export interface IssueLists {
    */
   refresh(scope: Scope): void;
   /**
-   * Reads an opened list again if it is older than five minutes, and
-   * otherwise what of it failed.
+   * Reads an opened list again if it is older than five minutes, unless the
+   * rate-limit budget is low, and otherwise what of it failed.
    */
   revalidate(scope: Scope): void;
   /**
@@ -69,6 +81,13 @@ export interface IssueListsOptions {
   store: IssueStore;
   request: SendRequest;
   clock: Clock;
+  /** The screen the main area shows, if any. */
+  shown: () => Screen | undefined;
+  /**
+   * Whether what is outdated may be read again on its own, which it may not
+   * while the rate-limit budget is low.
+   */
+  mayRevalidate: () => boolean;
   /**
    * Where the tracked repositories are listed: the ones All merges, and the
    * ones whose issues are not external.
@@ -117,6 +136,12 @@ interface ListState {
   expansion: Expansion;
   /** Whether it has shown what it read at some point. */
   loaded: boolean;
+  /**
+   * Whether it is read again on its own, because it grew old, rather than
+   * because it was asked for: from then until it is refreshed, retried or
+   * expanded or collapsed.
+   */
+  background: boolean;
 }
 
 /**
@@ -132,6 +157,8 @@ export function createIssueLists({
   store,
   request,
   clock,
+  shown,
+  mayRevalidate,
   settings,
   push,
   openIssuesLoaded,
@@ -141,17 +168,43 @@ export function createIssueLists({
     store,
     request,
     clock,
+    pagesUrgency: (repository) =>
+      mostUrgent(
+        [...lists.values()]
+          .filter((list) => shows(list, repository))
+          .map((list) => urgencyOf(list, "visible")),
+      ),
     // Every list that shows the repository follows its pages.
     pageRead: (repository) => {
       for (const list of lists.values()) {
-        const shows = repositoriesOf(list).some((own) =>
-          sameRepository(own, repository),
-        );
-        if (shows && list.tracked !== undefined) update(list);
+        if (shows(list, repository) && list.tracked !== undefined) {
+          update(list);
+        }
       }
     },
     openIssuesLoaded,
   });
+
+  /** Whether a list shows a repository's open issues. */
+  function shows(list: ListState, repository: RepositoryAddress): boolean {
+    return repositoriesOf(list).some((own) => sameRepository(own, repository));
+  }
+
+  /** Whether a list is the screen the main area shows. */
+  function isShown(list: ListState): boolean {
+    const screen = shown();
+    return (
+      screen?.kind === "list" && scopeKey(screen.scope) === scopeKey(list.scope)
+    );
+  }
+
+  /** How urgently a list needs a part of what it asks for. */
+  function urgencyOf(list: ListState, part: ScreenPart): Urgency | undefined {
+    return screenUrgency(
+      { shown: isShown(list), background: list.background },
+      part,
+    );
+  }
 
   /**
    * The repositories whose open issues a list shows, each once: its own, or
@@ -212,9 +265,10 @@ export function createIssueLists({
   }
 
   /**
-   * Arranges the list's forest from the store, and asks for the issues it
-   * names but has not read, and for those it shows that are older than it
-   * needs them.
+   * Arranges the list's forest from the store, and, while it is on screen,
+   * asks for the issues it names but has not read, and for those it shows
+   * that are older than it needs them: first what shows, then what would
+   * show below collapsed issues.
    */
   function arrange(list: ListState): IssueList {
     const { scope, tracked } = list;
@@ -240,21 +294,28 @@ export function createIssueLists({
     // An open issue of the list's repositories arrives with its page, also
     // as a page that failed is read again, unless it changed while the
     // pages were read.
-    readMissing(
-      list,
-      [...forest.missing, ...outdated].filter((reference) => {
-        if (reference.state === "closed") return true;
-        if (
-          !own.some((repository) =>
-            sameRepository(repository, reference.repository),
-          )
-        ) {
-          return true;
-        }
-        const load = loader.openIssuesOf(reference.repository);
-        return load?.reading === false && load.problem === undefined;
-      }),
-    );
+    const unread = [...forest.missing, ...outdated].filter((reference) => {
+      if (reference.state === "closed") return true;
+      if (
+        !own.some((repository) =>
+          sameRepository(repository, reference.repository),
+        )
+      ) {
+        return true;
+      }
+      const load = loader.openIssuesOf(reference.repository);
+      return load?.reading === false && load.problem === undefined;
+    });
+    if (isShown(list)) {
+      const hidden = (reference: IssueReference) =>
+        forest.belowCollapsed.has(reference.id);
+      readMissing(
+        list,
+        unread.filter((reference) => !hidden(reference)),
+        "visible",
+      );
+      readMissing(list, unread.filter(hidden), "rest");
+    }
     return {
       scope,
       trees: forest.trees,
@@ -276,16 +337,23 @@ export function createIssueLists({
 
   /**
    * Reads the issues a list names but has not asked for since it needs them
-   * newer, together with any other list that asks for them.
+   * newer, together with any other list that asks for them, as urgently as
+   * the part of the list they belong to.
    */
-  function readMissing(list: ListState, missing: Pick<IssueReference, "id">[]) {
+  function readMissing(
+    list: ListState,
+    missing: Pick<IssueReference, "id">[],
+    part: ScreenPart,
+  ) {
     const ids = [
       ...new Set(
         missing.map(({ id }) => id).filter((id) => !list.requested.has(id)),
       ),
     ];
+    if (ids.length === 0) return;
     for (const id of ids) list.requested.add(id);
-    for (const read of loader.readIssues(ids, list.validFrom)) {
+    const urgency = () => urgencyOf(list, part);
+    for (const read of loader.readIssues(ids, list.validFrom, urgency)) {
       void awaitRead(list, read);
     }
   }
@@ -325,8 +393,12 @@ export function createIssueLists({
     if (updateNow) update(list);
   }
 
-  /** Reads everything a list shows again, from now on. */
-  function refresh(list: ListState) {
+  /**
+   * Reads everything a list shows again, from now on: in the background when
+   * it is read again on its own.
+   */
+  function refresh(list: ListState, background = false) {
+    list.background = background;
     list.validFrom = clock();
     list.checkedAt = list.validFrom.time;
     list.requested.clear();
@@ -374,6 +446,7 @@ export function createIssueLists({
     readMissing(
       list,
       [...again].map((id) => ({ id })),
+      "visible",
     );
     if (!retried && again.size === 0) return false;
     update(list);
@@ -393,6 +466,7 @@ export function createIssueLists({
       pendingRequests: 0,
       expansion: { expanded: true, except: new Set() },
       loaded: false,
+      background: false,
     };
     lists.set(scopeKey(scope), list);
     update(list);
@@ -468,12 +542,15 @@ export function createIssueLists({
   }
 
   /**
-   * Reads an opened list again if it is older than five minutes, and
-   * otherwise what of it failed, and says whether it pushed the list.
+   * Reads an opened list again in the background if it is older than five
+   * minutes, unless the rate-limit budget is low, and otherwise what of it
+   * failed, and says whether it pushed the list.
    */
   function revalidate(list: ListState): boolean {
-    if (!isOutdated(arrange(list).loading, clock)) return retry(list);
-    refresh(list);
+    if (!isOutdated(arrange(list).loading, clock) || !mayRevalidate()) {
+      return retry(list);
+    }
+    refresh(list, true);
     return true;
   }
 
@@ -500,17 +577,23 @@ export function createIssueLists({
     },
     retry(scope) {
       const known = lists.get(scopeKey(scope));
-      if (known) retry(known);
+      if (!known) return;
+      // Asked for, what is read is no longer read in the background.
+      known.background = false;
+      retry(known);
     },
     setExpanded(scope, issueId, expanded) {
-      change(scope, ({ expansion }) => {
+      change(scope, (list) => {
+        const { expansion } = list;
         if (expanded === expansion.expanded) expansion.except.delete(issueId);
         else expansion.except.add(issueId);
+        list.background = false;
       });
     },
     setAllExpanded(scope, expanded) {
       change(scope, (list) => {
         list.expansion = { expanded, except: new Set() };
+        list.background = false;
       });
     },
   };

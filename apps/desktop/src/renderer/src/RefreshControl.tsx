@@ -1,9 +1,6 @@
-import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Freshness } from "./freshness";
-
-/** How often the age a header shows is brought up to date. */
-const tick = 30 * 1000;
+import { useNow } from "./use-now";
 
 /**
  * A screen's freshness in its header, e.g. "Updated 3 min ago", and the
@@ -70,18 +67,4 @@ export function RefreshControl({
       </button>
     </>
   );
-}
-
-/** The time, brought up to date every half minute. */
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, tick);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
-  return now;
 }

@@ -2,6 +2,7 @@ import type {
   AccessEvidence,
   IssueMetadata,
   Label,
+  RateLimitPool,
   RepositoryAddress,
   TokenSource,
 } from "../contract.ts";
@@ -9,7 +10,8 @@ import type {
 /**
  * The GitHub-access port. Every GitHub read the core makes goes through it,
  * and each method is exactly one GitHub request, so the core's request queue
- * can schedule and count them.
+ * can schedule and count them. Each read answers with what GitHub said of
+ * the budget left in its rate-limit pool, which `readPools` names.
  */
 export interface GitHubAccess {
   /**
@@ -19,7 +21,7 @@ export interface GitHubAccess {
    */
   fetchAuthStatus(): Promise<GitHubResult<AuthStatus>>;
   /** Reads a single issue with the metadata shown on its page. */
-  fetchIssueDetails(id: string): Promise<GitHubResult<Issue & IssueMetadata>>;
+  fetchIssueDetails(id: string): Promise<GitHubResponse<Issue & IssueMetadata>>;
   /**
    * Reads one page of a repository's open issues, newest first: the first
    * page, or the one after the `after` cursor of the previous page. Each page
@@ -28,7 +30,7 @@ export interface GitHubAccess {
   fetchOpenIssues(
     repository: RepositoryAddress,
     after?: string,
-  ): Promise<GitHubResult<IssuePage>>;
+  ): Promise<GitHubResponse<IssuePage>>;
   /**
    * Reads up to 100 issues by node ID, from any repositories, e.g. closed
    * sub-issues or the parent issue of an issue already read. An issue GitHub
@@ -37,7 +39,7 @@ export interface GitHubAccess {
    */
   fetchIssues(
     ids: readonly string[],
-  ): Promise<GitHubResult<GitHubResult<Issue>[]>>;
+  ): Promise<GitHubResponse<GitHubResult<Issue>[]>>;
   /**
    * Reads what the sidebar shows of up to 100 repositories, without reading
    * any issues. GitHub follows renames and transfers. A repository GitHub
@@ -46,16 +48,53 @@ export interface GitHubAccess {
    */
   fetchRepositorySummaries(
     repositories: readonly RepositoryAddress[],
-  ): Promise<GitHubResult<GitHubResult<RepositorySummary>[]>>;
+  ): Promise<GitHubResponse<GitHubResult<RepositorySummary>[]>>;
+}
+
+/** Every rate-limit pool, in the order they are listed. */
+export const rateLimitPools: readonly RateLimitPool[] = [
+  "graphql",
+  "core",
+  "search",
+];
+
+/** The port's reads of GitHub, as opposed to checking gh's credentials. */
+export type GitHubRead = Exclude<keyof GitHubAccess, "fetchAuthStatus">;
+
+/** The rate-limit pool each read draws on. */
+export const readPools: Record<GitHubRead, RateLimitPool> = {
+  fetchIssueDetails: "graphql",
+  fetchOpenIssues: "graphql",
+  fetchIssues: "graphql",
+  fetchRepositorySummaries: "graphql",
+};
+
+/** What a read answers with when it succeeds. */
+export type ReadValue<R extends GitHubRead> =
+  Awaited<ReturnType<GitHubAccess[R]>> extends GitHubResponse<infer T>
+    ? T
+    : never;
+
+/**
+ * How much of a rate-limit pool's budget is left, as an answer from GitHub
+ * reported it.
+ */
+export interface RateLimitBudget {
+  pool: RateLimitPool;
+  /** How many points the pool holds each time it resets. */
+  limit: number;
+  remaining: number;
+  /** When GitHub resets the pool, in milliseconds since the epoch. */
+  resetAt: number;
 }
 
 /**
- * Sends one GitHub request through the core's request queue, which schedules
- * them all. The core's modules take this instead of the port itself.
+ * GitHub's answer to one read, with the budget left in the pool it drew on,
+ * if the answer said.
  */
-export type SendRequest = <T>(
-  send: (github: GitHubAccess) => Promise<GitHubResult<T>>,
-) => Promise<GitHubResult<T>>;
+export type GitHubResponse<T> = GitHubResult<T> & {
+  budget: RateLimitBudget | undefined;
+};
 
 /** Whether gh has working credentials for github.com. */
 export type AuthStatus =
@@ -168,8 +207,21 @@ export type GitHubError =
    * not read it; GitHub does not say which, unless `access` names why.
    */
   | { kind: "unavailable"; message: string; access: AccessEvidence | undefined }
-  /** GitHub's rate limit is reached, primary or secondary. */
-  | { kind: "rate-limited"; message: string }
+  /**
+   * The pool's budget is used up (GitHub's primary rate limit) until it
+   * resets, when the answer's budget says.
+   */
+  | { kind: "rate-limited"; limit: "primary"; message: string }
+  /**
+   * GitHub asks to slow down (a secondary rate limit): to wait `retryAfter`
+   * milliseconds, when it says how long.
+   */
+  | {
+      kind: "rate-limited";
+      limit: "secondary";
+      message: string;
+      retryAfter: number | undefined;
+    }
   /**
    * GitHub failed to answer: a server error (HTTP 5xx), or a GraphQL query
    * that timed out. Asking again may succeed.

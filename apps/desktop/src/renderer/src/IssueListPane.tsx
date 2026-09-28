@@ -27,6 +27,7 @@ import {
 import { rememberedPlace, rememberPlace } from "./list-places";
 import { listStatus } from "./list-status";
 import { ProblemNotice } from "./ProblemNotice";
+import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { presentScope, repositoryLabel, sameScope } from "./scope";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
@@ -177,6 +178,7 @@ export function IssueListPane({
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         <h1 className="min-w-0 flex-1 truncate font-medium">{label}</h1>
+        <RateLimitStatus />
         {list && (
           <RefreshControl
             freshness={(now) => listFreshness(list, now)}

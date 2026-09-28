@@ -28,6 +28,7 @@ import {
 import { visibleRows } from "./list-navigation";
 import { ProblemNotice } from "./ProblemNotice";
 import { problemText } from "./problem-text";
+import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { incompleteTitle, unreadCell } from "./row-cells";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
@@ -233,6 +234,7 @@ export function IssuePagePane({
           </button>
         )}
         <span className="flex-1" />
+        <RateLimitStatus />
         <RefreshControl
           freshness={(now) =>
             page

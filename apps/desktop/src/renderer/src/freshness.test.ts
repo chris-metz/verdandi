@@ -183,13 +183,13 @@ describe("an issue page's header", () => {
         {
           status: "stale",
           updatedAt: now - 30 * minute,
-          problem: { kind: "rate-limited", message: "API rate limit exceeded" },
+          problem: { kind: "interrupted" },
         },
         now,
       ),
     ).toEqual({
-      text: "Showing data from 14:02 · GitHub rate limit reached",
-      detail: "API rate limit exceeded",
+      text: "Showing data from 14:02 · Loading was interrupted",
+      detail: undefined,
       busy: false,
       retry: true,
     });

@@ -18,6 +18,7 @@ import type {
   IssuePage,
   IssueSummary,
   Notice,
+  RateLimitState,
   Scope,
   Setup,
   SidebarEntries,
@@ -124,14 +125,18 @@ function verdandiHome(): HostEnvironment {
 /**
  * The core on a fake GitHub and a machine with gh on PATH unless said
  * otherwise, with the real settings file and machine-local state below
- * `home`, and a clock that stands still unless the test moves it on.
+ * `home`, and a clock that stands still unless the test moves it on. It
+ * waits for nothing, e.g. before trying a request again, unless `timers`
+ * says it waits with timers, which a test fakes to move them on together
+ * with the clock.
  */
 function createTestCore(
   github: FakeGitHub,
   {
     clock = createClock(),
     machine = linuxWithGh(),
-  }: { clock?: TestClock; machine?: TestMachine } = {},
+    timers = false,
+  }: { clock?: TestClock; machine?: TestMachine; timers?: boolean } = {},
 ): Contract {
   return createCore({
     github: () => github,
@@ -140,9 +145,14 @@ function createTestCore(
     settings: createSettingsFile(verdandiHome()),
     localState: createLocalStateFile(verdandiHome()),
     now: clock.now,
-    // Requests are tried again at once, not after a real wait.
-    wait: () => Promise.resolve(),
+    ...(timers ? {} : { wait: () => Promise.resolve() }),
   });
+}
+
+/** Moves the clock and the faked timers on together, as time passes. */
+async function passTime(clock: TestClock, milliseconds: number) {
+  clock.advance(milliseconds);
+  await vi.advanceTimersByTimeAsync(milliseconds);
 }
 
 /**
@@ -789,22 +799,6 @@ describe("setup: during a session", () => {
       "failed",
     ],
     [
-      "a primary rate limit",
-      {
-        kind: "rate-limited",
-        message: "API rate limit already exceeded for user ID 1234567.",
-      },
-      "stale",
-    ],
-    [
-      "a secondary rate limit",
-      {
-        kind: "rate-limited",
-        message: "You have exceeded a secondary rate limit.",
-      },
-      "stale",
-    ],
-    [
       "a network failure",
       {
         kind: "gh-failed",
@@ -1133,6 +1127,480 @@ describe("GitHub requests", () => {
 
     github.resume();
     expect((await loaded).loading.status).toBe("current");
+  });
+
+  it("go to the screen shown before the sidebar's counts, whichever was asked for first", async () => {
+    const names = ["acme/api", "acme/web", "acme/cli", "acme/docs"];
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: `Issue of ${name}` }]);
+    }
+    const core = createTestCore(github);
+    await checkedSetup(core);
+    github.pause("fetchOpenIssues");
+    void core.openList(all);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(4);
+    });
+
+    // The sidebar asks for its counts before All is refreshed; both wait
+    // for the pages under way.
+    await core.getSidebar();
+    await core.refresh({ kind: "list", scope: all });
+    await new Promise((resolve) => setImmediate(resolve));
+    github.resume();
+    await vi.waitFor(() => {
+      expect(github.received).toHaveLength(9);
+    });
+
+    expect(github.received.slice(4)).toEqual([
+      ...names.map((name) => `fetchOpenIssues ${name}`),
+      `fetchRepositorySummaries ${names.join(" ")}`,
+    ]);
+  });
+});
+
+describe("leaving a screen", () => {
+  /** Tracks `count` repositories, `acme/repo-0` and on, with an issue each. */
+  async function trackRepositories(github: FakeGitHub, count: number) {
+    const names = Array.from(
+      { length: count },
+      (_, n) => `acme/repo-${String(n)}`,
+    );
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: `Issue of ${name}` }]);
+    }
+  }
+
+  it("drops the requests it has not sent, lets those under way finish, and loads the rest once it shows again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    await trackRepositories(github, 6);
+    const core = createTestCore(github);
+    await checkedSetup(core);
+    let left: IssueList | undefined;
+    core.on("listChanged", (list) => {
+      if (list.scope.kind === "all") left = list;
+    });
+    github.pause();
+    void core.openList(all);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(4);
+    });
+
+    const page = pageUntilSettled(core, "I_acme/repo-0#1", () =>
+      core.openIssuePage("I_acme/repo-0#1"),
+    );
+    github.resume();
+    await page;
+
+    expect(github.requestsFor("acme/repo-4")).toBe(0);
+    expect(github.requestsFor("acme/repo-5")).toBe(0);
+    // Until it shows again, All is incomplete, never empty.
+    await vi.waitFor(() => {
+      expect(
+        left?.repositories.map(
+          ({ repository, loading }) =>
+            `${repository.name} ${loading.status === "failed" ? loading.problem.kind : loading.status}`,
+        ),
+      ).toEqual([
+        "repo-0 current",
+        "repo-1 current",
+        "repo-2 current",
+        "repo-3 current",
+        "repo-4 interrupted",
+        "repo-5 interrupted",
+      ]);
+    });
+
+    const shownAgain = await untilSettled(core, all, () => core.openList(all));
+
+    expect(shownAgain.trees).toHaveLength(6);
+    expect(shownAgain.loading.status).toBe("current");
+    for (let n = 0; n < 6; n++) {
+      expect(github.requestsFor(`acme/repo-${String(n)}`)).toBe(1);
+    }
+  });
+
+  it("reads what an issue page lacks once it shows again, after it was left while loading", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/web" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Launch billing", subIssues: ["other/lib#2"] },
+    ]);
+    github.addRepository("other/lib", [{ number: 2, title: "Shared client" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Landing page" }]);
+    const core = createTestCore(github);
+    await checkedSetup(core);
+    let left: IssuePage | undefined;
+    core.on("issuePageChanged", (page) => {
+      left = page;
+    });
+    github.pause();
+    void core.openIssuePage("I_acme/api#1");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    const list = untilSettled(core, acmeWeb, () => core.openList(acmeWeb));
+    github.resume();
+    await list;
+
+    // The issue under way arrived; its sub-issue was never asked for.
+    expect(github.received).not.toContain("fetchIssues other/lib#2");
+    await vi.waitFor(() => {
+      expect(left?.loading.status).toBe("current");
+    });
+    expect(left?.issue?.title).toBe("Launch billing");
+    expect(left?.subIssues[0]?.unread).toEqual({
+      status: "failed",
+      problem: { kind: "interrupted" },
+    });
+
+    const shownAgain = await openPageUntilLoaded(core, "I_acme/api#1");
+
+    expect(shownAgain.subIssues.map(({ issue }) => issue.title)).toEqual([
+      "Shared client",
+    ]);
+    expect(shownAgain.subIssues[0]?.unread).toBeUndefined();
+  });
+});
+
+describe("rate limits", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * A fake GitHub on the test's clock with `acme/api`, a core that waits
+   * with the faked timers, and the rate-limit states it pushes.
+   */
+  function rateLimitedSession() {
+    const clock = createClock();
+    const github = createFakeGitHub({ login: "octo-reader", now: clock.now });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github, { clock, timers: true });
+    const limits: RateLimitState[][] = [];
+    core.on("rateLimitsChanged", (states) => limits.push(states));
+    return { clock, github, core, limits };
+  }
+
+  it("pauses the pool whose budget is used up until it resets, then loads the screen on its own", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    github.setBudget("graphql", {
+      remaining: 0,
+      resetAt: startTime + 20 * minute,
+    });
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+
+    await core.openList(acmeApi);
+    const paused: RateLimitState[] = [
+      { pool: "graphql", status: "paused", until: startTime + 20 * minute },
+    ];
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toEqual(paused);
+    });
+    expect(await core.getRateLimits()).toEqual(paused);
+    // Loading, never empty or failed, while it waits.
+    expect(pushed.at(-1)?.loading).toEqual({ status: "loading" });
+
+    await passTime(clock, 19 * minute);
+    expect(github.requestsFor("acme/api")).toBe(1);
+
+    const loaded = await untilSettled(core, acmeApi, () =>
+      passTime(clock, minute),
+    );
+
+    expect(outline(loaded)).toEqual(["#1 Crash on start"]);
+    expect(loaded.loading.status).toBe("current");
+    expect(limits.at(-1)).toEqual([]);
+    expect(await core.getRateLimits()).toEqual([]);
+    expect(await core.getSetup()).toEqual(readyAs("octo-reader"));
+    expect(github.authStatusChecks).toBe(1);
+  });
+
+  it("keeps what was read browsable while the pool is paused, and reads it again once it resets", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    await openUntilLoaded(core, acmeApi);
+    github.setBudget("graphql", {
+      remaining: 0,
+      resetAt: startTime + 30 * minute,
+    });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start, again" },
+    ]);
+
+    const refreshing = await nextList(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toEqual([
+        { pool: "graphql", status: "paused", until: startTime + 30 * minute },
+      ]);
+    });
+
+    expect(outline(refreshing)).toEqual(["#1 Crash on start"]);
+    expect(refreshing.loading.status).toBe("refreshing");
+
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      passTime(clock, 30 * minute),
+    );
+
+    expect(outline(refreshed)).toEqual(["#1 Crash on start, again"]);
+    expect(refreshed.loading.status).toBe("current");
+  });
+
+  it("goes on only with the screen shown once the pool resets, and marks a screen left meanwhile incomplete", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    github.addRepository("acme/web", [{ number: 1, title: "Landing page" }]);
+    github.setBudget("graphql", {
+      remaining: 0,
+      resetAt: startTime + 20 * minute,
+    });
+    let left: IssueList | undefined;
+    core.on("listChanged", (list) => {
+      if (isDeepStrictEqual(list.scope, acmeApi)) left = list;
+    });
+    await core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toHaveLength(1);
+    });
+
+    await core.openList(acmeWeb);
+    const web = await untilSettled(core, acmeWeb, () =>
+      passTime(clock, 20 * minute),
+    );
+
+    expect(outline(web)).toEqual(["#1 Landing page"]);
+    expect(github.requestsFor("acme/api")).toBe(1);
+    expect(left?.loading).toEqual({
+      status: "failed",
+      problem: { kind: "interrupted" },
+    });
+
+    const api = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(api)).toEqual(["#1 Crash on start"]);
+  });
+
+  /** GitHub's secondary rate limit, asking to wait that long, if at all. */
+  function secondaryLimit(retryAfter?: number): GitHubError {
+    return {
+      kind: "rate-limited",
+      limit: "secondary",
+      message:
+        "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      retryAfter,
+    };
+  }
+
+  it("waits as long as GitHub asks after a secondary rate limit", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    github.failNextWith(secondaryLimit(90 * 1000));
+
+    await core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toEqual([
+        { pool: "graphql", status: "paused", until: startTime + 90 * 1000 },
+      ]);
+    });
+    await passTime(clock, 89 * 1000);
+    expect(github.requestsFor("acme/api")).toBe(1);
+
+    const loaded = await untilSettled(core, acmeApi, () =>
+      passTime(clock, 1000),
+    );
+
+    expect(outline(loaded)).toEqual(["#1 Crash on start"]);
+    expect(github.requestsFor("acme/api")).toBe(2);
+  });
+
+  it("waits a minute after a secondary rate limit that does not say how long, then twice as long after each further one, up to 15 minutes", async () => {
+    const { clock, github, core } = rateLimitedSession();
+    github.failNextWith(secondaryLimit(), 6);
+    /** How long each pause lasts, in minutes. */
+    const pauses: number[] = [];
+    core.on("rateLimitsChanged", (states) => {
+      const paused = states.find(({ status }) => status === "paused");
+      if (paused) pauses.push((paused.until - clock.now()) / minute);
+    });
+
+    const loaded = untilSettled(core, acmeApi, () => core.openList(acmeApi));
+    for (const [count, pause] of [1, 2, 4, 8, 15, 15].entries()) {
+      await vi.waitFor(() => {
+        expect(pauses).toHaveLength(count + 1);
+      });
+      await passTime(clock, pause * minute);
+    }
+
+    expect(outline(await loaded)).toEqual(["#1 Crash on start"]);
+    expect(pauses).toEqual([1, 2, 4, 8, 15, 15]);
+  });
+
+  it("keeps going one at a time, and waits twice as long the next time, whatever becomes of requests sent before a secondary rate limit", async () => {
+    const { clock, github, core } = rateLimitedSession();
+    const names = Array.from({ length: 6 }, (_, n) => `acme/repo-${String(n)}`);
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: `Issue of ${name}` }]);
+    }
+    const pauses: number[] = [];
+    core.on("rateLimitsChanged", (states) => {
+      const paused = states.find(({ status }) => status === "paused");
+      if (paused) pauses.push((paused.until - clock.now()) / minute);
+    });
+    // The first of the four requests sent at once meets the limit; the
+    // three sent with it succeed after it.
+    github.failNextWith(secondaryLimit());
+    const loaded = untilSettled(core, all, () => core.openList(all));
+    await vi.waitFor(() => {
+      expect(pauses).toEqual([1]);
+    });
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+
+    github.failNextWith(secondaryLimit());
+    github.pause();
+    await passTime(clock, minute);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(github.requestsInFlight).toBe(1);
+
+    github.resume();
+    await vi.waitFor(() => {
+      expect(pauses).toEqual([1, 2]);
+    });
+    await passTime(clock, 2 * minute);
+
+    expect((await loaded).trees).toHaveLength(6);
+  });
+
+  it("sends requests one at a time after a secondary rate limit, until one succeeds", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    const names = Array.from({ length: 6 }, (_, n) => `acme/repo-${String(n)}`);
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: `Issue of ${name}` }]);
+    }
+    github.failWith(secondaryLimit(60 * 1000));
+    await core.openList(all);
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toHaveLength(1);
+    });
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+    const sentBefore = github.requestsReceived;
+
+    github.failWith(undefined);
+    github.pause();
+    await passTime(clock, minute);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(github.requestsReceived).toBe(sentBefore + 1);
+    expect(github.requestsInFlight).toBe(1);
+
+    // It succeeds, so the others go four at a time again.
+    github.resume();
+    github.pause();
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(4);
+    });
+
+    const loaded = await untilSettled(core, all, () => {
+      github.resume();
+      return Promise.resolve();
+    });
+
+    expect(loaded.trees).toHaveLength(6);
+  });
+
+  describe("below a tenth of a pool's budget", () => {
+    /**
+     * A session tracking `acme/api` and `acme/web`, whose GraphQL pool has
+     * 460 of 5,000 points left until 12:30, with `acme/api`'s list and the
+     * sidebar's counts read, six minutes ago.
+     */
+    async function lowSession() {
+      const session = rateLimitedSession();
+      const { clock, github, core } = session;
+      await writeSettings({
+        version: 1,
+        repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+      });
+      github.addRepository("acme/web", [{ number: 1, title: "Landing page" }]);
+      github.setBudget("graphql", {
+        remaining: 460,
+        resetAt: startTime + 30 * minute,
+      });
+      await readUntilCounted(core);
+      await openUntilLoaded(core, acmeApi);
+      await passTime(clock, 6 * minute);
+      return session;
+    }
+
+    it("stops reading screens and counts again on their own, and says so", async () => {
+      const { github, core, limits } = await lowSession();
+      const low: RateLimitState[] = [
+        { pool: "graphql", status: "low", until: startTime + 30 * minute },
+      ];
+      const sentBefore = github.requestsReceived;
+
+      // Opened again, and shown again as the window regains focus.
+      const shown = await nextList(core, acmeApi, () => core.openList(acmeApi));
+      await core.revalidate({ kind: "list", scope: acmeApi });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(limits.at(-1)).toEqual(low);
+      expect(await core.getRateLimits()).toEqual(low);
+      expect(shown.loading.status).toBe("current");
+      expect(github.requestsReceived).toBe(sentBefore);
+    });
+
+    it("still reads what was never read, and a screen refreshed", async () => {
+      const { github, core } = await lowSession();
+
+      const web = await openUntilLoaded(core, acmeWeb);
+      const api = await untilSettled(core, acmeApi, () =>
+        core.refresh({ kind: "list", scope: acmeApi }),
+      );
+
+      expect(outline(web)).toEqual(["#1 Landing page"]);
+      expect(api.loading.status).toBe("current");
+      expect(github.requestsFor("acme/api")).toBe(2);
+    });
+
+    it("reads screens again on their own once GitHub has reset the pool", async () => {
+      const { clock, github, core, limits } = await lowSession();
+
+      await passTime(clock, 24 * minute);
+      expect(limits.at(-1)).toEqual([]);
+      const read = await untilSettled(core, acmeApi, () =>
+        core.revalidate({ kind: "list", scope: acmeApi }),
+      );
+
+      expect(read.loading.status).toBe("current");
+      expect(github.requestsFor("acme/api")).toBe(2);
+    });
   });
 });
 

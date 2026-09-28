@@ -105,6 +105,32 @@ export type AccessEvidence =
   /** The organization restricts OAuth App access and has not approved gh. */
   | { kind: "organization-approval"; message: string };
 
+/**
+ * A pool of GitHub's rate limits, each with its own budget: GraphQL, the REST
+ * API, and REST search.
+ */
+export type RateLimitPool = "graphql" | "core" | "search";
+
+/**
+ * How a rate-limit pool holds Verdandi's requests back, as GitHub's answers
+ * report its budget.
+ *
+ * - `paused`: GitHub's rate limit stopped the pool's requests: they wait
+ *   until `until`, when the pool resets, or as long as GitHub asked, and then
+ *   go on on their own. The other pools go on meanwhile, and what was read
+ *   stays browsable.
+ * - `low`: less than a tenth of the pool's budget is left until it resets at
+ *   `until`. Screens are no longer read again on their own as they open or
+ *   the window regains focus; what was never read, Retry and refresh still
+ *   are.
+ */
+export interface RateLimitState {
+  pool: RateLimitPool;
+  status: "paused" | "low";
+  /** In milliseconds since the epoch. */
+  until: number;
+}
+
 /** Why something could not be read. */
 export type Problem =
   /** GitHub could not be reached, e.g. without a connection. */
@@ -115,8 +141,11 @@ export type Problem =
    * names why.
    */
   | { kind: "unavailable"; access: AccessEvidence | undefined }
-  /** GitHub's rate limit is reached. */
-  | { kind: "rate-limited"; message: string }
+  /**
+   * Reading it stopped before GitHub was asked, as its screen was left; it is
+   * read again once the screen shows again.
+   */
+  | { kind: "interrupted" }
   /**
    * Anything else, e.g. a server error that persisted after retrying, or a
    * settings file that cannot be read.
@@ -546,6 +575,11 @@ export interface CoreRequests {
    * screen to be opened again, or for the window to regain focus.
    */
   retry: (screen: Screen | undefined) => Promise<void>;
+  /**
+   * Every rate-limit pool that holds requests back, and how; changes are
+   * pushed as `rateLimitsChanged`.
+   */
+  getRateLimits: () => Promise<RateLimitState[]>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -565,6 +599,12 @@ export interface CoreEvents {
    * counts arrive, and when a repository's list loads with a new count.
    */
   sidebarChanged: SidebarEntries;
+  /**
+   * Every rate-limit pool that holds requests back, whenever that changes:
+   * as a pool pauses or goes on, and as its budget falls below a tenth or
+   * GitHub resets it.
+   */
+  rateLimitsChanged: RateLimitState[];
 }
 
 export type CoreEventName = keyof CoreEvents;
@@ -590,6 +630,7 @@ const requests: Record<keyof CoreRequests, true> = {
   refresh: true,
   revalidate: true,
   retry: true,
+  getRateLimits: true,
 };
 const events: Record<CoreEventName, true> = {
   accountChanged: true,
@@ -598,6 +639,7 @@ const events: Record<CoreEventName, true> = {
   listChanged: true,
   issuePageChanged: true,
   sidebarChanged: true,
+  rateLimitsChanged: true,
 };
 
 /** Every request name, for wiring the contract to a transport. */

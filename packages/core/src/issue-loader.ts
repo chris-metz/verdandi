@@ -1,17 +1,20 @@
 import type { Problem, RepositoryAddress } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import { describeGitHubError } from "./github/error-message.ts";
-import type { GitHubError, SendRequest } from "./github/port.ts";
+import type { GitHubError } from "./github/port.ts";
 import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { atOrAfter, type Clock, type Moment } from "./moments.ts";
 import { problemOf } from "./problems.ts";
 import { repositoryKey } from "./repository-address.ts";
+import { mostUrgent, type SendRequest, type Urgency } from "./request-queue.ts";
 
 /**
  * Reads issues from GitHub into the one store, for every list: a
  * repository's open issues page by page, and other issues by ID, sharing a
  * read that is under way with every list that names the same issue. What a
- * list needs no older than a moment is read again only if it is older.
+ * list needs no older than a moment is read again only if it is older. A
+ * read is as urgent as the most urgent list that waits for it, and dropped
+ * unsent once none needs it.
  */
 export interface IssueLoader {
   /** How far a repository's open issues have been read, once asked for. */
@@ -23,12 +26,16 @@ export interface IssueLoader {
    */
   loadOpenIssues(repository: RepositoryAddress, since: Moment): boolean;
   /**
-   * Reads issues by ID into the store, or why they could not be read. Issues
-   * a read under way, asked at `since` or later, already asks for join it;
-   * the rest are asked for up to 100 at a time. Returns every read that
-   * brings them.
+   * Reads issues by ID into the store, or why they could not be read, as
+   * urgently as `urgency` says. Issues a read under way, asked at `since` or
+   * later, already asks for join it; the rest are asked for up to 100 at a
+   * time. Returns every read that brings them.
    */
-  readIssues(ids: readonly string[], since: Moment): Promise<void>[];
+  readIssues(
+    ids: readonly string[],
+    since: Moment,
+    urgency: () => Urgency | undefined,
+  ): Promise<void>[];
   /** Whether an issue is being read by ID. */
   isReading(id: string): boolean;
 }
@@ -53,6 +60,11 @@ export interface IssueLoaderOptions {
   store: IssueStore;
   request: SendRequest;
   clock: Clock;
+  /**
+   * How urgently the lists that show a repository need its open issues, or
+   * none once no list on screen shows it.
+   */
+  pagesUrgency: (repository: RepositoryAddress) => Urgency | undefined;
   /** Takes each page of a repository's open issues, read or failed. */
   pageRead: (repository: RepositoryAddress) => void;
   /**
@@ -88,12 +100,15 @@ interface Reads {
 interface ReadUnderWay {
   answer: Promise<void>;
   askedAt: Moment;
+  /** How urgently each list that waits for it needs it. */
+  needs: (() => Urgency | undefined)[];
 }
 
 export function createIssueLoader({
   store,
   request,
   clock,
+  pagesUrgency,
   pageRead,
   openIssuesLoaded,
 }: IssueLoaderOptions): IssueLoader {
@@ -106,17 +121,22 @@ export function createIssueLoader({
    * Asks for issues by ID in one request, keeping what GitHub returns, and
    * why it did not return the others.
    */
-  function read(ids: string[]): Promise<void> {
+  function read(
+    ids: string[],
+    urgency: () => Urgency | undefined,
+  ): Promise<void> {
     const askedAt = clock();
-    const answer = request((github) => github.fetchIssues(ids)).then(
-      (result) => {
-        for (const id of ids) {
-          if (reading.get(id)?.answer === answer) reading.delete(id);
-        }
-        keepAnswer(store, ids, result, askedAt);
-      },
-    );
-    for (const id of ids) reading.set(id, { answer, askedAt });
+    const needs = [urgency];
+    const answer = request("fetchIssues", [ids], () =>
+      mostUrgent(needs.map((need) => need())),
+    ).then((result) => {
+      for (const id of ids) {
+        if (reading.get(id)?.answer === answer) reading.delete(id);
+      }
+      keepAnswer(store, ids, result, askedAt);
+    });
+    const underWay = { answer, askedAt, needs };
+    for (const id of ids) reading.set(id, underWay);
     return answer;
   }
 
@@ -132,8 +152,10 @@ export function createIssueLoader({
     do {
       const cursor = after;
       const askedAt = clock();
-      const result = await request((github) =>
-        github.fetchOpenIssues(repository, cursor),
+      const result = await request(
+        "fetchOpenIssues",
+        [repository, cursor],
+        () => pagesUrgency(repository),
       );
       // What a superseded read brings is still as new as anything.
       if (result.ok) store.put(result.value.issues, askedAt);
@@ -214,19 +236,23 @@ export function createIssueLoader({
       void readPages(repository, reads);
       return true;
     },
-    readIssues(ids, since) {
-      const reads = new Set<Promise<void>>();
+    readIssues(ids, since, urgency) {
+      const joined = new Set<ReadUnderWay>();
       const unread: string[] = [];
       for (const id of ids) {
         const underWay = reading.get(id);
-        if (underWay && atOrAfter(underWay.askedAt, since)) {
-          reads.add(underWay.answer);
-        } else unread.push(id);
+        if (underWay && atOrAfter(underWay.askedAt, since))
+          joined.add(underWay);
+        else unread.push(id);
       }
-      for (const batch of inBatches(unread, issuesPerRequest)) {
-        reads.add(read(batch));
-      }
-      return [...reads];
+      // A read joined is as urgent as the most urgent list waiting for it.
+      for (const underWay of joined) underWay.needs.push(urgency);
+      return [
+        ...[...joined].map(({ answer }) => answer),
+        ...inBatches(unread, issuesPerRequest).map((batch) =>
+          read(batch, urgency),
+        ),
+      ];
     },
     isReading(id) {
       return reading.has(id);

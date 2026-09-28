@@ -2,17 +2,22 @@ import type {
   AccessEvidence,
   IssueMetadata,
   Label,
+  RateLimitPool,
   RelationshipCount,
   TokenSource,
 } from "../contract.ts";
-import type {
-  AuthStatus,
-  GitHubAccess,
-  GitHubError,
-  GitHubResult,
-  Issue,
-  IssueReference,
-  RepositorySummary,
+import {
+  readPools,
+  type AuthStatus,
+  type GitHubAccess,
+  type GitHubError,
+  type GitHubRead,
+  type GitHubResponse,
+  type GitHubResult,
+  type Issue,
+  type IssueReference,
+  type RateLimitBudget,
+  type RepositorySummary,
 } from "../github/port.ts";
 
 /**
@@ -41,7 +46,10 @@ export interface FakeIssue {
  * An in-memory GitHub behind the GitHub-access port, for tests, together with
  * gh's credentials for it. Reads are what the core asks GitHub about issues
  * and repositories; checks of gh's credentials, as `gh auth status` makes
- * them, count apart.
+ * them, count apart. Each read that reaches GitHub costs a point of its
+ * rate-limit pool's budget, 5,000 an hour unless a test sets it, and answers
+ * with what is left; once a pool's budget is used up, its reads fail with
+ * GitHub's primary rate limit until the pool resets.
  */
 export interface FakeGitHub extends GitHubAccess {
   /**
@@ -98,6 +106,21 @@ export interface FakeGitHub extends GitHubAccess {
   /** How many reads GitHub has received so far, of any kind. */
   readonly requestsReceived: number;
   /**
+   * The reads GitHub has received so far, in order, each as its method and
+   * what it asks about: `fetchOpenIssues acme/api`, `fetchIssues acme/api#2
+   * other/lib#5`, `fetchIssueDetails acme/api#1` or
+   * `fetchRepositorySummaries acme/api acme/web`.
+   */
+  readonly received: readonly string[];
+  /**
+   * Sets what is left of a pool's budget from now on, of how many points,
+   * until when GitHub resets it, in milliseconds since the epoch.
+   */
+  setBudget(
+    pool: RateLimitPool,
+    budget: { remaining: number; limit?: number; resetAt?: number },
+  ): void;
+  /**
    * How many requests so far asked about a repository, `owner/name`: for its
    * open issues, or for issues including one of its own.
    */
@@ -107,13 +130,22 @@ export interface FakeGitHub extends GitHubAccess {
 /** When every issue was updated, unless a test says otherwise. */
 const defaultUpdatedAt = "2026-09-01T12:00:00Z";
 
+/** How many points a pool holds, unless a test says otherwise. */
+const defaultLimit = 5000;
+
+/** How long after it is first drawn on GitHub resets a pool. */
+const budgetWindow = 60 * 60 * 1000;
+
 export function createFakeGitHub({
   login,
   issuesPerPage = 100,
+  now = Date.now,
 }: {
   login: string;
   /** Page size for issue lists; GitHub's largest is 100. */
   issuesPerPage?: number;
+  /** GitHub's time, which resets its rate-limit pools. */
+  now?: () => number;
 }): FakeGitHub {
   let viewer = login;
   let credentials: "signed-in" | "signed-out" | "rejected" = "signed-in";
@@ -131,25 +163,65 @@ export function createFakeGitHub({
   let pausedMethod: keyof GitHubAccess | undefined;
   let requestsInFlight = 0;
   let requestsReceived = 0;
+  const received: string[] = [];
+  /** Each pool's budget, once drawn on or set. */
+  const budgets = new Map<RateLimitPool, Omit<RateLimitBudget, "pool">>();
   /** Each repository's numeric ID, by `owner/name`. */
   const repositoryIds = new Map<string, number>();
   const repositoryRequests = new Map<string, number>();
 
   /**
-   * Receives one read by a method and answers it as of now, delivering the
-   * answer once that method is not paused.
+   * Receives one read by a method, about `what`, and answers it as of now,
+   * delivering the answer once that method is not paused. A read that
+   * reaches GitHub draws on its pool's budget, unless it is used up.
    */
   async function answer<T>(
-    method: keyof GitHubAccess,
+    method: GitHubRead,
+    what: string,
     respond: () => GitHubResult<T>,
-  ): Promise<GitHubResult<T>> {
+  ): Promise<GitHubResponse<T>> {
     requestsReceived++;
     requestsInFlight++;
+    received.push(`${method} ${what}`);
     const error = credentialsError() ?? failure ?? takeNextFailure();
-    const answered: GitHubResult<T> = error ? { ok: false, error } : respond();
+    let answered: GitHubResponse<T>;
+    if (error && !reachesGitHub(error)) {
+      answered = { ok: false, error, budget: undefined };
+    } else {
+      const pool = readPools[method];
+      const budget = budgetOf(pool);
+      if (budget.remaining === 0) {
+        answered = {
+          ok: false,
+          error: {
+            kind: "rate-limited",
+            limit: "primary",
+            message: "API rate limit already exceeded for user ID 1234567.",
+          },
+          budget: { pool, ...budget },
+        };
+      } else {
+        if (error?.kind !== "rate-limited") budget.remaining--;
+        answered = {
+          ...(error ? { ok: false, error } : respond()),
+          budget: { pool, ...budget },
+        };
+      }
+    }
     if ((pausedMethod ?? method) === method) await paused?.promise;
     requestsInFlight--;
     return answered;
+  }
+
+  /** A pool's budget as of now, which GitHub resets once its time is up. */
+  function budgetOf(pool: RateLimitPool): Omit<RateLimitBudget, "pool"> {
+    let budget = budgets.get(pool);
+    if (!budget || now() >= budget.resetAt) {
+      const limit = budget?.limit ?? defaultLimit;
+      budget = { limit, remaining: limit, resetAt: now() + budgetWindow };
+      budgets.set(pool, budget);
+    }
+    return budget;
   }
 
   /** The error the next read fails with, if one is to. */
@@ -363,12 +435,22 @@ export function createFakeGitHub({
     get requestsReceived() {
       return requestsReceived;
     },
+    get received() {
+      return received;
+    },
+    setBudget(pool, { remaining, limit = defaultLimit, resetAt }) {
+      budgets.set(pool, {
+        limit,
+        remaining,
+        resetAt: resetAt ?? now() + budgetWindow,
+      });
+    },
     requestsFor(nameWithOwner) {
       return repositoryRequests.get(nameWithOwner) ?? 0;
     },
     fetchIssueDetails(id) {
-      return answer("fetchIssueDetails", () => {
-        const ref = id.replace(/^I_/, "");
+      const ref = id.replace(/^I_/, "");
+      return answer("fetchIssueDetails", ref, () => {
         const issue = find(ref);
         const message = `Could not resolve to a node with the global id of '${id}'.`;
         const hides = unavailable(ref, message);
@@ -396,7 +478,7 @@ export function createFakeGitHub({
     fetchOpenIssues({ owner, name }, after) {
       const nameWithOwner = `${owner}/${name}`;
       countRequestFor(nameWithOwner);
-      return answer("fetchOpenIssues", () => {
+      return answer("fetchOpenIssues", nameWithOwner, () => {
         const issues = repositories.get(nameWithOwner);
         const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
         const hides = unavailable(nameWithOwner, message);
@@ -440,7 +522,7 @@ export function createFakeGitHub({
       )) {
         if (nameWithOwner) countRequestFor(nameWithOwner);
       }
-      return answer("fetchIssues", () => {
+      return answer("fetchIssues", refs.join(" "), () => {
         if (ids.length > 100) {
           return {
             ok: false,
@@ -469,7 +551,8 @@ export function createFakeGitHub({
       });
     },
     fetchRepositorySummaries(addresses) {
-      return answer("fetchRepositorySummaries", () => {
+      const names = addresses.map(({ owner, name }) => `${owner}/${name}`);
+      return answer("fetchRepositorySummaries", names.join(" "), () => {
         if (addresses.length > 100) {
           return {
             ok: false,
@@ -513,6 +596,27 @@ export function createFakeGitHub({
       });
     },
   };
+}
+
+/**
+ * Whether a read failing with an error reached GitHub, rather than failing
+ * in gh.
+ */
+function reachesGitHub(error: GitHubError): boolean {
+  switch (error.kind) {
+    case "gh-not-found":
+    case "gh-unusable":
+    case "gh-signed-out":
+    case "gh-failed":
+      return false;
+    case "unavailable":
+    case "rate-limited":
+    case "server-error":
+    case "http":
+    case "graphql":
+    case "unexpected-response":
+      return true;
+  }
 }
 
 /** Splits `owner/name`, or the repository of `owner/name#number`. */

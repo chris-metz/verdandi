@@ -35,10 +35,10 @@ export function problemText(problem: Problem, login?: string): ProblemText {
             : undefined,
       };
     }
-    case "rate-limited":
+    case "interrupted":
       return {
-        text: "GitHub rate limit reached",
-        detail: problem.message,
+        text: "Loading was interrupted",
+        detail: undefined,
         link: undefined,
       };
     case "error":

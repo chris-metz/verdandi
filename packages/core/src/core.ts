@@ -2,13 +2,19 @@ import type { Contract, CoreEvents, Screen } from "./contract.ts";
 import type { HostEnvironment } from "./directories.ts";
 import { createEmitter } from "./emitter.ts";
 import type { CommandRunner } from "./github/command-runner.ts";
-import type { GitHubAccess, SendRequest } from "./github/port.ts";
+import {
+  readPools,
+  type GitHubAccess,
+  type GitHubRead,
+  type GitHubResponse,
+  type ReadValue,
+} from "./github/port.ts";
 import { createIssueLists } from "./issue-lists.ts";
 import { createIssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
 import { isTransient } from "./problems.ts";
-import { createRequestQueue } from "./request-queue.ts";
+import { createRequestQueue, type SendRequest } from "./request-queue.ts";
 import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
 import { createSidebar } from "./sidebar.ts";
@@ -39,8 +45,8 @@ export interface CoreOptions {
   /** The time, in milliseconds since the epoch: the system clock by default. */
   now?: () => number;
   /**
-   * Waits a number of milliseconds, e.g. before trying a request again:
-   * with a timer by default.
+   * Waits a number of milliseconds, e.g. before trying a request again, or
+   * while a rate limit holds requests back: with a timer by default.
    */
   wait?: (milliseconds: number) => Promise<void>;
 }
@@ -58,9 +64,31 @@ export function createCore({
 }: CoreOptions): Contract {
   const events = createEmitter<CoreEvents>();
   const clock = createClock(now);
-  const queue = createRequestQueue({ concurrency: maxConcurrentRequests });
+  const queue = createRequestQueue({
+    concurrency: maxConcurrentRequests,
+    now,
+    wait,
+    push: (states) => {
+      events.emit("rateLimitsChanged", states);
+    },
+  });
   /** The screen the main area shows, as last opened, refreshed or shown. */
   let shown: Screen | undefined;
+
+  /**
+   * Takes the screen the main area shows now. The requests of a screen left
+   * that have not been sent are dropped; those under way finish into the
+   * store.
+   */
+  function show(screen: Screen | undefined) {
+    shown = screen;
+    queue.sweep();
+  }
+
+  // While a pool that reads draw on is below a tenth of its budget, nothing
+  // is read again only because it grew old.
+  const mayRevalidate = () =>
+    !Object.values(readPools).some((pool) => queue.isLow(pool));
 
   const setup = createGhSetup({
     runCommand,
@@ -90,11 +118,14 @@ export function createCore({
   // becomes of it checked for signs that it is no longer. One that GitHub's
   // servers failed is tried again, a few times; any other failure waits to
   // be retried, so that failing to reach GitHub never loops.
-  const request: SendRequest = async (send) => {
+  const request: SendRequest = async (read, args, urgency) => {
     for (let attempt = 0; ; attempt++) {
       const access = await setup.access();
-      const result = await queue.run(() => send(access));
+      const result = await queue.run(readPools[read], urgency, () =>
+        send(access, read, args),
+      );
       if (result.ok) return result;
+      if (result.error.kind === "interrupted") return result;
       setup.requestFailed(result.error);
       if (!isTransient(result.error) || attempt === transientRetries) {
         return result;
@@ -107,6 +138,7 @@ export function createCore({
     settings,
     request,
     clock,
+    mayRevalidate,
     push: (entries) => {
       events.emit("sidebarChanged", entries);
     },
@@ -118,6 +150,8 @@ export function createCore({
     request,
     settings,
     clock,
+    shown: () => shown,
+    mayRevalidate,
     push: (page) => {
       events.emit("issuePageChanged", page);
     },
@@ -127,6 +161,8 @@ export function createCore({
     request,
     settings,
     clock,
+    shown: () => shown,
+    mayRevalidate,
     push: (list) => {
       events.emit("listChanged", list);
     },
@@ -139,7 +175,7 @@ export function createCore({
 
   return {
     openIssuePage(issueId) {
-      shown = { kind: "issue", issueId };
+      show({ kind: "issue", issueId });
       pages.open(issueId);
       sidebar.revalidate();
       return Promise.resolve();
@@ -157,7 +193,7 @@ export function createCore({
       return sidebar.read();
     },
     openList(scope) {
-      shown = { kind: "list", scope };
+      show({ kind: "list", scope });
       lists.open(scope);
       sidebar.revalidate();
       return Promise.resolve();
@@ -171,26 +207,41 @@ export function createCore({
       return Promise.resolve();
     },
     refresh(screen) {
-      shown = screen;
+      show(screen);
       if (screen?.kind === "list") lists.refresh(screen.scope);
       if (screen?.kind === "issue") pages.refresh(screen.issueId);
       sidebar.refresh();
       return Promise.resolve();
     },
     revalidate(screen) {
-      shown = screen;
+      show(screen);
       if (screen?.kind === "list") lists.revalidate(screen.scope);
       if (screen?.kind === "issue") pages.revalidate(screen.issueId);
       sidebar.revalidate();
       return Promise.resolve();
     },
     retry(screen) {
-      shown = screen;
+      show(screen);
       if (screen?.kind === "list") lists.retry(screen.scope);
       if (screen?.kind === "issue") pages.retry(screen.issueId);
       sidebar.retry();
       return Promise.resolve();
     },
+    getRateLimits() {
+      return Promise.resolve(queue.states());
+    },
     on: events.on,
   };
+}
+
+/** Sends one read through GitHub access. */
+function send<R extends GitHubRead>(
+  access: GitHubAccess,
+  read: R,
+  args: Parameters<GitHubAccess[R]>,
+): Promise<GitHubResponse<ReadValue<R>>> {
+  const method = access[read] as (
+    ...args: Parameters<GitHubAccess[R]>
+  ) => Promise<GitHubResponse<ReadValue<R>>>;
+  return method.apply(access, args);
 }

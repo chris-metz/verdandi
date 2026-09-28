@@ -5,10 +5,11 @@ import type {
   IssueTree,
   LoadingState,
   Problem,
+  Screen,
   UnreadIssue,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
-import type { Issue, SendRequest } from "./github/port.ts";
+import type { Issue } from "./github/port.ts";
 import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
 import {
@@ -24,6 +25,12 @@ import {
   repositoryKey,
   sameRepository,
 } from "./repository-address.ts";
+import {
+  screenUrgency,
+  type ScreenPart,
+  type SendRequest,
+  type Urgency,
+} from "./request-queue.ts";
 import type { SettingsStorage } from "./settings/port.ts";
 
 /**
@@ -32,6 +39,11 @@ import type { SettingsStorage } from "./settings/port.ts";
  * store whenever it is pushed, so an issue read again elsewhere shows on it
  * too. It is kept for the session, and read again when it is refreshed, has
  * grown old, or when what of it failed is retried, opened or shown again.
+ * Only the page on screen asks GitHub for anything: its issue, ancestry and
+ * sub-issues first, then the deeper levels of sub-issues, which show
+ * collapsed, and, when it has grown old, all of it in the background. A page
+ * left before it has loaded keeps what it has, marked interrupted where it
+ * lacks something, until it shows again.
  */
 export interface IssuePages {
   /**
@@ -46,8 +58,8 @@ export interface IssuePages {
    */
   refresh(issueId: string): void;
   /**
-   * Reads an opened issue page again if it is older than five minutes, and
-   * otherwise what of it failed.
+   * Reads an opened issue page again if it is older than five minutes,
+   * unless the rate-limit budget is low, and otherwise what of it failed.
    */
   revalidate(issueId: string): void;
   /**
@@ -62,6 +74,13 @@ export interface IssuePagesOptions {
   request: SendRequest;
   settings: SettingsStorage;
   clock: Clock;
+  /** The screen the main area shows, if any. */
+  shown: () => Screen | undefined;
+  /**
+   * Whether what is outdated may be read again on its own, which it may not
+   * while the rate-limit budget is low.
+   */
+  mayRevalidate: () => boolean;
   /** Pushes an issue page's current state to the interfaces. */
   push: (page: IssuePage) => void;
 }
@@ -90,6 +109,11 @@ interface PageState {
   loaded: boolean;
   /** Why its last read of the issue itself failed, if it did. */
   problem: Problem | undefined;
+  /**
+   * Whether it is read again on its own, because it grew old, rather than
+   * because it was asked for: from then until it is refreshed or retried.
+   */
+  background: boolean;
 }
 
 /** At most this many issues are read by ID in one request. */
@@ -100,9 +124,22 @@ export function createIssuePages({
   request,
   settings,
   clock,
+  shown,
+  mayRevalidate,
   push,
 }: IssuePagesOptions): IssuePages {
   const pages = new Map<string, PageState>();
+
+  /** How urgently a page needs a part of what it asks for. */
+  function urgencyOf(state: PageState, part: ScreenPart): Urgency | undefined {
+    const screen = shown();
+    const isShown =
+      screen?.kind === "issue" && screen.issueId === state.issueId;
+    return screenUrgency(
+      { shown: isShown, background: state.background },
+      part,
+    );
+  }
 
   /**
    * Why the page shows an issue it names only as a relationship names it:
@@ -292,8 +329,8 @@ export function createIssuePages({
     state.tracked = new Set(settingsRead.value.repositories.map(repositoryKey));
 
     const askedAt = clock();
-    const details = await request((github) =>
-      github.fetchIssueDetails(issueId),
+    const details = await request("fetchIssueDetails", [issueId], () =>
+      urgencyOf(state, "visible"),
     );
     if (!details.ok) {
       state.problem = problemOf(details.error);
@@ -327,7 +364,7 @@ export function createIssuePages({
 
     /** Issues asked for during this read, so none is asked for twice. */
     const attempted = new Set<string>();
-    async function readIssues(ids: string[]) {
+    async function readIssues(ids: string[], part: ScreenPart) {
       const outdated = ids.filter((id) => {
         if (attempted.has(id)) return false;
         const readAt = store.readAt(id);
@@ -342,7 +379,9 @@ export function createIssuePages({
         inBatches(outdated, issuesPerRequest).map(async (batch) => {
           const batchAskedAt = clock();
           for (const id of batch) state.readingIds.add(id);
-          const answer = await request((github) => github.fetchIssues(batch));
+          const answer = await request("fetchIssues", [batch], () =>
+            urgencyOf(state, part),
+          );
           for (const id of batch) state.readingIds.delete(id);
           keepAnswer(store, batch, answer, batchAskedAt);
         }),
@@ -354,28 +393,35 @@ export function createIssuePages({
       let parent = issue.parent;
       while (parent && !visited.has(parent.id)) {
         visited.add(parent.id);
-        await readIssues([parent.id]);
+        await readIssues([parent.id], "visible");
         parent = store.get(parent.id)?.parent;
       }
     }
 
+    // The sub-issues show collapsed, so only the first level shows at once.
     async function subIssues() {
       const visited = new Set([issueId]);
       let level = issue.subIssues;
+      let part: ScreenPart = "visible";
       while (level.length > 0) {
         const ids = [...new Set(level.map(({ id }) => id))].filter(
           (id) => !visited.has(id),
         );
         for (const id of ids) visited.add(id);
-        await readIssues(ids);
+        await readIssues(ids, part);
         level = ids.flatMap((id) => store.get(id)?.subIssues ?? []);
+        part = "rest";
       }
     }
     await Promise.all([ancestry(), subIssues()]);
   }
 
-  /** Reads a page again from now on, unless it is being read. */
-  function refresh(state: PageState) {
+  /**
+   * Reads a page again from now on, unless it is being read: in the
+   * background when it is read again on its own.
+   */
+  function refresh(state: PageState, background = false) {
+    state.background = background;
     state.validFrom = clock();
     if (state.reading) state.readAgain = true;
     else void load(state);
@@ -392,13 +438,16 @@ export function createIssuePages({
   }
 
   /**
-   * Reads a page again if it is older than five minutes, and otherwise what
-   * of it failed, and says whether it does.
+   * Reads a page again in the background if it is older than five minutes,
+   * unless the rate-limit budget is low, and otherwise what of it failed,
+   * and says whether it does.
    */
   function revalidate(state: PageState): boolean {
     const page = build(state);
-    if (!isOutdated(page.loading, clock)) return retry(state, page);
-    refresh(state);
+    if (!isOutdated(page.loading, clock) || !mayRevalidate()) {
+      return retry(state, page);
+    }
+    refresh(state, true);
     return true;
   }
 
@@ -415,6 +464,7 @@ export function createIssuePages({
       readingIds: new Set(),
       loaded: false,
       problem: undefined,
+      background: false,
     };
     pages.set(issueId, state);
     void load(state);
@@ -437,7 +487,10 @@ export function createIssuePages({
     },
     retry(issueId) {
       const known = pages.get(issueId);
-      if (known) retry(known, build(known));
+      if (!known) return;
+      // Asked for, what is read is no longer read in the background.
+      known.background = false;
+      retry(known, build(known));
     },
   };
 }

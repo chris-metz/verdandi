@@ -68,15 +68,10 @@ describe("how a problem reads", () => {
     });
   });
 
-  it("says a rate limit is reached", () => {
-    expect(
-      problemText({
-        kind: "rate-limited",
-        message: "API rate limit exceeded for user ID 1234567.",
-      }),
-    ).toEqual({
-      text: "GitHub rate limit reached",
-      detail: "API rate limit exceeded for user ID 1234567.",
+  it("says loading was interrupted", () => {
+    expect(problemText({ kind: "interrupted" })).toEqual({
+      text: "Loading was interrupted",
+      detail: undefined,
       link: undefined,
     });
   });
