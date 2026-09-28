@@ -41,11 +41,13 @@ export async function layoutBlockingMap(
       step,
       issue,
     }));
+  const firstColumn = Math.min(-2, ...map.cards.map(({ step }) => step));
+  const lastColumn = Math.max(2, ...map.cards.map(({ step }) => step));
   for (const side of ["blockedBy", "blocking"] as const) {
     if (map.ends[side].kind !== "none")
       nodes.push({
         id: `edge:${side}`,
-        step: side === "blockedBy" ? -3 : 3,
+        step: side === "blockedBy" ? firstColumn - 1 : lastColumn + 1,
         issue: undefined,
       });
   }
@@ -53,13 +55,20 @@ export async function layoutBlockingMap(
   // Unknown branches point to the edge even when nothing has been folded yet.
   for (const card of map.cards) {
     for (const side of ["blockedBy", "blocking"] as const) {
-      if (card.badges[side]?.kind !== "unloaded") continue;
+      if (
+        !card.badges[side] ||
+        card.badges[side].kind === "closed" ||
+        map.ends[side].kind === "none"
+      )
+        continue;
       const from = side === "blockedBy" ? `edge:${side}` : card.issue.id;
       const to = side === "blockedBy" ? card.issue.id : `edge:${side}`;
       if (!edges.some((edge) => edge.from === from && edge.to === to))
         edges.push({ from, to, cycle: false, closed: false });
     }
   }
+  const min = Math.min(firstColumn, ...nodes.map(({ step }) => step));
+  const max = Math.max(lastColumn, ...nodes.map(({ step }) => step));
   const graph = await elk.layout({
     id: "blocking-map",
     layoutOptions: {
@@ -75,7 +84,7 @@ export async function layoutBlockingMap(
       id,
       width: cardWidth,
       height: cardHeight,
-      layoutOptions: { "elk.partitioning.partition": String(step + 3) },
+      layoutOptions: { "elk.partitioning.partition": String(step - min) },
     })),
     edges: edges
       .filter(({ cycle }) => !cycle)
@@ -85,8 +94,6 @@ export async function layoutBlockingMap(
         targets: [to],
       })),
   });
-  const min = map.ends.blockedBy.kind === "none" ? -2 : -3;
-  const max = map.ends.blocking.kind === "none" ? 2 : 3;
   const x = (step: number) => padding + (step - min) * columnWidth;
   const cards = nodes.map(({ id, step, issue }) => ({
     id: issue ? mapCursorId(id, root) : id,
@@ -144,7 +151,10 @@ export async function layoutBlockingMap(
       224,
       ...cards.map((card) => card.y + card.height + padding),
     ),
-    columns: [-2, -1, 0, 1, 2].map((step) => ({
+    columns: Array.from(
+      { length: lastColumn - firstColumn + 1 },
+      (_, index) => index + firstColumn,
+    ).map((step) => ({
       step,
       x: x(step),
       title: columnTitle(step),
@@ -154,8 +164,6 @@ export async function layoutBlockingMap(
 
 function columnTitle(step: number): string {
   switch (step) {
-    case -2:
-      return "2 steps back";
     case -1:
       return "Blocked by";
     case 0:
@@ -163,13 +171,22 @@ function columnTitle(step: number): string {
     case 1:
       return "Blocks";
     default:
-      return "2 steps on";
+      return `${String(Math.abs(step))} steps ${step < 0 ? "back" : "on"}`;
   }
 }
 
 export function edgeTitle(map: BlockingMap, side: BlockingSide): string {
   const end = map.ends[side];
-  return end.kind === "folded"
-    ? `+${String(end.count)} more`
-    : "More… · total unknown";
+  switch (end.kind) {
+    case "folded":
+      return `+${String(end.count)} more`;
+    case "expanded":
+      return "Fewer";
+    case "paused":
+      return "Continue…";
+    case "loading":
+      return `Loading… ${String(end.count)} issues so far`;
+    default:
+      return "More… · total unknown";
+  }
 }

@@ -2236,6 +2236,7 @@ describe("blocking relationship pages", () => {
       "I_root",
       "blockedBy",
       "previous",
+      40,
     );
     expect(answer).toMatchObject({
       ok: true,
@@ -2253,9 +2254,13 @@ describe("blocking relationship pages", () => {
         incomplete: { kind: "unavailable" },
       },
     });
-    expect(requests[0]?.variables).toEqual({ id: "I_root", after: "previous" });
+    expect(requests[0]?.variables).toEqual({
+      id: "I_root",
+      after: "previous",
+      first: 40,
+    });
     expect(requests[0]?.query).toContain(
-      "blockedBy(first: 100, after: $after)",
+      "blockedBy(first: $first, after: $after)",
     );
   });
 

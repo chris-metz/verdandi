@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { spatialNeighbour } from "./map-navigation";
+import {
+  retainMapCursor,
+  mapScrollAfterLayout,
+  spatialNeighbour,
+} from "./map-navigation";
 import { commandForIssuePageKey } from "./issue-page-navigation";
 
 const centre = {
@@ -23,6 +27,41 @@ const cards = [
   { id: "right", step: 1, x: 600, y: 40, width: 200, height: 100 },
   { id: "edge:blocking", step: 3, x: 900, y: 40, width: 200, height: 100 },
 ];
+
+it("keeps the cursor on a moving card and chooses the nearest card when its edge disappears", () => {
+  const next = cards
+    .filter(({ id }) => id !== "edge:blocking")
+    .map((card) => ({ ...card, x: card.x + 300 }));
+  expect(retainMapCursor(cards, next, "left-low")).toBe("left-low");
+  expect(retainMapCursor(cards, next, "edge:blocking")).toBe("right");
+  // Map-array order is unrelated to visual proximity after relayout.
+  expect(
+    retainMapCursor(
+      cards,
+      next.filter(({ id }) => id !== "left-low").reverse(),
+      "left-low",
+    ),
+  ).toBe("left-high");
+});
+
+it("compensates for columns added to the left and reveals a selected card that moves sideways", () => {
+  const shifted = cards.map((card) => ({ ...card, x: card.x + 600 }));
+  expect(
+    mapScrollAfterLayout(cards, shifted, "centre", "centre", 150, 700),
+  ).toBe(750);
+  const moved = shifted.map((card) =>
+    card.id === "left-low" ? { ...card, step: -3, x: 0 } : card,
+  );
+  expect(
+    mapScrollAfterLayout(cards, moved, "centre", "left-low", 150, 700),
+  ).toBe(0);
+  const movedRight = shifted.map((card) =>
+    card.id === "right" ? { ...card, step: 4, x: 1800 } : card,
+  );
+  expect(
+    mapScrollAfterLayout(cards, movedRight, "centre", "right", 150, 700),
+  ).toBe(1316);
+});
 
 it("moves horizontally to the nearest column and vertically within a column", () => {
   expect(spatialNeighbour(cards, "centre", "left")).toBe("left-low");
@@ -49,7 +88,10 @@ it("uses map coordinates for arrows and hjkl, treats the edge as a stop, and ope
   });
   expect(key("Enter")).toEqual({ kind: "openIssue", issue: centre.issue });
   expect(key("o")).toEqual({ kind: "openOnGitHub", url: centre.issue.url });
-  expect(key("Enter", "edge:blocking")).toBeUndefined();
+  expect(key("Enter", "edge:blocking")).toEqual({
+    kind: "activateBlockingEnd",
+    side: "blocking",
+  });
   expect(key("o", "edge:blocking")).toBeUndefined();
   expect(key("l", "edge:blocking")).toBeUndefined();
 });

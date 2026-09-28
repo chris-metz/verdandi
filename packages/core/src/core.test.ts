@@ -5587,6 +5587,364 @@ describe("looking up issues by number", () => {
 });
 
 describe("blocking maps through the contract", () => {
+  it("marks omitted unreadable relationships with a lock even when GitHub reports why it omitted them", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2", "acme/api#3"] },
+      { number: 2, title: "Readable" },
+      { number: 3, title: "Unreadable" },
+    ]);
+    github.hide("acme/api#3");
+    const page = await openPageUntilLoaded(
+      createTestCore(github),
+      "I_acme/api#1",
+    );
+    expect(page.blockingMap?.cards[0]?.badges.blockedBy).toEqual({
+      kind: "inaccessible",
+      count: 1,
+    });
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+  });
+
+  it("keeps an expanded chain unfolded when More reaches an inaccessible branch", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      {
+        number: 4,
+        title: "Inaccessible end",
+        blockedBy: { open: 1, total: 1 },
+      },
+    ]);
+    const core = createTestCore(github);
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.cards.at(-1)?.badges.blockedBy).toEqual({
+        kind: "inaccessible",
+        count: 1,
+      });
+    });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    expect(page.blockingMap?.cards).toHaveLength(4);
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+  });
+
+  it("moves a direct blocker outward when exploration finds its longer route and relays out each refreshed list", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    const issues = [
+      { number: 1, title: "Centre", blockers: ["acme/api#4", "acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      { number: 4, title: "Direct and far" },
+    ];
+    github.addRepository("acme/api", issues);
+    const core = createTestCore(github);
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    expect(
+      page.blockingMap?.cards.find(
+        ({ issue }) => issue.title === "Direct and far",
+      )?.step,
+    ).toBe(-1);
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.ends.blockedBy.kind).toBe("expanded");
+    });
+    expect(
+      page.blockingMap?.cards.find(
+        ({ issue }) => issue.title === "Direct and far",
+      )?.step,
+    ).toBe(-3);
+    github.addRepository(
+      "acme/api",
+      issues.map((issue) =>
+        issue.number === 3 ? { ...issue, blockers: [] } : issue,
+      ),
+    );
+    const updates: IssuePage[] = [];
+    core.on("issuePageChanged", (changed) => updates.push(changed));
+    await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    expect(
+      updates.some(
+        (changed) =>
+          changed.loading.status === "refreshing" &&
+          changed.blockingMap?.cards.find(
+            ({ issue }) => issue.title === "Direct and far",
+          )?.step === -1,
+      ),
+    ).toBe(true);
+  });
+
+  it("retries failed branches with More and reveals a late cycle once its closing relationship loads", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      { number: 4, title: "Far", blockers: ["acme/api#5"] },
+      { number: 5, title: "Cycle", blockers: ["acme/api#3"] },
+    ]);
+    const core = createTestCore(github);
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    expect(page.blockingMap?.edges.some(({ cycle }) => cycle)).toBe(false);
+    github.failNextWith({ kind: "gh-failed", message: "Offline" });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.ends.blockedBy.kind).toBe("unknown");
+    });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.ends.blockedBy.kind).toBe("expanded");
+    });
+    expect(page.blockingMap?.cards).toHaveLength(5);
+    expect(page.blockingMap?.edges.filter(({ cycle }) => cycle)).toHaveLength(
+      1,
+    );
+  });
+
+  it("marks both of this issue's loading lists and distinguishes inaccessible relationships from an exact chain", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      {
+        number: 1,
+        title: "Centre",
+        blockedBy: { open: 3, total: 3 },
+        blocking: { open: 2, total: 2 },
+      },
+    ]);
+    const core = createTestCore(github);
+    const pages: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pages.push(page));
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    expect(
+      pages.some(
+        (page) =>
+          page.blockingMap?.cards[0]?.badges.blockedBy?.kind === "loading" &&
+          page.blockingMap.cards[0].badges.blocking?.kind === "loading",
+      ),
+    ).toBe(true);
+    expect(pages.at(-1)?.blockingMap?.cards[0]?.badges).toEqual({
+      blockedBy: { kind: "inaccessible", count: 3 },
+      blocking: { kind: "inaccessible", count: 2 },
+    });
+    expect(pages.at(-1)?.blockingMap?.ends).toEqual({
+      blockedBy: { kind: "unknown" },
+      blocking: { kind: "unknown" },
+    });
+  });
+
+  it("drops a stopped expansion's rate-limited request instead of resuming it at reset", async () => {
+    const clock = createClock();
+    const github = createFakeGitHub({ login: "octo", now: clock.now });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      { number: 4, title: "End" },
+    ]);
+    const core = createTestCore(github, { clock, timers: true });
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    vi.useFakeTimers();
+    try {
+      github.setBudget("graphql", {
+        remaining: 0,
+        resetAt: clock.now() + minute,
+      });
+      await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+      await vi.waitFor(() => {
+        expect(page.blockingMap?.cards.at(-1)?.badges.blockedBy?.kind).toBe(
+          "paused",
+        );
+      });
+      expect(await core.getRateLimits()).toContainEqual({
+        pool: "graphql",
+        status: "paused",
+        until: clock.now() + minute,
+      });
+      await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+      const reads = github.requestsReceived;
+      await passTime(clock, minute);
+      expect(github.requestsReceived).toBe(reads);
+      expect(page.blockingMap?.cards).toHaveLength(3);
+      expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a failed branch for retry and keeps the total unknown until exploration succeeds", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      { number: 4, title: "End" },
+    ]);
+    const core = createTestCore(github);
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    github.failNextWith({ kind: "gh-failed", message: "Offline" });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.cards.at(-1)?.badges.blockedBy?.kind).toBe(
+        "failed",
+      );
+    });
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+    await core.retryBlockingBranch("I_acme/api#1", "I_acme/api#3", "blockedBy");
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "expanded" });
+    });
+    expect(page.blockingMap?.problems).toEqual([]);
+    expect(page.blockingMap?.cards).toHaveLength(4);
+  });
+
+  it.each([40, 60])(
+    "pauses after 40 additional issues in a %i-issue relationship list, then continues without folding",
+    async (total) => {
+      const github = createFakeGitHub({ login: "octo" });
+      github.addRepository("acme/api", [
+        { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+        { number: 2, title: "Near", blockers: ["acme/api#3"] },
+        {
+          number: 3,
+          title: "Fan out",
+          blockers: Array.from(
+            { length: total },
+            (_, i) => `acme/api#${String(i + 4)}`,
+          ),
+        },
+        ...Array.from({ length: total }, (_, i) => ({
+          number: i + 4,
+          title: `Far ${String(i)}`,
+        })),
+      ]);
+      const core = createTestCore(github);
+      let page = await openPageUntilLoaded(core, "I_acme/api#1");
+      core.on("issuePageChanged", (changed) => {
+        page = changed;
+      });
+      await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+      await vi.waitFor(() => {
+        expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "paused" });
+      });
+      expect(page.blockingMap?.cards).toHaveLength(43);
+      expect(
+        page.blockingMap?.cards.find(({ issue }) => issue.title === "Fan out")
+          ?.badges.blockedBy,
+      ).toEqual(total === 60 ? { kind: "unloaded", count: 20 } : undefined);
+      await pageUntilSettled(core, "I_acme/api#1", () =>
+        core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+      );
+      expect(page.blockingMap?.cards).toHaveLength(43);
+      expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "paused" });
+      await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+      await vi.waitFor(() => {
+        expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "expanded" });
+      });
+      expect(page.blockingMap?.cards).toHaveLength(total === 60 ? 63 : 43);
+      await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+      expect(page.blockingMap?.ends.blockedBy).toEqual({
+        kind: "folded",
+        count: total,
+      });
+    },
+  );
+
+  it("stops exploration while running requests finish into the cache", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository(
+      "acme/api",
+      Array.from({ length: 6 }, (_, index) => ({
+        number: index + 1,
+        title: `Issue ${String(index + 1)}`,
+        blockers: index < 5 ? [`acme/api#${String(index + 2)}`] : [],
+      })),
+    );
+    const core = createTestCore(github);
+    let page = await openPageUntilLoaded(core, "I_acme/api#1");
+    core.on("issuePageChanged", (changed) => {
+      page = changed;
+    });
+    github.pause("fetchRelationships");
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    expect(page.blockingMap?.ends.blockedBy).toEqual({
+      kind: "loading",
+      count: 2,
+    });
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+    github.resume();
+    await vi.waitFor(() => {
+      expect(page.blockingMap?.cards).toHaveLength(4);
+    });
+    expect(page.blockingMap?.cards.at(-1)?.badges.blockedBy).toEqual({
+      kind: "unloaded",
+      count: 1,
+    });
+    expect(github.received).not.toContain(
+      "fetchRelationships acme/api#4 blockedBy",
+    );
+  });
+
+  it("explores a side progressively, then folds and unfolds its complete chain from cache", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Two back", blockers: ["acme/api#4"] },
+      { number: 4, title: "Far", blockers: ["acme/api#5"] },
+      { number: 5, title: "End" },
+    ]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    const pages: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pages.push(page));
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    await vi.waitFor(() => {
+      expect(pages.at(-1)?.blockingMap?.ends.blockedBy).toEqual({
+        kind: "expanded",
+      });
+    });
+    expect(pages.some((page) => page.blockingMap?.cards.length === 4)).toBe(
+      true,
+    );
+    expect(pages.at(-1)?.blockingMap?.cards.map(({ step }) => step)).toEqual([
+      0, -1, -2, -3, -4,
+    ]);
+    const reads = github.received.length;
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    expect(pages.at(-1)?.blockingMap?.ends.blockedBy).toEqual({
+      kind: "folded",
+      count: 2,
+    });
+    expect(pages.at(-1)?.blockingMap?.cards).toHaveLength(3);
+    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
+    expect(pages.at(-1)?.blockingMap?.cards).toHaveLength(5);
+    expect(github.received).toHaveLength(reads);
+  });
+
   it("loads two steps each way and leaves farther relationships counted, not followed", async () => {
     const github = createFakeGitHub({ login: "octo" });
     github.addRepository("acme/api", [
@@ -5783,8 +6141,8 @@ it("paginates blocking lists and retries a failed side without reporting it as e
   const failed = await openPageUntilLoaded(core, "I_acme/api#1");
   expect(failed.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
   expect(failed.blockingMap?.cards[0]?.badges.blockedBy).toEqual({
-    kind: "unloaded",
-    count: 2,
+    kind: "failed",
+    problem: { kind: "unreachable", message: "Offline" },
   });
   const retried = await pageUntilSettled(core, "I_acme/api#1", () =>
     core.retry({ kind: "issue", issueId: "I_acme/api#1" }),

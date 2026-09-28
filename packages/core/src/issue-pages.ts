@@ -1,4 +1,5 @@
 import type {
+  BlockingSide,
   IssueMetadata,
   IssueNode,
   IssuePage,
@@ -66,6 +67,14 @@ export interface IssuePages {
    * loaded.
    */
   open(issueId: string): void;
+  activateBlockingEnd(issueId: string, side: BlockingSide): void;
+  retryBlockingBranch(
+    issueId: string,
+    cardId: string,
+    side: BlockingSide,
+  ): void;
+  requestsChanged(): void;
+  leave(issueId: string): void;
   /**
    * Reads everything an issue page shows again now, unless it is being read.
    */
@@ -99,6 +108,7 @@ export interface IssuePagesOptions {
    * while the rate-limit budget is low.
    */
   mayRevalidate: () => boolean;
+  relationshipsPaused: () => boolean;
   /** Pushes an issue page's current state to the interfaces. */
   push: (page: IssuePage) => void;
 }
@@ -148,10 +158,11 @@ export function createIssuePages({
   clock,
   shown,
   mayRevalidate,
+  relationshipsPaused,
   push,
 }: IssuePagesOptions): IssuePages {
   const pages = new Map<string, PageState>();
-  const maps = createBlockingMaps(store, request, clock);
+  const maps = createBlockingMaps(store, request, clock, relationshipsPaused);
 
   /** How urgently a page needs a part of what it asks for. */
   function urgencyOf(state: PageState, part: ScreenPart): Urgency | undefined {
@@ -575,6 +586,42 @@ export function createIssuePages({
   }
 
   return {
+    requestsChanged() {
+      const screen = shown();
+      const state = screen?.kind === "issue" && pages.get(screen.issueId);
+      if (state) push(build(state));
+    },
+    leave(issueId) {
+      maps.stop(issueId);
+    },
+    retryBlockingBranch(issueId, cardId, side) {
+      const state = pages.get(issueId);
+      if (!state || urgencyOf(state, "visible") === undefined) return;
+      void maps.retry(
+        issueId,
+        cardId,
+        side,
+        state.validFrom,
+        () => urgencyOf(state, "visible"),
+        () => {
+          push(build(state));
+        },
+      );
+    },
+    activateBlockingEnd(issueId, side) {
+      const state = pages.get(issueId);
+      if (!state || urgencyOf(state, "visible") === undefined) return;
+      maps.activate(
+        issueId,
+        side,
+        build(state).blockingMap?.ends[side] ?? { kind: "none" },
+        state.validFrom,
+        () => urgencyOf(state, "visible"),
+        () => {
+          push(build(state));
+        },
+      );
+    },
     open(issueId) {
       const known = pages.get(issueId);
       if (!known) create(issueId, fiveMinutesAgo(clock));

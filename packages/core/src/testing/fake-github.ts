@@ -565,7 +565,7 @@ export function createFakeGitHub({
         };
       });
     },
-    fetchRelationships(id, side, after) {
+    fetchRelationships(id, side, after, first = 100) {
       const ref = id.replace(/^I_/, "");
       return answer(
         "fetchRelationships",
@@ -575,7 +575,7 @@ export function createFakeGitHub({
           if (error) return { ok: false, error };
           const all = relationships(ref, side);
           const start = after === undefined ? 0 : Number(after);
-          const end = start + issuesPerPage;
+          const end = start + Math.min(issuesPerPage, first);
           let incomplete: GitHubError | undefined;
           const issues = all.slice(start, end).flatMap((related) => {
             const error = unavailable(related, "Related issue unavailable");

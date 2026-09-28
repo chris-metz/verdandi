@@ -1,7 +1,8 @@
-import type { IssueTree } from "@verdandi/core/contract";
+import type { BlockingSide, IssueTree } from "@verdandi/core/contract";
 import {
   directionForKey,
   spatialNeighbour,
+  retainMapCursor,
   type MapTarget,
 } from "./map-navigation";
 import type { IssueDestination } from "./issue-navigation";
@@ -14,7 +15,10 @@ import {
 
 export type PageTarget = IssueDestination & { url?: string };
 export type IssuePageCommand =
-  ListCommand | { kind: "back" } | { kind: "scroll"; direction: 1 | -1 };
+  | ListCommand
+  | { kind: "back" }
+  | { kind: "scroll"; direction: 1 | -1 }
+  | { kind: "activateBlockingEnd"; side: BlockingSide };
 
 /** Page-wide keys, independent of which relationship has the cursor. */
 export function commandForIssuePageKey(
@@ -63,6 +67,10 @@ export function commandForIssuePageKey(
     case "ArrowDown":
       return select(1);
     case "Enter":
+      if (card?.id === "edge:blockedBy")
+        return { kind: "activateBlockingEnd", side: "blockedBy" };
+      if (card?.id === "edge:blocking")
+        return { kind: "activateBlockingEnd", side: "blocking" };
       return target && { kind: "openIssue", issue: target };
     case "o":
       return target?.url
@@ -112,6 +120,7 @@ export interface CursorPlace {
   targets: readonly string[];
   placed: string;
   shownOn: string;
+  map?: readonly MapTarget[];
 }
 
 /**
@@ -124,11 +133,16 @@ export function followCursor(
   was: CursorPlace,
   targets: readonly string[],
   placed: string,
+  map?: readonly MapTarget[],
 ): CursorPlace {
-  if (placed !== was.placed) return { targets, placed, shownOn: placed };
+  const coordinates = map ? { map } : {};
+  if (placed !== was.placed)
+    return { targets, placed, shownOn: placed, ...coordinates };
   if (targets === was.targets) return was;
   const shownOn = targets.includes(was.shownOn)
     ? was.shownOn
-    : (nearestRemaining(was.targets, targets, was.shownOn) ?? was.shownOn);
-  return { targets, placed, shownOn };
+    : (retainMapCursor(was.map ?? [], map ?? [], was.shownOn) ??
+      nearestRemaining(was.targets, targets, was.shownOn) ??
+      was.shownOn);
+  return { targets, placed, shownOn, ...coordinates };
 }

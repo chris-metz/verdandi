@@ -27,6 +27,7 @@ export interface GitHubAccess {
     issueId: string,
     side: BlockingSide,
     after?: string,
+    first?: number,
   ): Promise<GitHubResponse<RelationshipPage>>;
   /** Reads a single issue with the metadata shown on its page. */
   fetchIssueDetails(id: string): Promise<GitHubResponse<Issue & IssueMetadata>>;

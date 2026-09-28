@@ -111,6 +111,11 @@ export function createCore({
    * store.
    */
   function show(screen: Screen | undefined) {
+    if (
+      shown?.kind === "issue" &&
+      (screen?.kind !== "issue" || screen.issueId !== shown.issueId)
+    )
+      session.pages.leave(shown.issueId);
     shown = screen;
     queue.sweep();
   }
@@ -214,9 +219,19 @@ export function createCore({
       clock,
       shown: () => shown,
       mayRevalidate,
+      relationshipsPaused: () =>
+        queue
+          .states()
+          .some(
+            ({ pool, status }) =>
+              pool === readPools.fetchRelationships && status === "paused",
+          ),
       push: (page) => {
         emit("issuePageChanged", page);
       },
+    });
+    const stopWatchingLimits = events.on("rateLimitsChanged", () => {
+      pages.requestsChanged();
     });
     const lists = createIssueLists({
       store,
@@ -241,6 +256,7 @@ export function createCore({
       request: sessionRequest,
       end() {
         live = false;
+        stopWatchingLimits();
       },
     };
   }
@@ -248,6 +264,15 @@ export function createCore({
   let session = createSession();
 
   return {
+    retryBlockingBranch(issueId, cardId, side) {
+      session.pages.retryBlockingBranch(issueId, cardId, side);
+      return Promise.resolve();
+    },
+    activateBlockingEnd(issueId, side) {
+      session.pages.activateBlockingEnd(issueId, side);
+      queue.sweep();
+      return Promise.resolve();
+    },
     openIssuePage(issueId) {
       show({ kind: "issue", issueId });
       session.pages.open(issueId);

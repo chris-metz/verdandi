@@ -509,10 +509,20 @@ export interface IssueComments {
 export type BlockingSide = "blockedBy" | "blocking";
 
 export type BlockingBadge =
-  { kind: "unloaded"; count: number } | { kind: "closed" };
+  | { kind: "unloaded"; count: number }
+  | { kind: "closed" }
+  | { kind: "loading" }
+  | { kind: "paused" }
+  | { kind: "failed"; problem: Problem }
+  | { kind: "inaccessible"; count: number };
 
 export type BlockingEnd =
-  { kind: "none" } | { kind: "unknown" } | { kind: "folded"; count: number };
+  | { kind: "none" }
+  | { kind: "unknown" }
+  | { kind: "folded"; count: number }
+  | { kind: "expanded" }
+  | { kind: "loading"; count: number }
+  | { kind: "paused" };
 
 /** Domain layout: steps are signed, with blockers on the negative side. */
 export interface BlockingMap {
@@ -543,7 +553,7 @@ export interface IssuePage {
   ancestry: (ParentIssue & { url: string })[];
   /** The list's outline rows, in GitHub order, initially collapsed. */
   subIssues: IssueTree[];
-  /** The two-step blocking map, once the issue has loaded. */
+  /** The blocking map, initially two steps each way, once the issue has loaded. */
   blockingMap?: BlockingMap;
   /** The issue's comments, once the issue has been read. */
   comments: IssueComments | undefined;
@@ -592,6 +602,18 @@ export interface CoreRequests {
    * keeps each visit's cursor, expansion and scroll position.
    */
   openIssuePage: (issueId: string) => Promise<void>;
+  /**
+   * Activates a side's edge card: explores More/Continue, stops a running
+   * exploration, or folds Fewer back to two steps. Loaded data stays cached.
+   * Progress arrives as issuePageChanged; the call returns at once.
+   */
+  activateBlockingEnd: (issueId: string, side: BlockingSide) => Promise<void>;
+  /** Retries only this card's relationship list on an opened issue page. */
+  retryBlockingBranch: (
+    issueId: string,
+    cardId: string,
+    side: BlockingSide,
+  ) => Promise<void>;
   /**
    * Reads a body on an opened issue page again, the issue's (`bodyId` is
    * the issue's ID) or a comment's, after one of its images or videos failed
@@ -751,6 +773,8 @@ export interface Contract extends CoreRequests {
 
 const requests: Record<keyof CoreRequests, true> = {
   openIssuePage: true,
+  activateBlockingEnd: true,
+  retryBlockingBranch: true,
   renewMediaLinks: true,
   lookUpIssue: true,
   getSetup: true,

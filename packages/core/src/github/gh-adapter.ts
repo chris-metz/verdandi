@@ -217,16 +217,17 @@ export function createGhAdapter({
         },
       );
     },
-    fetchRelationships(issueId, side, after) {
+    fetchRelationships(issueId, side, after, first = 100) {
       return graphql(
         `node(id: $id) { ... on Issue {
-          ${side}(first: 100, after: $after) {
+          ${side}(first: $first, after: $after) {
             pageInfo { hasNextPage endCursor }
             nodes { ${issueFields} }
           }
         } }`,
         {
           id: { type: "ID!", value: issueId },
+          first: { type: "Int!", value: first },
           after: { type: "String", value: after },
         },
         ({ data, errors, headers }) => {

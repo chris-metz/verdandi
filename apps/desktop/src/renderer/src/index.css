@@ -171,3 +171,18 @@
     transparent 10px 20px
   );
 }
+
+.map-card {
+  transition: transform 450ms ease;
+}
+
+[aria-label="Blocking map"] svg path {
+  transition: d 450ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-card,
+  [aria-label="Blocking map"] svg path {
+    transition: none;
+  }
+}

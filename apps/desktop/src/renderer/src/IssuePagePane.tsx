@@ -119,7 +119,12 @@ export function IssuePagePane({
     placed: visit.place.cursor,
     shownOn: visit.place.cursor,
   });
-  const followed = followCursor(cursorPlace, targetIds, visit.place.cursor);
+  const followed = followCursor(
+    cursorPlace,
+    targetIds,
+    visit.place.cursor,
+    mapTargets,
+  );
   if (followed !== cursorPlace) setCursorPlace(followed);
   const cursor = targetIds.includes(followed.shownOn)
     ? followed.shownOn
@@ -184,6 +189,9 @@ export function IssuePagePane({
   }
   function run(command: IssuePageCommand) {
     switch (command.kind) {
+      case "activateBlockingEnd":
+        void window.verdandi.activateBlockingEnd(visit.issue.id, command.side);
+        break;
       case "back":
         onNavigate({ kind: "back" });
         break;
@@ -461,6 +469,16 @@ export function IssuePagePane({
             onSelect={select}
             onOpen={open}
             onRetry={retry}
+            onActivateEnd={(side) => {
+              void window.verdandi.activateBlockingEnd(visit.issue.id, side);
+            }}
+            onRetryBranch={(cardId, side) => {
+              void window.verdandi.retryBlockingBranch(
+                visit.issue.id,
+                cardId,
+                side,
+              );
+            }}
           />
         )}
         {page?.issue && (
