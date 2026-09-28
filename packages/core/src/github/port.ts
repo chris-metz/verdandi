@@ -1,4 +1,5 @@
 import type {
+  AccessEvidence,
   IssueMetadata,
   Label,
   RepositoryAddress,
@@ -30,9 +31,13 @@ export interface GitHubAccess {
   ): Promise<GitHubResult<IssuePage>>;
   /**
    * Reads up to 100 issues by node ID, from any repositories, e.g. closed
-   * sub-issues or the parent issue of an issue already read.
+   * sub-issues or the parent issue of an issue already read. An issue GitHub
+   * cannot resolve or read gets its own error, in its place among the
+   * others, which are still read.
    */
-  fetchIssues(ids: readonly string[]): Promise<GitHubResult<Issue[]>>;
+  fetchIssues(
+    ids: readonly string[],
+  ): Promise<GitHubResult<GitHubResult<Issue>[]>>;
   /**
    * Reads what the sidebar shows of up to 100 repositories, without reading
    * any issues. GitHub follows renames and transfers. A repository GitHub
@@ -96,6 +101,11 @@ export interface Issue {
     blocking: number;
     totalBlocking: number;
   };
+  /**
+   * Why GitHub left out part of it, e.g. a sub-issue or its parent issue it
+   * would not show, when it reported errors about them along with the rest.
+   */
+  incomplete: GitHubError | undefined;
 }
 
 /** Another issue as a relationship names it, without reading it. */
@@ -127,6 +137,11 @@ export interface IssuePage {
   closedIssueCount: number;
   /** The cursor to read the next page after, or none on the last page. */
   nextPage: string | undefined;
+  /**
+   * Why GitHub left out issues of the page, when it reported errors about
+   * them along with the rest.
+   */
+  incomplete: GitHubError | undefined;
 }
 
 export type GitHubResult<T> =
@@ -147,9 +162,22 @@ export type GitHubError =
    * not reach GitHub.
    */
   | { kind: "gh-failed"; message: string }
-  /** GitHub answered with an HTTP error status. */
+  /**
+   * GitHub would not show it to this account: HTTP 403, 404 or 410, or
+   * GraphQL's NOT_FOUND or FORBIDDEN. It may not exist, or this account may
+   * not read it; GitHub does not say which, unless `access` names why.
+   */
+  | { kind: "unavailable"; message: string; access: AccessEvidence | undefined }
+  /** GitHub's rate limit is reached, primary or secondary. */
+  | { kind: "rate-limited"; message: string }
+  /**
+   * GitHub failed to answer: a server error (HTTP 5xx), or a GraphQL query
+   * that timed out. Asking again may succeed.
+   */
+  | { kind: "server-error"; message: string }
+  /** GitHub answered with any other HTTP error status, e.g. 401. */
   | { kind: "http"; status: number; message: string }
-  /** GitHub answered a GraphQL query with errors. */
+  /** GitHub answered a GraphQL query with any other errors. */
   | { kind: "graphql"; messages: string[] }
   /** The response could not be read, e.g. it was not JSON. */
   | { kind: "unexpected-response" };

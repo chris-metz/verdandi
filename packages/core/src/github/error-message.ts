@@ -11,6 +11,12 @@ export function describeGitHubError(error: GitHubError): string {
       return "GitHub CLI (gh) is not signed in to github.com.";
     case "gh-failed":
       return `GitHub CLI (gh) failed: ${error.message}`;
+    case "unavailable":
+      return `Unavailable or not accessible with this account: ${error.message}`;
+    case "rate-limited":
+      return `GitHub rate limit reached: ${error.message}`;
+    case "server-error":
+      return `GitHub failed to answer: ${error.message}`;
     case "http":
       return `GitHub answered with HTTP ${String(error.status)}: ${error.message}`;
     case "graphql":

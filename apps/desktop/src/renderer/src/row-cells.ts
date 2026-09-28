@@ -1,9 +1,12 @@
 import type {
   IssueSummary,
   Label,
+  Problem,
   RelationshipCount,
   SubIssueProgress,
+  UnreadIssue,
 } from "@verdandi/core/contract";
+import { problemText, type ProblemText } from "./problem-text";
 
 /** At most this many labels show in a row; the rest are counted. */
 const labelsShown = 3;
@@ -152,4 +155,45 @@ export function relationshipCell(
   if (state === "open" && open > 0) return { live: true, text: String(open) };
   const waiting = kind === "blocking" && state === "closed" ? 0 : open;
   return { live: false, text: `${String(waiting)}/${String(total)}` };
+}
+
+/**
+ * What a row says of an issue it shows only as a relationship names it:
+ * loading, or why it failed, with GitHub's own link to act on, if any. What
+ * GitHub will not show reads as such; any other failure as "Could not be
+ * loaded", with why in the tooltip.
+ */
+export function unreadCell(
+  unread: UnreadIssue,
+  login: string | undefined,
+): {
+  text: string;
+  title: string | undefined;
+  failed: boolean;
+  link: ProblemText["link"];
+} {
+  if (unread.status === "loading") {
+    return {
+      text: "Loading…",
+      title: undefined,
+      failed: false,
+      link: undefined,
+    };
+  }
+  const { text, detail, link } = problemText(unread.problem, login);
+  if (unread.problem.kind === "unavailable") {
+    return { text, title: detail, failed: true, link };
+  }
+  return {
+    text: "Could not be loaded",
+    title: detail === undefined ? text : `${text}: ${detail}`,
+    failed: true,
+    link,
+  };
+}
+
+/** The tooltip of the mark on an issue GitHub showed only in part. */
+export function incompleteTitle(problem: Problem): string {
+  const { text, detail } = problemText(problem);
+  return `Shown in part: ${text}.${detail === undefined ? "" : ` ${detail}`}`;
 }

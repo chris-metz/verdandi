@@ -1,7 +1,13 @@
 import type { ParentIssue } from "@verdandi/core/contract";
 
-/** Enough to name a destination before its page has loaded. */
-export type IssueDestination = Pick<ParentIssue, "id" | "reference" | "title">;
+/**
+ * Enough to name a destination before its page has loaded, and its page on
+ * GitHub when the place it was opened from knows it.
+ */
+export type IssueDestination = Pick<
+  ParentIssue,
+  "id" | "reference" | "title"
+> & { url?: string };
 
 /** The place in one visit, independent of other visits to the same issue. */
 export interface IssuePlace {

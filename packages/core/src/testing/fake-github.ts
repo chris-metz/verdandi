@@ -1,4 +1,5 @@
 import type {
+  AccessEvidence,
   IssueMetadata,
   Label,
   RelationshipCount,
@@ -72,6 +73,18 @@ export interface FakeGitHub extends GitHubAccess {
   addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
   /** Every read fails with this error from now on, or succeeds again. */
   failWith(error: GitHubError | undefined): void;
+  /** The next reads fail with this error, then reads succeed again. */
+  failNextWith(error: GitHubError, times?: number): void;
+  /**
+   * GitHub no longer shows a repository, `owner/name`, or an issue,
+   * `owner/name#number`, to this account, e.g. once access to it was lost,
+   * saying why when `access` is given, as for SSO. Reads of it fail as
+   * unavailable, and issues naming it as a sub-issue or parent issue leave
+   * it out, marked incomplete.
+   */
+  hide(target: string, access?: AccessEvidence): void;
+  /** GitHub shows a repository or issue hidden before again. */
+  reveal(target: string): void;
   /**
    * Answers stay undelivered until `resume`: those of every read, or only of
    * requests to one method, which may be `fetchAuthStatus`. GitHub still
@@ -110,6 +123,9 @@ export function createFakeGitHub({
   /** Each repository's issues, newest first, by `owner/name`. */
   const repositories = new Map<string, FakeIssue[]>();
   let failure: GitHubError | undefined;
+  let nextFailure: { error: GitHubError; times: number } | undefined;
+  /** What GitHub does not show this account, with why, if it says so. */
+  const hidden = new Map<string, AccessEvidence | undefined>();
   let paused: PromiseWithResolvers<void> | undefined;
   /** The one method whose answers are paused, or none for all. */
   let pausedMethod: keyof GitHubAccess | undefined;
@@ -129,11 +145,43 @@ export function createFakeGitHub({
   ): Promise<GitHubResult<T>> {
     requestsReceived++;
     requestsInFlight++;
-    const error = credentialsError() ?? failure;
+    const error = credentialsError() ?? failure ?? takeNextFailure();
     const answered: GitHubResult<T> = error ? { ok: false, error } : respond();
     if ((pausedMethod ?? method) === method) await paused?.promise;
     requestsInFlight--;
     return answered;
+  }
+
+  /** The error the next read fails with, if one is to. */
+  function takeNextFailure(): GitHubError | undefined {
+    if (!nextFailure) return undefined;
+    const { error } = nextFailure;
+    if (--nextFailure.times === 0) nextFailure = undefined;
+    return error;
+  }
+
+  /**
+   * Whether GitHub hides a repository or issue, `owner/name` or
+   * `owner/name#number`, from this account, and why it says so.
+   */
+  function hiding(
+    ref: string,
+  ): { access: AccessEvidence | undefined } | undefined {
+    for (const target of [ref, ref.split("#")[0] ?? ""]) {
+      if (hidden.has(target)) return { access: hidden.get(target) };
+    }
+    return undefined;
+  }
+
+  /** How GitHub answers a read of something it hides, and what it resolves. */
+  function unavailable(ref: string, message: string): GitHubError | undefined {
+    const hides = hiding(ref);
+    if (!hides) return undefined;
+    return {
+      kind: "unavailable",
+      message: hides.access?.message ?? message,
+      access: hides.access,
+    };
   }
 
   /** How a read fails, as gh reports it, while its credentials do not work. */
@@ -203,15 +251,31 @@ export function createFakeGitHub({
     };
   }
 
-  /** The issue as GitHub reads it, with its relationships. */
+  /**
+   * The issue as GitHub reads it, with its relationships. Those GitHub hides
+   * are left out, and the issue marked incomplete for them.
+   */
   function read(nameWithOwner: string, issue: FakeIssue): Issue {
     const ref = `${nameWithOwner}#${String(issue.number)}`;
+    let incomplete: GitHubError | undefined;
+    const shown = (related: string) => {
+      const error = unavailable(
+        related,
+        `Could not resolve to a node with the global id of 'I_${related}'.`,
+      );
+      incomplete ??= error;
+      return !error;
+    };
     const subIssues = (issue.subIssues ?? []).map(referenceTo);
+    const shownSubIssues = (issue.subIssues ?? [])
+      .filter(shown)
+      .map(referenceTo);
     let parent: IssueReference | undefined;
     for (const [repository, issues] of repositories) {
       for (const candidate of issues) {
-        if (candidate.subIssues?.includes(ref)) {
-          parent = referenceTo(`${repository}#${String(candidate.number)}`);
+        const parentRef = `${repository}#${String(candidate.number)}`;
+        if (candidate.subIssues?.includes(ref) && shown(parentRef)) {
+          parent = referenceTo(parentRef);
         }
       }
     }
@@ -227,7 +291,7 @@ export function createFakeGitHub({
       updatedAt: issue.updatedAt ?? defaultUpdatedAt,
       labels: issue.labels ?? [],
       parent,
-      subIssues,
+      subIssues: shownSubIssues,
       subIssuesSummary: {
         total: subIssues.length,
         completed: subIssues.filter((sub) => sub.state === "closed").length,
@@ -238,6 +302,7 @@ export function createFakeGitHub({
         blocking: blocking.open,
         totalBlocking: blocking.total,
       },
+      incomplete,
     };
   }
 
@@ -274,6 +339,15 @@ export function createFakeGitHub({
     failWith(error) {
       failure = error;
     },
+    failNextWith(error, times = 1) {
+      nextFailure = { error, times };
+    },
+    hide(target, access) {
+      hidden.set(target, access);
+    },
+    reveal(target) {
+      hidden.delete(target);
+    },
     pause(method) {
       paused ??= Promise.withResolvers();
       pausedMethod = method;
@@ -296,10 +370,13 @@ export function createFakeGitHub({
       return answer("fetchIssueDetails", () => {
         const ref = id.replace(/^I_/, "");
         const issue = find(ref);
+        const message = `Could not resolve to a node with the global id of '${id}'.`;
+        const hides = unavailable(ref, message);
+        if (hides) return { ok: false, error: hides };
         if (!issue)
           return {
             ok: false,
-            error: { kind: "http", status: 404, message: "Issue not found" },
+            error: { kind: "unavailable", message, access: undefined },
           };
         return {
           ok: true,
@@ -321,29 +398,37 @@ export function createFakeGitHub({
       countRequestFor(nameWithOwner);
       return answer("fetchOpenIssues", () => {
         const issues = repositories.get(nameWithOwner);
+        const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
+        const hides = unavailable(nameWithOwner, message);
+        if (hides) return { ok: false, error: hides };
         if (!issues) {
           return {
             ok: false,
-            error: {
-              kind: "graphql",
-              messages: [
-                `Could not resolve to a Repository with the name '${owner}/${name}'.`,
-              ],
-            },
+            error: { kind: "unavailable", message, access: undefined },
           };
         }
         const open = issues.filter((issue) => issue.state !== "closed");
         // The cursor is simply where the next page starts.
         const start = after === undefined ? 0 : Number(after);
         const end = start + issuesPerPage;
+        // Issues GitHub hides are left out of the page, which says so.
+        let incomplete: GitHubError | undefined;
+        const shown = open.slice(start, end).filter((issue) => {
+          const ref = `${nameWithOwner}#${String(issue.number)}`;
+          const error = unavailable(
+            ref,
+            `Could not resolve to a node with the global id of 'I_${ref}'.`,
+          );
+          incomplete ??= error;
+          return !error;
+        });
         return {
           ok: true,
           value: {
-            issues: open
-              .slice(start, end)
-              .map((issue) => read(nameWithOwner, issue)),
+            issues: shown.map((issue) => read(nameWithOwner, issue)),
             closedIssueCount: issues.length - open.length,
             nextPage: end < open.length ? String(end) : undefined,
+            incomplete,
           },
         };
       });
@@ -365,23 +450,22 @@ export function createFakeGitHub({
             },
           };
         }
-        const issues: Issue[] = [];
-        for (const [index, ref] of refs.entries()) {
-          const issue = find(ref);
-          if (!issue) {
-            return {
-              ok: false,
-              error: {
-                kind: "graphql",
-                messages: [
-                  `Could not resolve to a node with the global id of '${String(ids[index])}'.`,
-                ],
-              },
-            };
-          }
-          issues.push(read(ref.split("#")[0] ?? "", issue));
-        }
-        return { ok: true, value: issues };
+        return {
+          ok: true,
+          value: refs.map((ref): GitHubResult<Issue> => {
+            const issue = find(ref);
+            const message = `Could not resolve to a node with the global id of 'I_${ref}'.`;
+            const hides = unavailable(ref, message);
+            if (hides) return { ok: false, error: hides };
+            if (!issue) {
+              return {
+                ok: false,
+                error: { kind: "unavailable", message, access: undefined },
+              };
+            }
+            return { ok: true, value: read(ref.split("#")[0] ?? "", issue) };
+          }),
+        };
       });
     },
     fetchRepositorySummaries(addresses) {
@@ -402,15 +486,13 @@ export function createFakeGitHub({
               const nameWithOwner = `${owner}/${name}`;
               const issues = repositories.get(nameWithOwner);
               const id = repositoryIds.get(nameWithOwner);
+              const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
+              const hides = unavailable(nameWithOwner, message);
+              if (hides) return { ok: false, error: hides };
               if (!issues || id === undefined) {
                 return {
                   ok: false,
-                  error: {
-                    kind: "graphql",
-                    messages: [
-                      `Could not resolve to a Repository with the name '${nameWithOwner}'.`,
-                    ],
-                  },
+                  error: { kind: "unavailable", message, access: undefined },
                 };
               }
               return {

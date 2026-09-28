@@ -1,9 +1,10 @@
-import type { RepositoryAddress } from "./contract.ts";
+import type { Problem, RepositoryAddress } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import { describeGitHubError } from "./github/error-message.ts";
-import type { GitHubResult, Issue, SendRequest } from "./github/port.ts";
-import type { IssueStore } from "./issue-store.ts";
+import type { GitHubError, SendRequest } from "./github/port.ts";
+import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { atOrAfter, type Clock, type Moment } from "./moments.ts";
+import { problemOf } from "./problems.ts";
 import { repositoryKey } from "./repository-address.ts";
 
 /**
@@ -22,20 +23,20 @@ export interface IssueLoader {
    */
   loadOpenIssues(repository: RepositoryAddress, since: Moment): boolean;
   /**
-   * Reads issues by ID into the store. Issues a read under way, asked at
-   * `since` or later, already asks for join it; the rest are asked for up to
-   * 100 at a time. Returns every read that brings them.
+   * Reads issues by ID into the store, or why they could not be read. Issues
+   * a read under way, asked at `since` or later, already asks for join it;
+   * the rest are asked for up to 100 at a time. Returns every read that
+   * brings them.
    */
-  readIssues(ids: readonly string[], since: Moment): Promise<IssueRead>[];
+  readIssues(ids: readonly string[], since: Moment): Promise<void>[];
+  /** Whether an issue is being read by ID. */
+  isReading(id: string): boolean;
 }
-
-/** GitHub's answer to a read of issues by ID, already kept in the store. */
-export type IssueRead = GitHubResult<Issue[]>;
 
 /**
  * A repository's open issues: those of the last complete read, which stay
  * while they are read again, or, until one completed, as far as the first
- * read has come.
+ * read has come. None once GitHub would no longer show the repository.
  */
 export interface RepositoryIssues {
   readonly openIssueIds: ReadonlySet<string>;
@@ -45,7 +46,7 @@ export interface RepositoryIssues {
   /** Whether a read is under way. */
   readonly reading: boolean;
   /** Why the latest read failed, if it did. */
-  readonly failure: string | undefined;
+  readonly problem: Problem | undefined;
 }
 
 export interface IssueLoaderOptions {
@@ -74,7 +75,7 @@ interface Read {
   openIssueIds: Set<string>;
   closedIssueCount: number;
   done: boolean;
-  failure: string | undefined;
+  problem: Problem | undefined;
 }
 
 /** A repository's reads: the last complete one, and the latest. */
@@ -85,7 +86,7 @@ interface Reads {
 
 /** A read of issues by ID under way. */
 interface ReadUnderWay {
-  answer: Promise<IssueRead>;
+  answer: Promise<void>;
   askedAt: Moment;
 }
 
@@ -101,16 +102,18 @@ export function createIssueLoader({
   /** Reads of issues by ID under way, by issue. */
   const reading = new Map<string, ReadUnderWay>();
 
-  /** Asks for issues by ID in one request, keeping what GitHub returns. */
-  function read(ids: string[]): Promise<IssueRead> {
+  /**
+   * Asks for issues by ID in one request, keeping what GitHub returns, and
+   * why it did not return the others.
+   */
+  function read(ids: string[]): Promise<void> {
     const askedAt = clock();
     const answer = request((github) => github.fetchIssues(ids)).then(
       (result) => {
         for (const id of ids) {
           if (reading.get(id)?.answer === answer) reading.delete(id);
         }
-        if (result.ok) store.put(result.value, askedAt);
-        return result;
+        keepAnswer(store, ids, result, askedAt);
       },
     );
     for (const id of ids) reading.set(id, { answer, askedAt });
@@ -124,6 +127,8 @@ export function createIssueLoader({
   async function readPages(repository: RepositoryAddress, reads: Reads) {
     const thisRead = reads.latest;
     let after: string | undefined;
+    /** Why GitHub left issues out of a page, if it did. */
+    let leftOut: GitHubError | undefined;
     do {
       const cursor = after;
       const askedAt = clock();
@@ -139,20 +144,37 @@ export function createIssueLoader({
         }
         thisRead.closedIssueCount = result.value.closedIssueCount;
         after = result.value.nextPage;
+        leftOut ??= result.value.incomplete;
         if (after === undefined) {
           thisRead.done = true;
           reads.complete = thisRead;
-          openIssuesLoaded(
-            repository,
-            thisRead.openIssueIds.size,
-            thisRead.startedAt,
-          );
+          // Once GitHub left issues out of a page, the pages after it are
+          // still read, and what they list replaces what was read before,
+          // but it is not all: the read is marked, and its count is not
+          // the repository's. The repository itself stays readable.
+          if (leftOut) {
+            thisRead.problem = {
+              kind: "error",
+              message: `GitHub left out some open issues: ${describeGitHubError(leftOut)}`,
+            };
+          } else {
+            openIssuesLoaded(
+              repository,
+              thisRead.openIssueIds.size,
+              thisRead.startedAt,
+            );
+          }
         }
       } else {
-        thisRead.failure = describeGitHubError(result.error);
+        thisRead.problem = problemOf(result.error);
+        // What GitHub no longer shows this account shows no more.
+        if (thisRead.problem.kind === "unavailable") {
+          reads.complete = undefined;
+          thisRead.openIssueIds.clear();
+        }
       }
       pageRead(repository);
-    } while (after !== undefined && thisRead.failure === undefined);
+    } while (after !== undefined && thisRead.problem === undefined);
   }
 
   return {
@@ -165,8 +187,8 @@ export function createIssueLoader({
         openIssueIds: shown.openIssueIds,
         closedIssueCount: shown.closedIssueCount,
         readAt: complete?.startedAt,
-        reading: !latest.done && latest.failure === undefined,
-        failure: latest.failure,
+        reading: !latest.done && latest.problem === undefined,
+        problem: latest.problem,
       };
     },
     loadOpenIssues(repository, since) {
@@ -174,7 +196,7 @@ export function createIssueLoader({
       const known = repositories.get(key);
       if (
         known &&
-        known.latest.failure === undefined &&
+        known.latest.problem === undefined &&
         atOrAfter(known.latest.startedAt, since)
       ) {
         return false;
@@ -184,7 +206,7 @@ export function createIssueLoader({
         openIssueIds: new Set(),
         closedIssueCount: 0,
         done: false,
-        failure: undefined,
+        problem: undefined,
       };
       const reads: Reads = known ?? { complete: undefined, latest };
       reads.latest = latest;
@@ -193,7 +215,7 @@ export function createIssueLoader({
       return true;
     },
     readIssues(ids, since) {
-      const reads = new Set<Promise<IssueRead>>();
+      const reads = new Set<Promise<void>>();
       const unread: string[] = [];
       for (const id of ids) {
         const underWay = reading.get(id);
@@ -205,6 +227,9 @@ export function createIssueLoader({
         reads.add(read(batch));
       }
       return [...reads];
+    },
+    isReading(id) {
+      return reading.has(id);
     },
   };
 }

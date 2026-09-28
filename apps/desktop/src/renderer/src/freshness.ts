@@ -1,37 +1,70 @@
 import type {
   IssueList,
+  IssueNode,
+  IssuePage,
   ListLoading,
   LoadingState,
+  Problem,
+  UnreadIssue,
 } from "@verdandi/core/contract";
+import { problemText } from "./problem-text";
 
 /**
  * How a screen's header shows how current it is: what it says, and whether a
- * read is under way, which the refresh button shows by spinning.
+ * read is under way, which the refresh button shows by spinning. When the
+ * screen shows data it could not read again, or lacks parts it could not
+ * read, the header offers to retry them.
  */
 export interface Freshness {
   text: string;
+  /** Why it could not be read again, in more words, e.g. for a tooltip. */
+  detail?: string | undefined;
   busy: boolean;
+  retry: boolean;
 }
 
 /**
  * A list's freshness: while All loads, how many of its repositories have
- * loaded; once loaded, the age of what it shows, also while it is read again.
- * A failure shows in the list itself.
+ * loaded; once loaded, the age of what it shows, also while it is read again,
+ * and what of it could not be read. A failure shows in the list itself.
  */
 export function listFreshness(list: IssueList, now: number): Freshness {
   const { loading, repositories } = list;
   if (loading.status === "loading" && repositories.length > 0) {
     const loaded = repositories.filter(
       ({ loading: part }) =>
-        part.status === "current" || part.status === "refreshing",
+        part.status === "current" ||
+        part.status === "refreshing" ||
+        part.status === "stale",
     ).length;
     const total = repositories.length;
     return {
       text: `Loading… ${String(loaded)} of ${String(total)} ${total === 1 ? "repository" : "repositories"}`,
       busy: true,
+      retry: false,
     };
   }
-  return loadingFreshness(loading, now);
+  const missing = [
+    ...missingRepositories(repositories.map((part) => part.loading)),
+    ...missingIssues(
+      list.trees,
+      list.trees.flatMap((tree) => tree.parent?.unread ?? []),
+    ),
+  ];
+  return withMissing(loadingFreshness(loading, now), missing);
+}
+
+/**
+ * An issue page's freshness: the age of what it shows, and what of it could
+ * not be read.
+ */
+export function pageFreshness(page: IssuePage, now: number): Freshness {
+  const missing = missingIssues(
+    page.subIssues,
+    page.ancestry.flatMap(({ unread }) => unread ?? []),
+    page.issue?.incomplete === undefined ? 0 : 1,
+  );
+  return withMissing(loadingFreshness(page.loading, now), missing);
 }
 
 /** The freshness of a screen, or of a part of one. */
@@ -41,14 +74,122 @@ export function loadingFreshness(
 ): Freshness {
   switch (loading.status) {
     case "loading":
-      return { text: "Loading…", busy: true };
+      return { text: "Loading…", busy: true, retry: false };
     case "refreshing":
-      return { text: updatedAgo(loading.updatedAt, now), busy: true };
+      return {
+        text: updatedAgo(loading.updatedAt, now),
+        busy: true,
+        retry: false,
+      };
     case "current":
-      return { text: updatedAgo(loading.updatedAt, now), busy: false };
+      return {
+        text: updatedAgo(loading.updatedAt, now),
+        busy: false,
+        retry: false,
+      };
+    case "stale": {
+      const { text, detail } = problemText(loading.problem);
+      return {
+        text: `Showing data from ${timeOf(loading.updatedAt, now)} · ${text}`,
+        detail,
+        busy: false,
+        retry: true,
+      };
+    }
     case "failed":
-      return { text: "", busy: false };
+      return { text: "", busy: false, retry: false };
   }
+}
+
+/** A header's freshness, followed by what could not be read, if anything. */
+function withMissing(freshness: Freshness, missing: string[]): Freshness {
+  if (missing.length === 0 || freshness.text === "") return freshness;
+  return {
+    ...freshness,
+    text: [freshness.text, ...missing].join(" · "),
+    retry: true,
+  };
+}
+
+/** How many of All's repositories could not be read, and why, e.g. "2 repositories unavailable". */
+function missingRepositories(parts: readonly LoadingState[]): string[] {
+  return countFailures(
+    parts.flatMap((part) => (part.status === "failed" ? [part.problem] : [])),
+    "repository",
+    "repositories",
+  );
+}
+
+/**
+ * How many issues of a forest, collapsed or not, and of the other issues a
+ * screen names, could not be read, and why; and how many GitHub showed only
+ * in part, of those and of others the screen shows.
+ */
+function missingIssues(
+  trees: readonly IssueNode[],
+  named: readonly UnreadIssue[],
+  incompleteBesides = 0,
+): string[] {
+  const failures: Problem[] = [];
+  let incomplete = incompleteBesides;
+  const count = (unread: UnreadIssue) => {
+    if (unread.status === "failed") failures.push(unread.problem);
+  };
+  const visit = (node: IssueNode) => {
+    if (node.unread) count(node.unread);
+    else if (node.issue.incomplete) incomplete++;
+    node.subIssues.forEach(visit);
+  };
+  trees.forEach(visit);
+  named.forEach(count);
+  return [
+    ...countFailures(failures, "issue", "issues"),
+    ...(incomplete > 0
+      ? [
+          `${String(incomplete)} ${incomplete === 1 ? "issue" : "issues"} shown in part`,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Counts failures of one kind of thing, those GitHub will not show apart
+ * from those that could not be read.
+ */
+function countFailures(
+  problems: readonly Problem[],
+  one: string,
+  many: string,
+): string[] {
+  const unavailable = problems.filter(
+    (problem) => problem.kind === "unavailable",
+  ).length;
+  const failed = problems.length - unavailable;
+  const name = (count: number) =>
+    `${String(count)} ${count === 1 ? one : many}`;
+  return [
+    ...(unavailable > 0 ? [`${name(unavailable)} unavailable`] : []),
+    ...(failed > 0 ? [`${name(failed)} could not be loaded`] : []),
+  ];
+}
+
+/**
+ * When data was read, by the clock: "14:02" today, with the date on another
+ * day, e.g. "Sep 26, 09:05".
+ */
+export function timeOf(time: number, now: number): string {
+  const date = new Date(time);
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (date.toDateString() === new Date(now).toDateString()) return clock;
+  const day = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  return `${day}, ${clock}`;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 /**

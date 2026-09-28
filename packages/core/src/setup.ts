@@ -255,6 +255,9 @@ function suspectsSetup(error: GitHubError): boolean {
     case "http":
       return error.status === 401;
     case "gh-failed":
+    case "unavailable":
+    case "rate-limited":
+    case "server-error":
     case "graphql":
     case "unexpected-response":
       return false;

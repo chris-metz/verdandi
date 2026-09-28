@@ -16,6 +16,7 @@ import type {
   IssueList,
   IssueNode,
   IssuePage,
+  IssueSummary,
   Notice,
   Scope,
   Setup,
@@ -139,6 +140,8 @@ function createTestCore(
     settings: createSettingsFile(verdandiHome()),
     localState: createLocalStateFile(verdandiHome()),
     now: clock.now,
+    // Requests are tried again at once, not after a real wait.
+    wait: () => Promise.resolve(),
   });
 }
 
@@ -277,6 +280,12 @@ function sidebarLines(sidebar: SidebarEntries): string[] {
       openIssues.status === "known" ? String(openIssues.count) : "–";
     return `${repository.owner}/${repository.name} ${count}`;
   });
+}
+
+/** The issue of a node that has been read, failing the test otherwise. */
+function readSummary(node: IssueNode | undefined): IssueSummary {
+  if (!node || node.unread) throw new Error("The issue has not been read.");
+  return node.issue;
 }
 
 /** The issues of a list whose sub-issues are collapsed, by reference. */
@@ -749,39 +758,51 @@ describe("setup: during a session", () => {
     });
   });
 
-  it.each<[string, GitHubError]>([
+  it.each<[string, GitHubError, "stale" | "failed"]>([
     [
       "HTTP 403 for SSO",
       {
-        kind: "http",
-        status: 403,
+        kind: "unavailable",
         message:
           "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+        access: {
+          kind: "sso",
+          message:
+            "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+          url: undefined,
+        },
       },
+      "failed",
     ],
-    ["HTTP 404", { kind: "http", status: 404, message: "Not Found" }],
+    [
+      "HTTP 404",
+      { kind: "unavailable", message: "Not Found", access: undefined },
+      "failed",
+    ],
     [
       "HTTP 410",
       {
-        kind: "http",
-        status: 410,
+        kind: "unavailable",
         message: "Issues are disabled for this repo",
+        access: undefined,
       },
+      "failed",
     ],
     [
       "a primary rate limit",
       {
-        kind: "graphql",
-        messages: ["API rate limit already exceeded for user ID 1234567."],
+        kind: "rate-limited",
+        message: "API rate limit already exceeded for user ID 1234567.",
       },
+      "stale",
     ],
     [
       "a secondary rate limit",
       {
-        kind: "http",
-        status: 403,
+        kind: "rate-limited",
         message: "You have exceeded a secondary rate limit.",
       },
+      "stale",
     ],
     [
       "a network failure",
@@ -790,18 +811,19 @@ describe("setup: during a session", () => {
         message:
           'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
       },
+      "stale",
     ],
-    ["HTTP 502", { kind: "http", status: 502, message: "Server Error" }],
+    ["HTTP 502", { kind: "server-error", message: "Server Error" }, "stale"],
     [
       "a GraphQL timeout",
       {
-        kind: "graphql",
-        messages: [
+        kind: "server-error",
+        message:
           "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.",
-        ],
       },
+      "stale",
     ],
-  ])("never blocks the app for %s", async (_, error) => {
+  ])("never blocks the app for %s", async (_, error, status) => {
     const { core, github } = await loadedSession();
     const setups: Setup[] = [];
     core.on("setupChanged", (setup) => setups.push(setup));
@@ -811,7 +833,7 @@ describe("setup: during a session", () => {
       core.refresh({ kind: "list", scope: acmeApi }),
     );
 
-    expect(list.loading.status).toBe("failed");
+    expect(list.loading.status).toBe(status);
     expect(setups).toEqual([]);
     expect(github.authStatusChecks).toBe(1);
   });
@@ -1316,7 +1338,7 @@ describe("sidebar counts", () => {
         openIssues: {
           status: "failed",
           message:
-            "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+            "acme/gone: Unavailable or not accessible with this account: Could not resolve to a Repository with the name 'acme/gone'.",
         },
       },
       repositories: [
@@ -1329,7 +1351,7 @@ describe("sidebar counts", () => {
           openIssues: {
             status: "failed",
             message:
-              "GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+              "Unavailable or not accessible with this account: Could not resolve to a Repository with the name 'acme/gone'.",
           },
         },
         {
@@ -1398,7 +1420,7 @@ describe("sidebar counts", () => {
     expect(github.requestsReceived).toBe(2);
   });
 
-  it("takes a count GitHub could not read at first from the repository's list", async () => {
+  it("asks again for a count GitHub could not read as a screen opens, however recently it failed", async () => {
     await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
     const github = createFakeGitHub({ login: "octo-reader" });
     const core = createTestCore(github);
@@ -1408,11 +1430,35 @@ describe("sidebar counts", () => {
       { number: 2, title: "Dark mode" },
       { number: 1, title: "Crash on start" },
     ]);
-    const pushed = await nextSidebar(core, () =>
-      openUntilLoaded(core, acmeApi),
-    );
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+    await core.openIssuePage("I_acme/api#1");
 
-    expect(sidebarLines(pushed)).toEqual(["acme/api 2"]);
+    await vi.waitFor(() => {
+      expect(pushed.map(sidebarLines)).toEqual([
+        ["acme/api –"],
+        ["acme/api 2"],
+      ]);
+    });
+  });
+
+  it("asks again for a count GitHub could not read as the window regains focus", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+    await core.revalidate(undefined);
+
+    await vi.waitFor(() => {
+      expect(pushed.map(sidebarLines)).toEqual([
+        ["acme/api –"],
+        ["acme/api 1"],
+      ]);
+    });
   });
 
   it("keeps the count a list gave over an older one that arrives after it", async () => {
@@ -1575,7 +1621,7 @@ describe("sidebar counts", () => {
       openIssues: {
         status: "failed",
         message:
-          "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+          "acme/gone: Unavailable or not accessible with this account: Could not resolve to a Repository with the name 'acme/gone'.",
       },
     });
   });
@@ -1740,7 +1786,7 @@ describe("repository list", () => {
     expect(github.requestsFor("acme/api")).toBe(requestsBefore);
   });
 
-  it("says why a repository's issues could not be loaded", async () => {
+  it("says a repository GitHub will not show is unavailable, never why it guesses", async () => {
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
@@ -1749,8 +1795,7 @@ describe("repository list", () => {
       repositories: [],
       loading: {
         status: "failed",
-        message:
-          "GitHub reported an error: Could not resolve to a Repository with the name 'acme/api'.",
+        problem: { kind: "unavailable", access: undefined },
       },
     });
   });
@@ -2694,7 +2739,7 @@ describe("All", () => {
     expect(github.requestsReceived).toBe(3);
   });
 
-  it("names a tracked repository whose issues could not be loaded, and shows the others", async () => {
+  it("marks a tracked repository GitHub will not show as unavailable, and shows the others", async () => {
     await writeSettings({
       version: 1,
       repositories: [{ name: "acme/api" }, { name: "acme/gone" }],
@@ -2706,10 +2751,24 @@ describe("All", () => {
 
     expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
     expect(list.loading).toEqual({
-      status: "failed",
-      message:
-        "acme/gone: GitHub reported an error: Could not resolve to a Repository with the name 'acme/gone'.",
+      status: "current",
+      updatedAt: startTime,
+      openIssues: 1,
+      closedNotListed: 0,
     });
+    expect(list.repositories).toEqual([
+      {
+        repository: { owner: "acme", name: "api" },
+        loading: { status: "current", updatedAt: startTime },
+      },
+      {
+        repository: { owner: "acme", name: "gone" },
+        loading: {
+          status: "failed",
+          problem: { kind: "unavailable", access: undefined },
+        },
+      },
+    ]);
   });
 
   it("tries only the repositories that failed again when it is reopened", async () => {
@@ -2744,9 +2803,12 @@ describe("All", () => {
       repositories: [],
       loading: {
         status: "failed",
-        message: expect.stringContaining(
-          `${join(home, "settings.json")} is not valid JSON:`,
-        ) as unknown,
+        problem: {
+          kind: "error",
+          message: expect.stringContaining(
+            `${join(home, "settings.json")} is not valid JSON:`,
+          ) as unknown,
+        },
       },
     });
     expect(github.requestsReceived).toBe(0);
@@ -3402,7 +3464,7 @@ describe("issue pages", () => {
     );
   });
 
-  it("shows a page's issue as soon as it has arrived, while the rest loads", async () => {
+  it("shows a page's issue as soon as it has arrived, with its relationships marked loading until they have", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     workIssues(github);
     const core = createTestCore(github);
@@ -3415,7 +3477,13 @@ describe("issue pages", () => {
       expect(pushed.some((page) => page.issue !== undefined)).toBe(true);
     });
     const early = pushed.find((page) => page.issue !== undefined);
-    expect(early && pageOutline(early)).toEqual(["# Page"]);
+    expect(early && pageOutline(early)).toEqual([
+      "/ Parent",
+      "# Page",
+      "- Sub-issue",
+    ]);
+    expect(early?.ancestry[0]?.unread).toEqual({ status: "loading" });
+    expect(early?.subIssues[0]?.unread).toEqual({ status: "loading" });
     expect(early?.loading).toEqual({ status: "loading" });
     github.resume();
 
@@ -3441,50 +3509,745 @@ describe("issue pages", () => {
   });
 });
 
-it("keeps the issue visible when relationships fail, and retries the missing content", async () => {
-  const github = createFakeGitHub({ login: "octo-reader" });
-  github.addRepository("acme/api", [
-    { number: 1, title: "Parent", subIssues: ["acme/api#2"] },
-    { number: 2, title: "Page", subIssues: ["acme/api#3"] },
-    { number: 3, title: "Sub-issue" },
-  ]);
-  github.pause("fetchIssueDetails");
-  const core = createTestCore(github);
-  const loading = openPageUntilLoaded(core, "I_acme/api#2");
-  await vi.waitFor(() => {
-    expect(github.requestsInFlight).toBe(1);
-  });
-  github.failWith({
-    kind: "http",
-    status: 503,
-    message: "Service unavailable",
-  });
-  github.resume();
-  const failed = await loading;
-  expect(failed.issue?.title).toBe("Page");
-  expect(failed.loading).toEqual({
-    status: "failed",
-    message: expect.stringContaining("Service unavailable") as unknown,
-  });
-
-  github.failWith(undefined);
-  const retried = await openPageUntilLoaded(core, "I_acme/api#2");
-  expect(retried.loading.status).toBe("current");
-  expect(retried.ancestry.map(({ title }) => title)).toEqual(["Parent"]);
-  expect(retried.subIssues.map(({ issue }) => issue.title)).toEqual([
-    "Sub-issue",
-  ]);
-  github.failWith({
-    kind: "http",
-    status: 503,
-    message: "Service unavailable",
-  });
-  expect(await openPageUntilLoaded(core, "I_acme/api#2")).toEqual(retried);
-});
-
 it("reports an inaccessible issue without presenting it as an empty page", async () => {
   const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
   const page = await openPageUntilLoaded(core, "I_other/work#404");
   expect(page.issue).toBeUndefined();
   expect(page.loading.status).toBe("failed");
+});
+
+/** gh failing to reach GitHub, as it does without a connection. */
+const cannotReachGitHub: GitHubError = {
+  kind: "gh-failed",
+  message:
+    'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
+};
+
+describe("stale content", () => {
+  it("keeps a list's issues when reading it again cannot reach GitHub, marked stale as of when they were read", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openUntilLoaded(core, acmeApi);
+
+    clock.advance(2 * minute);
+    github.failWith(cannotReachGitHub);
+    const stale = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(stale)).toEqual(["#1 Crash on start"]);
+    expect(stale.loading).toEqual({
+      status: "stale",
+      updatedAt: startTime,
+      problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      openIssues: 1,
+      closedNotListed: 0,
+    });
+  });
+
+  it("keeps All's issues when reading its repositories again cannot reach GitHub, each marked stale", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openUntilLoaded(core, all);
+
+    clock.advance(6 * minute);
+    github.failWith(cannotReachGitHub);
+    const stale = await untilSettled(core, all, () =>
+      core.revalidate({ kind: "list", scope: all }),
+    );
+
+    expect(outline(stale)).toEqual([
+      "acme/api #1 Crash on start",
+      "acme/web #1 Broken footer",
+    ]);
+    const problem = { kind: "unreachable", message: cannotReachGitHub.message };
+    expect(stale.loading).toMatchObject({
+      status: "stale",
+      updatedAt: startTime,
+      problem,
+    });
+    expect(stale.repositories.map(({ loading }) => loading)).toEqual([
+      { status: "stale", updatedAt: startTime, problem },
+      { status: "stale", updatedAt: startTime, problem },
+    ]);
+  });
+
+  it("keeps an issue page when reading it again cannot reach GitHub, marked stale", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [
+      { number: 1, title: "Parent", subIssues: ["other/work#2"] },
+      { number: 2, title: "Page", subIssues: ["other/work#3"] },
+      { number: 3, title: "Sub-issue" },
+    ]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    const loaded = await openPageUntilLoaded(core, "I_other/work#2");
+
+    clock.advance(minute);
+    github.failWith(cannotReachGitHub);
+    const stale = await pageUntilSettled(core, "I_other/work#2", () =>
+      core.refresh({ kind: "issue", issueId: "I_other/work#2" }),
+    );
+
+    expect(stale).toEqual({
+      ...loaded,
+      loading: {
+        status: "stale",
+        updatedAt: startTime,
+        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      },
+    });
+  });
+});
+
+describe("failed content", () => {
+  it("says why a list could not be read when nothing was read before, never as empty", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.failWith(cannotReachGitHub);
+    const core = createTestCore(github);
+
+    expect(await openUntilLoaded(core, acmeApi)).toEqual({
+      scope: acmeApi,
+      trees: [],
+      repositories: [],
+      loading: {
+        status: "failed",
+        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      },
+    });
+  });
+
+  it("keeps the pages that loaded before a later one failed, as failed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Dark mode" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchOpenIssues");
+    const loaded = openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    github.failNextWith(cannotReachGitHub);
+    github.resume();
+    const list = await loaded;
+
+    expect(outline(list)).toEqual(["#2 Dark mode"]);
+    expect(list.loading).toEqual({
+      status: "failed",
+      problem: { kind: "unreachable", message: cannotReachGitHub.message },
+    });
+  });
+
+  it("marks an open sub-issue failed, not loading, when the page it would come with failed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Launch billing", subIssues: ["acme/api#1"] },
+      { number: 1, title: "Meter requests" },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchOpenIssues");
+    const loaded = openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    github.failNextWith(cannotReachGitHub);
+    github.resume();
+    const list = await loaded;
+
+    expect(outline(list)).toEqual(["#2 Launch billing", "  #1 Meter requests"]);
+    expect(list.trees[0]?.subIssues[0]?.unread).toEqual({
+      status: "failed",
+      problem: { kind: "unreachable", message: cannotReachGitHub.message },
+    });
+  });
+
+  it("says why an issue page could not be read when nothing was read before", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [{ number: 1, title: "Page" }]);
+    github.failWith(cannotReachGitHub);
+    const core = createTestCore(github);
+
+    expect(await openPageUntilLoaded(core, "I_other/work#1")).toEqual({
+      issueId: "I_other/work#1",
+      issue: undefined,
+      ancestry: [],
+      subIssues: [],
+      loading: {
+        status: "failed",
+        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      },
+    });
+  });
+});
+
+describe("unavailable content", () => {
+  const unavailable = { kind: "unavailable", access: undefined } as const;
+
+  it("replaces a repository's list once GitHub no longer shows the repository, never saying why it cannot know", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    github.hide("acme/api");
+    const list = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(list.trees).toEqual([]);
+    expect(list.loading).toEqual({ status: "failed", problem: unavailable });
+  });
+
+  it("names SSO, with GitHub's link to authorize, only when GitHub's answer does", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const sso = {
+      kind: "sso",
+      message:
+        "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+      url: "https://github.com/orgs/acme/sso?authorization_request=A1B2C3",
+    } as const;
+    github.hide("acme/api", sso);
+    const core = createTestCore(github);
+
+    expect((await openUntilLoaded(core, acmeApi)).loading).toEqual({
+      status: "failed",
+      problem: { kind: "unavailable", access: sso },
+    });
+  });
+
+  it("takes a repository GitHub no longer shows out of All, keeping the others", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, all);
+
+    github.hide("acme/web");
+    const list = await untilSettled(core, all, () =>
+      core.refresh({ kind: "list", scope: all }),
+    );
+
+    expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
+    expect(list.loading).toMatchObject({ status: "current", openIssues: 1 });
+    expect(list.repositories.map(({ loading }) => loading)).toEqual([
+      { status: "current", updatedAt: startTime },
+      { status: "failed", problem: unavailable },
+    ]);
+  });
+
+  it("replaces an issue page once GitHub no longer shows the issue", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [
+      { number: 1, title: "Parent", subIssues: ["other/work#2"] },
+      { number: 2, title: "Page", subIssues: ["other/work#3"] },
+      { number: 3, title: "Sub-issue" },
+    ]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_other/work#2");
+
+    github.hide("other/work#2");
+    const page = await pageUntilSettled(core, "I_other/work#2", () =>
+      core.refresh({ kind: "issue", issueId: "I_other/work#2" }),
+    );
+
+    expect(page).toEqual({
+      issueId: "I_other/work#2",
+      issue: undefined,
+      ancestry: [],
+      subIssues: [],
+      loading: { status: "failed", problem: unavailable },
+    });
+  });
+
+  it("stops showing an issue GitHub no longer shows wherever it appeared, as unavailable where a relationship names it", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Launch billing", subIssues: ["other/lib#1"] },
+    ]);
+    github.addRepository("other/lib", [{ number: 1, title: "Shared client" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await openPageUntilLoaded(core, "I_other/lib#1");
+
+    github.hide("other/lib#1");
+    await pageUntilSettled(core, "I_other/lib#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_other/lib#1" }),
+    );
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual([
+      "#1 Launch billing",
+      "  other/lib#1 Shared client · external",
+    ]);
+    expect(list.trees[0]?.subIssues[0]).toEqual({
+      issue: {
+        id: "I_other/lib#1",
+        repository: { owner: "other", name: "lib" },
+        reference: "other/lib#1",
+        title: "Shared client",
+        state: "open",
+        url: "https://github.com/other/lib/issues/1",
+        external: true,
+      },
+      subIssues: [],
+      expanded: false,
+      unread: { status: "failed", problem: unavailable },
+    });
+  });
+});
+
+describe("partial content", () => {
+  /**
+   * Opens acme/api's list, whose open issue #3 has closed sub-issues #1 and
+   * #2, and lets `meanwhile` change GitHub once the list's page has been
+   * answered, before the sub-issues are asked for.
+   */
+  async function openWithSubIssues(meanwhile: (github: FakeGitHub) => void) {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 3,
+        title: "Launch billing",
+        subIssues: ["acme/api#1", "acme/api#2"],
+      },
+      { number: 2, title: "Meter requests", state: "closed" },
+      { number: 1, title: "Send invoices", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchOpenIssues");
+    const loaded = openUntilLoaded(core, acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    meanwhile(github);
+    github.resume();
+    return { core, github, list: await loaded };
+  }
+
+  it("keeps the open issues GitHub answers when it leaves others out of a page, reading the pages after it, and marks the list incomplete", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 1 });
+    github.addRepository("acme/api", [
+      { number: 3, title: "Dark mode" },
+      { number: 2, title: "Hidden work" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    github.hide("acme/api#2");
+    const core = createTestCore(github);
+
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual(["#3 Dark mode", "#1 Crash on start"]);
+    expect(list.loading).toEqual({
+      status: "stale",
+      updatedAt: startTime,
+      problem: {
+        kind: "error",
+        message:
+          "GitHub left out some open issues: Unavailable or not accessible with this account: Could not resolve to a node with the global id of 'I_acme/api#2'.",
+      },
+      openIssues: 2,
+      closedNotListed: 0,
+    });
+  });
+
+  it("replaces what was read before once GitHub leaves an open issue out, rather than showing it from before", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Hidden work" },
+      { number: 1, title: "Crash on start" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    github.hide("acme/api#2");
+    const list = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(list)).toEqual(["#1 Crash on start"]);
+    expect(list.loading.status).toBe("stale");
+  });
+
+  it("marks sub-issues that could not be read in their place, with what their parent issue names, and keeps the rest", async () => {
+    const { list } = await openWithSubIssues((github) => {
+      github.failWith(cannotReachGitHub);
+    });
+
+    expect(outline(list)).toEqual([
+      "#3 Launch billing",
+      "  #1 Send invoices · closed",
+      "  #2 Meter requests · closed",
+    ]);
+    const problem = { kind: "unreachable", message: cannotReachGitHub.message };
+    expect(list.trees[0]?.subIssues.map((node) => node.unread)).toEqual([
+      { status: "failed", problem },
+      { status: "failed", problem },
+    ]);
+    expect(list.trees[0]?.subIssues[0]?.issue).toEqual({
+      id: "I_acme/api#1",
+      repository: { owner: "acme", name: "api" },
+      reference: "#1",
+      title: "Send invoices",
+      state: "closed",
+      url: "https://github.com/acme/api/issues/1",
+      external: false,
+    });
+    expect(list.loading).toMatchObject({ status: "current", openIssues: 1 });
+  });
+
+  it("keeps the issues GitHub answers when it will not show another asked for with them", async () => {
+    const { list } = await openWithSubIssues((github) => {
+      github.hide("acme/api#2");
+    });
+
+    expect(list.trees[0]?.subIssues.map((node) => node.unread)).toEqual([
+      undefined,
+      {
+        status: "failed",
+        problem: { kind: "unavailable", access: undefined },
+      },
+    ]);
+  });
+
+  it("keeps an issue GitHub answers only in part, marked incomplete with why", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["acme/api#2", "secret/sdk#1"],
+      },
+      { number: 2, title: "Meter requests" },
+    ]);
+    github.addRepository("secret/sdk", [{ number: 1, title: "Retry in SDK" }]);
+    const sso = {
+      kind: "sso",
+      message:
+        "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+      url: undefined,
+    } as const;
+    github.hide("secret/sdk", sso);
+    const core = createTestCore(github);
+
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual(["#1 Launch billing", "  #2 Meter requests"]);
+    const tree = readSummary(list.trees[0]);
+    expect(tree.incomplete).toEqual({ kind: "unavailable", access: sso });
+    expect(tree.subIssueProgress).toEqual({ closed: 0, total: 2 });
+  });
+
+  it("marks an issue page's parts that could not be read in their place, keeping the rest", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [
+      { number: 1, title: "Parent", subIssues: ["other/work#2"] },
+      { number: 2, title: "Page", subIssues: ["other/work#3"] },
+      { number: 3, title: "Sub-issue" },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchIssueDetails");
+    const loaded = openPageUntilLoaded(core, "I_other/work#2");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    github.failWith(cannotReachGitHub);
+    github.resume();
+    const page = await loaded;
+
+    const failed = {
+      status: "failed",
+      problem: { kind: "unreachable", message: cannotReachGitHub.message },
+    };
+    expect(page.issue?.title).toBe("Page");
+    expect(page.ancestry).toEqual([
+      {
+        id: "I_other/work#1",
+        url: "https://github.com/other/work/issues/1",
+        reference: "other/work#1",
+        title: "Parent",
+        external: true,
+        unread: failed,
+      },
+    ]);
+    expect(page.subIssues).toEqual([
+      {
+        issue: {
+          id: "I_other/work#3",
+          repository: { owner: "other", name: "work" },
+          reference: "#3",
+          title: "Sub-issue",
+          state: "open",
+          url: "https://github.com/other/work/issues/3",
+          external: true,
+        },
+        subIssues: [],
+        expanded: false,
+        parent: undefined,
+        unread: failed,
+      },
+    ]);
+    expect(page.loading).toEqual({ status: "current", updatedAt: startTime });
+  });
+
+  it.each<[string, (core: Contract) => Promise<void>]>([
+    ["on Retry", (core) => core.retry({ kind: "list", scope: acmeApi })],
+    [
+      "as the window regains focus",
+      (core) => core.revalidate({ kind: "list", scope: acmeApi }),
+    ],
+    ["as the list is opened again", (core) => core.openList(acmeApi)],
+  ])(
+    "reads the parts of a list that failed again %s, however recently they failed",
+    async (_, act) => {
+      const { core, github } = await openWithSubIssues((github) => {
+        github.failWith(cannotReachGitHub);
+      });
+
+      github.failWith(undefined);
+      const list = await untilSettled(core, acmeApi, () => act(core));
+
+      expect(list.trees[0]?.subIssues.map((node) => node.unread)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
+  it("reads an issue GitHub answered only in part again as the window regains focus", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Launch billing", subIssues: ["secret/sdk#1"] },
+    ]);
+    github.addRepository("secret/sdk", [{ number: 1, title: "Retry in SDK" }]);
+    github.hide("secret/sdk");
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    // Access granted meanwhile, e.g. SSO authorized in the browser.
+    github.reveal("secret/sdk");
+    const list = await untilSettled(core, acmeApi, () =>
+      core.revalidate({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(list)).toEqual([
+      "#1 Launch billing",
+      "  secret/sdk#1 Retry in SDK · external",
+    ]);
+    expect(readSummary(list.trees[0]).incomplete).toBeUndefined();
+  });
+
+  it("reads an issue GitHub answered only in part again on Retry, also below a collapsed issue", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Launch billing", subIssues: ["acme/api#1"] },
+      { number: 1, title: "Meter requests", subIssues: ["secret/sdk#1"] },
+    ]);
+    github.addRepository("secret/sdk", [{ number: 1, title: "Retry in SDK" }]);
+    github.hide("secret/sdk");
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await core.setExpanded(acmeApi, "I_acme/api#2", false);
+
+    github.reveal("secret/sdk");
+    await untilSettled(core, acmeApi, () =>
+      core.retry({ kind: "list", scope: acmeApi }),
+    );
+    const expanded = await nextList(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#2", true),
+    );
+
+    expect(outline(expanded)).toEqual([
+      "#2 Launch billing",
+      "  #1 Meter requests",
+      "    secret/sdk#1 Retry in SDK · external",
+    ]);
+  });
+
+  it("reads the parts of an issue page that failed again as it is shown again, however recently they failed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [
+      { number: 1, title: "Parent", subIssues: ["other/work#2"] },
+      { number: 2, title: "Page", subIssues: ["other/work#3"] },
+      { number: 3, title: "Sub-issue" },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchIssueDetails");
+    const loaded = openPageUntilLoaded(core, "I_other/work#2");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    github.failWith(cannotReachGitHub);
+    github.resume();
+    await loaded;
+
+    github.failWith(undefined);
+    const page = await pageUntilSettled(core, "I_other/work#2", () =>
+      core.revalidate({ kind: "issue", issueId: "I_other/work#2" }),
+    );
+
+    expect(page.ancestry.map(({ unread }) => unread)).toEqual([undefined]);
+    expect(page.subIssues.map(({ unread }) => unread)).toEqual([undefined]);
+    expect(page.loading.status).toBe("current");
+  });
+});
+
+describe("retrying", () => {
+  it("reads a stale list again on Retry, current once it could be read", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openUntilLoaded(core, acmeApi);
+    github.failWith(cannotReachGitHub);
+    await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    clock.advance(minute);
+    github.failWith(undefined);
+    github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
+    const list = await untilSettled(core, acmeApi, () =>
+      core.retry({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(list)).toEqual(["#1 Crash at start"]);
+    expect(list.loading).toMatchObject({
+      status: "current",
+      updatedAt: startTime + minute,
+    });
+  });
+
+  it("reads a repository GitHub would not show again on Retry, e.g. once SSO is authorized", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.hide("acme/api");
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    github.reveal("acme/api");
+    const list = await untilSettled(core, acmeApi, () =>
+      core.retry({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(list)).toEqual(["#1 Crash on start"]);
+    expect(list.loading.status).toBe("current");
+  });
+
+  it("reads an issue page GitHub would not show again as it is opened again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("other/work", [{ number: 1, title: "Page" }]);
+    github.hide("other/work#1");
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_other/work#1");
+
+    github.reveal("other/work#1");
+    const page = await openPageUntilLoaded(core, "I_other/work#1");
+
+    expect(page.issue?.title).toBe("Page");
+    expect(page.loading.status).toBe("current");
+  });
+
+  it("asks GitHub nothing again on Retry when nothing failed", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    await openUntilLoaded(core, acmeApi);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    const requestsBefore = github.requestsReceived;
+
+    await core.retry({ kind: "list", scope: acmeApi });
+    await core.retry({ kind: "issue", issueId: "I_acme/api#1" });
+
+    expect(github.requestsReceived).toBe(requestsBefore);
+  });
+});
+
+describe("transient failures", () => {
+  const serverError: GitHubError = {
+    kind: "server-error",
+    message: "We couldn't respond to your request in time.",
+  };
+
+  it("tries a request GitHub's servers failed again twice on its own, then fails", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.failWith(serverError);
+    const core = createTestCore(github);
+
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(list.loading).toEqual({
+      status: "failed",
+      problem: {
+        kind: "error",
+        message:
+          "GitHub failed to answer: We couldn't respond to your request in time.",
+      },
+    });
+    expect(github.requestsFor("acme/api")).toBe(3);
+  });
+
+  it("loads once GitHub's servers recover within two tries more", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.failNextWith(serverError, 2);
+    const core = createTestCore(github);
+
+    const list = await openUntilLoaded(core, acmeApi);
+
+    expect(outline(list)).toEqual(["#1 Crash on start"]);
+    expect(list.loading.status).toBe("current");
+    expect(github.requestsFor("acme/api")).toBe(3);
+  });
+
+  it("never tries again on its own when GitHub cannot be reached", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.failWith(cannotReachGitHub);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openUntilLoaded(core, acmeApi);
+
+    vi.useFakeTimers();
+    try {
+      clock.advance(60 * minute);
+      await vi.advanceTimersByTimeAsync(60 * minute);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(github.requestsFor("acme/api")).toBe(1);
+  });
 });

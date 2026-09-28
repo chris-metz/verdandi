@@ -1,4 +1,9 @@
-import type { IssueActor, IssueMetadata, Label } from "../contract.ts";
+import type {
+  AccessEvidence,
+  IssueActor,
+  IssueMetadata,
+  Label,
+} from "../contract.ts";
 import { isObject } from "../json.ts";
 import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandResult, CommandRunner } from "./command-runner.ts";
@@ -54,32 +59,16 @@ export function createGhAdapter({
   gh,
 }: GhAdapterOptions): GitHubAccess {
   /**
-   * Runs one GraphQL query, failing on any error GitHub reports. Every query
-   * also reads `viewer { login }`. Values reach GitHub as typed variables,
-   * never spliced into the query.
+   * Runs one GraphQL query, keeping the data GitHub sends at HTTP 200
+   * alongside errors about parts of the query, such as a repository it
+   * cannot resolve, for each method to place. Errors fail it only when there
+   * is no data. Every query also reads `viewer { login }`. Values reach
+   * GitHub as typed variables, never spliced into the query.
    */
   async function graphql(
     selection: string,
     variables: Variables = {},
-  ): Promise<GitHubResult<{ viewerLogin: string; data: unknown }>> {
-    const result = await graphqlWithErrors(selection, variables);
-    if (!result.ok) return result;
-    const { viewerLogin, data, errors } = result.value;
-    if (errors.length > 0) return { ok: false, error: graphqlError(errors) };
-    return { ok: true, value: { viewerLogin, data } };
-  }
-
-  /**
-   * Runs one GraphQL query like `graphql`, but keeps the data GitHub sends at
-   * HTTP 200 alongside errors about parts of the query, such as a repository
-   * it cannot resolve. Errors fail it only when there is no data.
-   */
-  async function graphqlWithErrors(
-    selection: string,
-    variables: Variables,
-  ): Promise<
-    GitHubResult<{ viewerLogin: string; data: unknown; errors: GraphqlError[] }>
-  > {
+  ): Promise<GitHubResult<GraphqlAnswer>> {
     const entries = Object.entries(variables);
     const declarations = entries.map(([name, { type }]) => `$${name}: ${type}`);
     const operation = entries.length
@@ -107,22 +96,24 @@ export function createGhAdapter({
     }
     const response = parseTranscript(result.stdout);
     if (!response) return { ok: false, error: exitFailure(result) };
-    if (response.status >= 400) {
-      const message =
-        readMessage(response.body) ?? `HTTP ${String(response.status)}`;
-      return {
-        ok: false,
-        error: { kind: "http", status: response.status, message },
-      };
+    const { status, headers } = response;
+    if (status >= 400) {
+      const message = readMessage(response.body) ?? `HTTP ${String(status)}`;
+      return { ok: false, error: httpError(status, message, headers) };
     }
     const body = parseJson(response.body) as GraphqlBody | undefined;
     const errors = body?.errors ?? [];
     const viewerLogin = body?.data?.viewer?.login;
     if (typeof viewerLogin !== "string") {
-      if (errors.length > 0) return { ok: false, error: graphqlError(errors) };
+      if (errors.length > 0) {
+        return { ok: false, error: graphqlError(errors, headers) };
+      }
       return { ok: false, error: { kind: "unexpected-response" } };
     }
-    return { ok: true, value: { viewerLogin, data: body?.data, errors } };
+    return {
+      ok: true,
+      value: { viewerLogin, data: body?.data, errors, headers },
+    };
   }
 
   return {
@@ -163,22 +154,15 @@ export function createGhAdapter({
         { id: { type: "ID!", value: id } },
       );
       if (!result.ok) return result;
-      const data = result.value.data;
+      const { data, errors, headers } = result.value;
       const node = isObject(data) ? data.node : undefined;
-      if (node === null)
-        return {
-          ok: false,
-          error: {
-            kind: "http",
-            status: 404,
-            message: "Issue unavailable or not accessible with this account.",
-          },
-        };
-      const issue = readIssue(node);
-      const metadata = readMetadata(node);
-      if (!issue || !metadata)
+      const read = readIssueNode(node, errorsAbout(errors, ["node"]), headers);
+      if (!read.ok) return read;
+      const metadata = readMetadata(node, read.value.incomplete !== undefined);
+      if (!metadata) {
         return { ok: false, error: { kind: "unexpected-response" } };
-      return { ok: true, value: { ...issue, ...metadata } };
+      }
+      return { ok: true, value: { ...read.value, ...metadata } };
     },
     async fetchOpenIssues({ owner, name }, after) {
       const result = await graphql(
@@ -203,9 +187,18 @@ export function createGhAdapter({
         },
       );
       if (!result.ok) return result;
-      const page = readIssuePage(result.value.data);
-      if (!page) return { ok: false, error: { kind: "unexpected-response" } };
-      return { ok: true, value: page };
+      const { data, errors, headers } = result.value;
+      const page = readIssuePage(data, errors, headers);
+      if (page) return { ok: true, value: page };
+      // GitHub answered without the repository, or without its issues.
+      const aboutIt = errorsAbout(errors, ["repository"]);
+      return {
+        ok: false,
+        error:
+          aboutIt.length > 0
+            ? graphqlError(aboutIt, headers)
+            : { kind: "unexpected-response" },
+      };
     },
     async fetchIssues(ids) {
       const result = await graphql(
@@ -213,11 +206,28 @@ export function createGhAdapter({
         { ids: { type: "[ID!]!", value: ids } },
       );
       if (!result.ok) return result;
-      const nodes = (result.value.data as { nodes?: unknown } | undefined)
-        ?.nodes;
-      const issues = Array.isArray(nodes) ? readIssues(nodes) : undefined;
-      if (!issues) return { ok: false, error: { kind: "unexpected-response" } };
-      return { ok: true, value: issues };
+      const { data, errors, headers } = result.value;
+      const nodes = isObject(data) ? data.nodes : undefined;
+      if (!Array.isArray(nodes)) {
+        return {
+          ok: false,
+          error:
+            errors.length > 0
+              ? graphqlError(errors, headers)
+              : { kind: "unexpected-response" },
+        };
+      }
+      // Each issue is GitHub's answer in its place, whatever the others'.
+      return {
+        ok: true,
+        value: ids.map((_, index) =>
+          readIssueNode(
+            (nodes as unknown[])[index],
+            errorsAbout(errors, ["nodes", index]),
+            headers,
+          ),
+        ),
+      };
     },
     async fetchRepositorySummaries(repositories) {
       // One aliased `repository` per repository, so GitHub reports a missing
@@ -231,9 +241,9 @@ export function createGhAdapter({
           ${repositorySummaryFields}
         }`;
       });
-      const result = await graphqlWithErrors(selections.join("\n"), variables);
+      const result = await graphql(selections.join("\n"), variables);
       if (!result.ok) return result;
-      const { data, errors } = result.value;
+      const { data, errors, headers } = result.value;
       return {
         ok: true,
         value: repositories.map((_, index) => {
@@ -242,12 +252,12 @@ export function createGhAdapter({
             ? readRepositorySummary(data[alias])
             : undefined;
           if (summary) return { ok: true, value: summary };
-          const aboutIt = errors.filter((error) => error.path?.[0] === alias);
+          const aboutIt = errorsAbout(errors, [alias]);
           return {
             ok: false,
             error:
               aboutIt.length > 0
-                ? graphqlError(aboutIt)
+                ? graphqlError(aboutIt, headers)
                 : { kind: "unexpected-response" },
           };
         }),
@@ -381,8 +391,16 @@ interface IssuePageData {
   } | null;
 }
 
-/** Reads a page of issues, or `undefined` if it is not one. */
-function readIssuePage(data: unknown): IssuePage | undefined {
+/**
+ * Reads a page of issues, or `undefined` if it is not one. Issues GitHub
+ * reported errors about instead of answering are left out, and the page is
+ * marked incomplete.
+ */
+function readIssuePage(
+  data: unknown,
+  errors: readonly GraphqlError[],
+  headers: ResponseHeaders,
+): IssuePage | undefined {
   const repository = (data as IssuePageData | undefined)?.repository;
   const connection = repository?.issues;
   const nodes = connection?.nodes;
@@ -400,24 +418,71 @@ function readIssuePage(data: unknown): IssuePage | undefined {
     if (typeof endCursor !== "string") return undefined;
     nextPage = endCursor;
   }
-  const issues = readIssues(nodes);
-  if (!issues) return undefined;
-  return { issues, closedIssueCount, nextPage };
-}
-
-/** Reads issue nodes, or `undefined` if any is not one. */
-function readIssues(nodes: unknown[]): Issue[] | undefined {
   const issues: Issue[] = [];
-  for (const node of nodes) {
-    const issue = readIssue(node);
-    if (!issue) return undefined;
-    issues.push(issue);
+  const leftOut: GraphqlError[] = [];
+  for (const [index, node] of (nodes as unknown[]).entries()) {
+    const aboutIt = errorsAbout(errors, [
+      "repository",
+      "issues",
+      "nodes",
+      index,
+    ]);
+    const read = readIssueNode(node, aboutIt, headers);
+    if (read.ok) issues.push(read.value);
+    else if (aboutIt.length > 0) leftOut.push(...aboutIt);
+    else return undefined;
   }
-  return issues;
+  return {
+    issues,
+    closedIssueCount,
+    nextPage,
+    incomplete: leftOut.length > 0 ? graphqlError(leftOut, headers) : undefined,
+  };
 }
 
-/** Reads one issue node, or `undefined` if it is not one. */
-function readIssue(node: unknown): Issue | undefined {
+/**
+ * Reads an issue node that GitHub answered with the errors about it. A node
+ * GitHub left out fails with those errors, or as unavailable when it gave
+ * none, as it may for an issue this account cannot see; errors about parts
+ * of an issue it did answer mark it incomplete.
+ */
+function readIssueNode(
+  node: unknown,
+  errors: readonly GraphqlError[],
+  headers: ResponseHeaders,
+): GitHubResult<Issue> {
+  if (node === null || node === undefined) {
+    return {
+      ok: false,
+      error:
+        errors.length > 0
+          ? graphqlError(errors, headers)
+          : {
+              kind: "unavailable",
+              message: "Issue unavailable or not accessible with this account.",
+              access: undefined,
+            },
+    };
+  }
+  const incomplete =
+    errors.length > 0 ? graphqlError(errors, headers) : undefined;
+  const issue = readIssue(node, incomplete);
+  if (issue) return { ok: true, value: issue };
+  return {
+    ok: false,
+    error: incomplete ?? { kind: "unexpected-response" },
+  };
+}
+
+/**
+ * Reads one issue node, or `undefined` if it is not one. When GitHub
+ * reported errors about parts of it, which it answers with `null`, those
+ * parts are left out and the issue is marked incomplete.
+ */
+function readIssue(
+  node: unknown,
+  incomplete: GitHubError | undefined,
+): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
   const { url, updatedAt, labels, parent, subIssues } = node;
@@ -431,8 +496,9 @@ function readIssue(node: unknown): Issue | undefined {
     "blocking",
     "totalBlocking",
   ]);
-  const labelList = readNodes(labels, readLabel);
-  const subIssueList = readNodes(subIssues, readReference);
+  const partial = incomplete !== undefined;
+  const labelList = readNodes(labels, readLabel, partial);
+  const subIssueList = readNodes(subIssues, readReference, partial);
   const parentReference = parent === null ? null : readReference(parent);
   if (
     typeof url !== "string" ||
@@ -454,6 +520,7 @@ function readIssue(node: unknown): Issue | undefined {
     subIssues: subIssueList,
     subIssuesSummary,
     issueDependenciesSummary,
+    incomplete,
   };
 }
 
@@ -493,16 +560,21 @@ function readLabel(node: unknown): Label | undefined {
   return { name, color };
 }
 
-/** Reads a connection's `nodes`, or `undefined` if any is unreadable. */
+/**
+ * Reads a connection's `nodes`, or `undefined` if any is unreadable. Nodes
+ * GitHub answered with `null` for errors it reported are left out.
+ */
 function readNodes<T>(
   connection: unknown,
   read: (node: unknown) => T | undefined,
+  partial = false,
 ): T[] | undefined {
   if (!isObject(connection) || !Array.isArray(connection.nodes)) {
     return undefined;
   }
   const values: T[] = [];
-  for (const node of connection.nodes) {
+  for (const node of connection.nodes as unknown[]) {
+    if (partial && node === null) continue;
     const value = read(node);
     if (value === undefined) return undefined;
     values.push(value);
@@ -531,22 +603,136 @@ interface GraphqlBody {
   errors?: GraphqlError[];
 }
 
-/** The domain error for errors GitHub reported with a GraphQL response. */
-function graphqlError(errors: readonly GraphqlError[]): GitHubError {
-  return { kind: "graphql", messages: errors.map((error) => error.message) };
+/** A GraphQL answer with data, and the errors GitHub reported alongside. */
+interface GraphqlAnswer {
+  viewerLogin: string;
+  data: unknown;
+  errors: GraphqlError[];
+  headers: ResponseHeaders;
 }
 
 /**
  * An error GitHub reports with a GraphQL response. Its `path` names the part
- * of the query it concerns, e.g. an alias.
+ * of the query it concerns, e.g. an alias, and its `type` what went wrong.
  */
 interface GraphqlError {
   message: string;
+  type?: string;
   path?: (string | number)[];
+  extensions?: { saml_failure?: unknown };
 }
+
+/** The errors about a part of a GraphQL answer, or about anything in it. */
+function errorsAbout(
+  errors: readonly GraphqlError[],
+  path: readonly (string | number)[],
+): GraphqlError[] {
+  return errors.filter((error) =>
+    path.every((key, index) => error.path?.[index] === key),
+  );
+}
+
+/**
+ * GraphQL's answer at HTTP 200 to a query GitHub timed out on. It gives no
+ * error type.
+ */
+const graphqlTimeout = /^Something went wrong while executing your query/;
+
+/** The domain error for errors GitHub reported with a GraphQL response. */
+function graphqlError(
+  errors: readonly GraphqlError[],
+  headers: ResponseHeaders,
+): GitHubError {
+  const messages = errors.map((error) => error.message);
+  const rateLimited = errors.find((error) =>
+    error.type?.startsWith("RATE_LIMIT"),
+  );
+  if (rateLimited)
+    return { kind: "rate-limited", message: rateLimited.message };
+  const denied = errors.find(
+    (error) => error.type === "NOT_FOUND" || error.type === "FORBIDDEN",
+  );
+  if (denied) {
+    const saml = errors.some(
+      (error) => error.extensions?.saml_failure === true,
+    );
+    return {
+      kind: "unavailable",
+      message: denied.message,
+      access: accessEvidence(messages, headers, saml),
+    };
+  }
+  const timedOut = errors.find((error) => graphqlTimeout.test(error.message));
+  if (timedOut) return { kind: "server-error", message: timedOut.message };
+  return { kind: "graphql", messages };
+}
+
+/**
+ * The domain error for an HTTP error status. GitHub answers a rate limit with
+ * 403 or 429 and says so in its headers or message; any other 403, 404 or
+ * 410 means it will not show this account what was asked for.
+ */
+function httpError(
+  status: number,
+  message: string,
+  headers: ResponseHeaders,
+): GitHubError {
+  const rateLimited =
+    (status === 403 || status === 429) &&
+    (headers.get("x-ratelimit-remaining") === "0" ||
+      headers.has("retry-after") ||
+      /rate limit/i.test(message));
+  if (rateLimited) return { kind: "rate-limited", message };
+  if (status === 403 || status === 404 || status === 410) {
+    return {
+      kind: "unavailable",
+      message,
+      access: accessEvidence([message], headers, false),
+    };
+  }
+  if (status >= 500) return { kind: "server-error", message };
+  return { kind: "http", status, message };
+}
+
+/**
+ * Why GitHub would not show something to this account, when its answer says
+ * so: SAML single sign-on, by its `X-GitHub-SSO` header (which carries the
+ * link to authorize), by a GraphQL error's `saml_failure` or by its message;
+ * or an organization's OAuth App access restrictions, by the message.
+ */
+function accessEvidence(
+  messages: readonly string[],
+  headers: ResponseHeaders,
+  saml: boolean,
+): AccessEvidence | undefined {
+  const ssoRequired = /^required; url=(https:\/\/\S+)/.exec(
+    headers.get("x-github-sso") ?? "",
+  );
+  const samlMessage = messages.find((message) =>
+    /\bSAML enforcement\b/.test(message),
+  );
+  if (ssoRequired || saml || samlMessage !== undefined) {
+    return {
+      kind: "sso",
+      message: samlMessage ?? messages[0] ?? "",
+      url: ssoRequired?.[1],
+    };
+  }
+  const restricted = messages.find((message) =>
+    /\bOAuth App access restrictions\b/.test(message),
+  );
+  if (restricted !== undefined) {
+    return { kind: "organization-approval", message: restricted };
+  }
+  return undefined;
+}
+
+/** Response headers, by lower-case name. */
+type ResponseHeaders = ReadonlyMap<string, string>;
 
 interface HttpResponse {
   status: number;
+  headers: ResponseHeaders;
   body: string;
 }
 
@@ -558,8 +744,20 @@ function parseTranscript(output: string): HttpResponse | undefined {
   const statusLine = /^HTTP\/[\d.]+ (\d{3})[^\n]*\n/.exec(output);
   const separator = /\r?\n\r?\n/.exec(output);
   if (!statusLine || !separator) return undefined;
+  const headers = new Map<string, string>();
+  const headerLines = output.slice(statusLine[0].length, separator.index);
+  for (const line of headerLines.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon > 0) {
+      headers.set(
+        line.slice(0, colon).trim().toLowerCase(),
+        line.slice(colon + 1).trim(),
+      );
+    }
+  }
   return {
     status: Number(statusLine[1]),
+    headers,
     body: output.slice(separator.index + separator[0].length),
   };
 }
@@ -597,7 +795,14 @@ function readActor(node: unknown): IssueActor | undefined {
   return { login: node.login, avatarUrl: node.avatarUrl };
 }
 
-function readMetadata(node: unknown): IssueMetadata | undefined {
+/**
+ * Reads the metadata of an issue node, or `undefined` if it is not one;
+ * `partial` when GitHub reported errors about parts of it.
+ */
+function readMetadata(
+  node: unknown,
+  partial: boolean,
+): IssueMetadata | undefined {
   if (!isObject(node)) return undefined;
   const { stateReason, createdAt, author, milestone, comments } = node;
   const reasons = {
@@ -611,7 +816,7 @@ function readMetadata(node: unknown): IssueMetadata | undefined {
     !(typeof stateReason === "string" && Object.hasOwn(reasons, stateReason))
   )
     return undefined;
-  const assignees = readNodes(node.assignees, readActor);
+  const assignees = readNodes(node.assignees, readActor, partial);
   const readAuthor = author === null ? null : readActor(author);
   const milestoneTitle =
     milestone === null

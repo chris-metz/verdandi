@@ -161,6 +161,11 @@ export function App() {
               key={scopeLabel(selected)}
               scope={selected}
               stack={stack}
+              login={
+                setup?.status === "ready" && setup.account.status === "known"
+                  ? setup.account.account.login
+                  : undefined
+              }
               onNavigate={navigate}
               hasKeyboard={focused === "main"}
             />

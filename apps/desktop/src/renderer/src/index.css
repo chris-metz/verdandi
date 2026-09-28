@@ -45,6 +45,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-surface: var(--blocked-surface);
   --color-blocking: var(--blocking);
+  --color-warning: var(--warning);
   --color-selection: var(--selection);
   --color-selection-edge: var(--selection-edge);
   --radius-sm: calc(var(--radius) * 0.6);
@@ -97,6 +98,8 @@
   --blocked: #cf222e;
   --blocked-surface: #ffebe9;
   --blocking: #9a6700;
+  /* What could not be read, or is shown from before. */
+  --warning: #9a6700;
   /* The selected row of the focused list. */
   --selection: #ddf4ff;
   --selection-edge: #0969da;
@@ -140,6 +143,7 @@
     --blocked: #f85149;
     --blocked-surface: rgb(248 81 73 / 15%);
     --blocking: #d29922;
+    --warning: #d29922;
     --selection: #132a47;
     --selection-edge: #4493f8;
   }

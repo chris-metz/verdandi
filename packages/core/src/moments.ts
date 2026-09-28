@@ -36,16 +36,16 @@ export function fiveMinutesAgo(clock: Clock): Moment {
 }
 
 /**
- * Whether a screen, or a part of one, shows everything it has loaded, and
- * that is older than five minutes, so that it is read again as it is opened
- * or shown again.
+ * Whether a screen, or a part of one, shows everything it has loaded, or
+ * what it read before reading it again failed, and that is older than five
+ * minutes, so that it is read again as it is opened or shown again.
  */
 export function isOutdated(
   loading: LoadingState | ListLoading,
   clock: Clock,
 ): boolean {
   return (
-    loading.status === "current" &&
+    (loading.status === "current" || loading.status === "stale") &&
     loading.updatedAt < clock().time - revalidateAfter
   );
 }

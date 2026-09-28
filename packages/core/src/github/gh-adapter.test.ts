@@ -179,8 +179,7 @@ describe("gh adapter", () => {
   });
 
   it("reports GraphQL errors that arrive with HTTP 200", async () => {
-    const message =
-      "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `0000:1111:2222:3333:44445555` when reporting this issue.";
+    const message = "Field 'bodyText' doesn't exist on type 'Issue'";
     const github = createGhAdapter({
       gh: ghPath,
       runCommand: ghAnswering({
@@ -219,42 +218,413 @@ describe("gh adapter", () => {
     });
   });
 
-  it.each([
-    [
-      "403 Forbidden",
-      "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
-    ],
-    ["404 Not Found", "Not Found"],
-    ["410 Gone", "Issues are disabled for this repo"],
-    ["502 Bad Gateway", "Server Error"],
-    [
-      "403 Forbidden",
-      "API rate limit exceeded for user ID 1234567. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555 and timestamp 2026-09-28 06:20:48 UTC.",
-    ],
-  ])("reports HTTP %s from GitHub by its status", async (status, message) => {
+  it("reports any other HTTP error status by its status", async () => {
+    const message = "Validation Failed";
     const github = createGhAdapter({
       gh: ghPath,
-      runCommand: ghAnswering({
-        kind: "exited",
-        exitCode: 1,
-        stdout: transcript(
-          status,
-          ["Content-Type: application/json; charset=utf-8"],
-          JSON.stringify({
-            message,
-            documentation_url: "https://docs.github.com/rest",
-          }),
-        ),
-        stderr: `gh: ${message} (HTTP ${status.slice(0, 3)})\n`,
-      }),
+      runCommand: ghAnsweringHttp("422 Unprocessable Entity", message),
     });
 
     expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
-      error: { kind: "http", status: Number(status.slice(0, 3)), message },
+      error: { kind: "http", status: 422, message },
+    });
+  });
+});
+
+/**
+ * A `gh` whose every `gh api --include` call gets an HTTP error status from
+ * GitHub, with a REST error body carrying `message`, and extra headers.
+ */
+function ghAnsweringHttp(
+  status: string,
+  message: string,
+  headers: string[] = [],
+): CommandRunner {
+  return ghAnswering({
+    kind: "exited",
+    exitCode: 1,
+    stdout: transcript(
+      status,
+      ["Content-Type: application/json; charset=utf-8", ...headers],
+      JSON.stringify({
+        message,
+        documentation_url: "https://docs.github.com/rest",
+      }),
+    ),
+    stderr: `gh: ${message} (HTTP ${status.slice(0, 3)})\n`,
+  });
+}
+
+/**
+ * A `gh` whose every GraphQL query gets HTTP 200 with `data` and `errors`,
+ * and extra headers.
+ */
+function ghAnsweringGraphql(
+  data: unknown,
+  errors: unknown[],
+  headers: string[] = [],
+): CommandRunner {
+  return ghAnswering({
+    kind: "exited",
+    exitCode: errors.length > 0 ? 1 : 0,
+    stdout: transcript(
+      "200 OK",
+      [...graphqlHeaders, ...headers],
+      JSON.stringify(errors.length > 0 ? { data, errors } : { data }),
+    ),
+    stderr: errors
+      .map((error) => `gh: ${(error as { message: string }).message}\n`)
+      .join(""),
+  });
+}
+
+const samlMessage =
+  "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.";
+
+const oauthRestrictionMessage =
+  "Although you appear to have the correct authorization credentials, the `acme` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited. For more information on these restrictions, including how to enable this app, visit https://docs.github.com/articles/restricting-access-to-your-organization-s-data/";
+
+describe("gh adapter: what GitHub will not show", () => {
+  it.each([
+    ["404 Not Found", "Not Found"],
+    ["403 Forbidden", "Resource not accessible by integration"],
+    ["410 Gone", "Issues are disabled for this repo"],
+  ])(
+    "reports HTTP %s as unavailable, without guessing why",
+    async (status, message) => {
+      const github = createGhAdapter({
+        gh: ghPath,
+        runCommand: ghAnsweringHttp(status, message),
+      });
+
+      expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+        ok: false,
+        error: { kind: "unavailable", message, access: undefined },
+      });
+    },
+  );
+
+  it("names SSO, with GitHub's link to authorize, when GitHub says SAML SSO is required", async () => {
+    const url =
+      "https://github.com/orgs/acme/sso?authorization_request=A1B2C3D4E5";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("403 Forbidden", samlMessage, [
+        `X-Github-Sso: required; url=${url}`,
+      ]),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: {
+        kind: "unavailable",
+        message: samlMessage,
+        access: { kind: "sso", message: samlMessage, url },
+      },
     });
   });
 
+  it("names SSO without a link when GitHub's answer gives none", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-reader" }, repository: null },
+        [
+          {
+            type: "FORBIDDEN",
+            path: ["repository"],
+            extensions: { saml_failure: true },
+            locations: [{ line: 1, column: 40 }],
+            message: samlMessage,
+          },
+        ],
+      ),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "api" }),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: "unavailable",
+        message: samlMessage,
+        access: { kind: "sso", message: samlMessage, url: undefined },
+      },
+    });
+  });
+
+  it("names an organization's OAuth App access restrictions when GitHub says so", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-reader" }, repository: null },
+        [
+          {
+            type: "FORBIDDEN",
+            path: ["repository"],
+            locations: [{ line: 1, column: 40 }],
+            message: oauthRestrictionMessage,
+          },
+        ],
+      ),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "api" }),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: "unavailable",
+        message: oauthRestrictionMessage,
+        access: {
+          kind: "organization-approval",
+          message: oauthRestrictionMessage,
+        },
+      },
+    });
+  });
+
+  it("reports a repository GitHub cannot resolve as unavailable", async () => {
+    const message =
+      "Could not resolve to a Repository with the name 'acme/gone'.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-reader" }, repository: null },
+        [
+          {
+            type: "NOT_FOUND",
+            path: ["repository"],
+            locations: [{ line: 1, column: 83 }],
+            message,
+          },
+        ],
+      ),
+    });
+
+    expect(
+      await github.fetchOpenIssues({ owner: "acme", name: "gone" }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "unavailable", message, access: undefined },
+    });
+  });
+
+  it("reports an issue whose page it cannot read as unavailable", async () => {
+    const message =
+      "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-reader" }, node: null },
+        [{ type: "NOT_FOUND", path: ["node"], message }],
+      ),
+    });
+
+    expect(await github.fetchIssueDetails("I_kwDOAbCdEs4AAAAZ")).toEqual({
+      ok: false,
+      error: { kind: "unavailable", message, access: undefined },
+    });
+  });
+});
+
+describe("gh adapter: failures worth trying again", () => {
+  it.each([
+    ["500 Internal Server Error", "Server Error"],
+    ["502 Bad Gateway", "We couldn't respond to your request in time."],
+    ["503 Service Unavailable", "Service Unavailable"],
+  ])("reports HTTP %s as a server error", async (status, message) => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp(status, message),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "server-error", message },
+    });
+  });
+
+  it("reports a GraphQL query that timed out as a server error", async () => {
+    const message =
+      "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `0000:1111:2222:3333:44445555` when reporting this issue.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(null, [{ message }]),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "server-error", message },
+    });
+  });
+});
+
+describe("gh adapter: rate limits", () => {
+  it("reports an exhausted REST rate limit, never as unavailable", async () => {
+    const message =
+      "API rate limit exceeded for user ID 1234567. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555 and timestamp 2026-09-28 06:20:48 UTC.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("403 Forbidden", message, [
+        "X-Ratelimit-Limit: 5000",
+        "X-Ratelimit-Remaining: 0",
+        "X-Ratelimit-Reset: 1790510601",
+      ]),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", message },
+    });
+  });
+
+  it("reports a secondary rate limit, never as unavailable", async () => {
+    const message =
+      "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("403 Forbidden", message, [
+        "Retry-After: 60",
+      ]),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", message },
+    });
+  });
+
+  it("reports an exhausted GraphQL rate limit that arrives with HTTP 200", async () => {
+    const message = "API rate limit exceeded for user ID 1234567.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(null, [{ type: "RATE_LIMITED", message }]),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "rate-limited", message },
+    });
+  });
+});
+
+describe("gh adapter: partial answers", () => {
+  it("keeps the issues it can read when GitHub cannot resolve another", async () => {
+    const message =
+      "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        {
+          viewer: { login: "octo-reader" },
+          nodes: [issueNode({ id: "I_kwDOAbCdEs4AAAAN", number: 13 }), null],
+        },
+        [
+          {
+            type: "NOT_FOUND",
+            path: ["nodes", 1],
+            locations: [{ line: 1, column: 40 }],
+            message,
+          },
+        ],
+      ),
+    });
+
+    const read = await github.fetchIssues([
+      "I_kwDOAbCdEs4AAAAN",
+      "I_kwDOAbCdEs4AAAAZ",
+    ]);
+
+    expect(
+      read.ok &&
+        read.value.map((one) => (one.ok ? one.value.number : one.error)),
+    ).toEqual([13, { kind: "unavailable", message, access: undefined }]);
+  });
+
+  it("keeps an issue whose sub-issue GitHub would not show, marking it incomplete", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        {
+          viewer: { login: "octo-reader" },
+          nodes: [
+            {
+              ...issueNode({ id: "I_kwDOAbCdEs4AAAAN", number: 13 }),
+              subIssuesSummary: { total: 2, completed: 0 },
+              subIssues: {
+                nodes: [
+                  {
+                    id: "I_kwDOAbCdEs4AAAAO",
+                    number: 14,
+                    title: "Readable",
+                    state: "OPEN",
+                    repository: { nameWithOwner: "acme/api" },
+                  },
+                  null,
+                ],
+              },
+            },
+          ],
+        },
+        [
+          {
+            type: "FORBIDDEN",
+            path: ["nodes", 0, "subIssues", "nodes", 1],
+            extensions: { saml_failure: true },
+            message: samlMessage,
+          },
+        ],
+      ),
+    });
+
+    const read = await github.fetchIssues(["I_kwDOAbCdEs4AAAAN"]);
+    const [issue] = read.ok ? read.value : [];
+
+    expect(
+      issue?.ok && issue.value.subIssues.map(({ number }) => number),
+    ).toEqual([14]);
+    expect(issue?.ok && issue.value.incomplete).toEqual({
+      kind: "unavailable",
+      message: samlMessage,
+      access: { kind: "sso", message: samlMessage, url: undefined },
+    });
+  });
+
+  it("keeps the readable issues of a page, marking it incomplete", async () => {
+    const message =
+      "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        {
+          viewer: { login: "octo-reader" },
+          repository: {
+            closedIssues: { totalCount: 0 },
+            issues: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [issueNode({ number: 2 }), null],
+            },
+          },
+        },
+        [{ path: ["repository", "issues", "nodes", 1], message }],
+      ),
+    });
+
+    const page = await github.fetchOpenIssues({ owner: "acme", name: "api" });
+
+    expect(page.ok && page.value.issues.map(({ number }) => number)).toEqual([
+      2,
+    ]);
+    expect(page.ok && page.value.incomplete).toEqual({
+      kind: "server-error",
+      message,
+    });
+  });
+});
+
+describe("gh adapter: more reads", () => {
   it("reports a response body that is not JSON", async () => {
     const github = createGhAdapter({
       gh: ghPath,
@@ -512,41 +882,6 @@ describe("gh adapter", () => {
     ]);
   });
 
-  it("reports a repository GitHub cannot resolve", async () => {
-    const message =
-      "Could not resolve to a Repository with the name 'acme/gone'.";
-    const github = createGhAdapter({
-      gh: ghPath,
-      runCommand: ghAnswering({
-        kind: "exited",
-        exitCode: 1,
-        stdout: transcript(
-          "200 OK",
-          graphqlHeaders,
-          JSON.stringify({
-            data: { viewer: { login: "octo-reader" }, repository: null },
-            errors: [
-              {
-                type: "NOT_FOUND",
-                path: ["repository"],
-                locations: [{ line: 1, column: 83 }],
-                message,
-              },
-            ],
-          }),
-        ),
-        stderr: `gh: ${message}\n`,
-      }),
-    });
-
-    expect(
-      await github.fetchOpenIssues({ owner: "acme", name: "gone" }),
-    ).toEqual({
-      ok: false,
-      error: { kind: "graphql", messages: [message] },
-    });
-  });
-
   it("reports an issue page it cannot read", async () => {
     const github = createGhAdapter({
       gh: ghPath,
@@ -625,14 +960,11 @@ describe("gh adapter", () => {
 
     expect(
       read.ok &&
-        read.value.map(({ id, repository, number, title, state, url }) => ({
-          id,
-          repository,
-          number,
-          title,
-          state,
-          url,
-        })),
+        read.value.map((one) => {
+          if (!one.ok) return one.error;
+          const { id, repository, number, title, state, url } = one.value;
+          return { id, repository, number, title, state, url };
+        }),
     ).toEqual([
       {
         id: "I_kwDOAbCdEs4AAAAN",
@@ -656,41 +988,6 @@ describe("gh adapter", () => {
     ]);
   });
 
-  it("reports an issue ID GitHub cannot resolve", async () => {
-    const message =
-      "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'.";
-    const github = createGhAdapter({
-      gh: ghPath,
-      runCommand: ghAnswering({
-        kind: "exited",
-        exitCode: 1,
-        stdout: transcript(
-          "200 OK",
-          graphqlHeaders,
-          JSON.stringify({
-            data: {
-              viewer: { login: "octo-reader" },
-              nodes: [issueNode({ number: 13 }), null],
-            },
-            errors: [
-              {
-                type: "NOT_FOUND",
-                path: ["nodes", 1],
-                locations: [{ line: 1, column: 40 }],
-                message,
-              },
-            ],
-          }),
-        ),
-        stderr: `gh: ${message}\n`,
-      }),
-    });
-
-    expect(
-      await github.fetchIssues(["I_kwDOAbCdEs4AAAAN", "I_kwDOAbCdEs4AAAAZ"]),
-    ).toEqual({ ok: false, error: { kind: "graphql", messages: [message] } });
-  });
-
   it("reports a node it cannot read as an issue", async () => {
     const github = createGhAdapter({
       gh: ghPath,
@@ -712,9 +1009,15 @@ describe("gh adapter", () => {
       }),
     });
 
+    const read = await github.fetchIssues([
+      "I_kwDOAbCdEs4AAAAN",
+      "PR_kwDOAbCdEs5AAAAB",
+    ]);
+
     expect(
-      await github.fetchIssues(["I_kwDOAbCdEs4AAAAN", "PR_kwDOAbCdEs5AAAAB"]),
-    ).toEqual({ ok: false, error: { kind: "unexpected-response" } });
+      read.ok &&
+        read.value.map((one) => (one.ok ? one.value.number : one.error)),
+    ).toEqual([13, { kind: "unexpected-response" }]);
   });
 });
 
@@ -864,7 +1167,7 @@ describe("gh adapter: repository summaries", () => {
         read.value.map((one) =>
           one.ok ? one.value.openIssueCount : one.error,
         ),
-    ).toEqual([12, { kind: "graphql", messages: [message] }, 3]);
+    ).toEqual([12, { kind: "unavailable", message, access: undefined }, 3]);
   });
 
   it("reports a repository it cannot read, and reads the others", async () => {
@@ -913,7 +1216,7 @@ describe("gh adapter: repository summaries", () => {
   });
 
   it("reports a query GitHub rejected as a whole", async () => {
-    const message = "API rate limit already exceeded for user ID 1234567.";
+    const message = "Field 'openIssues' doesn't exist on type 'Repository'";
     const github = createGhAdapter({
       gh: ghPath,
       runCommand: ghAnswering({
@@ -924,9 +1227,7 @@ describe("gh adapter: repository summaries", () => {
           graphqlHeaders,
           JSON.stringify({
             data: null,
-            errors: [
-              { type: "RATE_LIMIT", code: "graphql_rate_limit", message },
-            ],
+            errors: [{ extensions: { code: "undefinedField" }, message }],
           }),
         ),
         stderr: `gh: ${message}\n`,

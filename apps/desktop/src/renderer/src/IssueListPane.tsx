@@ -1,4 +1,9 @@
-import type { IssueList, Scope } from "@verdandi/core/contract";
+import type {
+  IssueList,
+  RepositoryAddress,
+  RepositoryLoading,
+  Scope,
+} from "@verdandi/core/contract";
 import {
   useCallback,
   useEffect,
@@ -21,8 +26,9 @@ import {
 } from "./list-navigation";
 import { rememberedPlace, rememberPlace } from "./list-places";
 import { listStatus } from "./list-status";
+import { ProblemNotice } from "./ProblemNotice";
 import { RefreshControl } from "./RefreshControl";
-import { presentScope, sameScope } from "./scope";
+import { presentScope, repositoryLabel, sameScope } from "./scope";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
 /** The row the selection is on. */
@@ -37,10 +43,13 @@ const selectedRow = '[aria-selected="true"]';
  */
 export function IssueListPane({
   scope,
+  login,
   hasKeyboard,
   onOpen,
 }: {
   scope: Scope;
+  /** The account GitHub is read as, if known, to name it when unavailable. */
+  login: string | undefined;
   onOpen: (issue: IssueDestination) => void;
   /**
    * Whether the main area has the keyboard. The list then holds it, also
@@ -77,6 +86,9 @@ export function IssueListPane({
     },
     [scope],
   );
+  const retry = useCallback(() => {
+    void window.verdandi.retry({ kind: "list", scope });
+  }, [scope]);
 
   function run(command: ListCommand) {
     switch (command.kind) {
@@ -159,7 +171,8 @@ export function IssueListPane({
   }
 
   const { label, repositoryChips } = presentScope(scope);
-  const failed = list?.loading.status === "failed";
+  const failure =
+    list?.loading.status === "failed" ? list.loading.problem : undefined;
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-4">
@@ -170,6 +183,7 @@ export function IssueListPane({
             onRefresh={() => {
               void window.verdandi.refresh({ kind: "list", scope });
             }}
+            onRetry={retry}
           />
         )}
       </header>
@@ -189,34 +203,109 @@ export function IssueListPane({
         }}
         className="group min-h-0 flex-1 overflow-y-auto outline-none"
       >
-        {list && (
-          <>
-            <IssueColumnHeader sticky />
-            {rows.map((row, index) => (
-              <IssueRow
-                key={row.node.issue.id}
-                row={row}
-                withRepository={repositoryChips}
-                selected={index === selected}
-                onOpen={onOpen}
-                onSelect={select}
-                onToggle={toggle}
+        {list && failure && rows.length === 0 ? (
+          // Nothing to show, so why stands in place of the list.
+          <ProblemNotice
+            problem={failure}
+            login={login}
+            url={
+              scope.kind === "repository"
+                ? `${repositoryUrl(scope.repository)}/issues`
+                : undefined
+            }
+            onRetry={retry}
+            className="px-4 py-6"
+          />
+        ) : (
+          list && (
+            <>
+              <RepositoryProblems
+                repositories={list.repositories}
+                login={login}
+                onRetry={retry}
               />
-            ))}
-            <p
-              role={failed ? "alert" : "status"}
-              className={cn(
-                "px-4 py-3 whitespace-pre-line text-muted-foreground",
-                failed && "text-destructive",
-              )}
-            >
-              {listStatus(list.loading)}
-            </p>
-          </>
+              <IssueColumnHeader sticky />
+              {rows.map((row, index) => (
+                <IssueRow
+                  key={row.node.issue.id}
+                  row={row}
+                  withRepository={repositoryChips}
+                  selected={index === selected}
+                  login={login}
+                  onOpen={onOpen}
+                  onSelect={select}
+                  onToggle={toggle}
+                  onRetry={retry}
+                />
+              ))}
+              <p
+                role={failure ? "alert" : "status"}
+                className={cn(
+                  "px-4 py-3 whitespace-pre-line text-muted-foreground",
+                  failure && "text-warning",
+                )}
+              >
+                {listStatus(list.loading)}
+                {failure && (
+                  <button
+                    type="button"
+                    onClick={retry}
+                    className="ml-2 underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                )}
+              </p>
+            </>
+          )
         )}
       </div>
     </>
   );
+}
+
+/**
+ * The repositories within All that could not be read, each with why and what
+ * to do, above the issues of the others.
+ */
+function RepositoryProblems({
+  repositories,
+  login,
+  onRetry,
+}: {
+  repositories: readonly RepositoryLoading[];
+  login: string | undefined;
+  onRetry: () => void;
+}) {
+  const failed = repositories.flatMap(({ repository, loading }) =>
+    loading.status === "failed"
+      ? [{ repository, problem: loading.problem }]
+      : [],
+  );
+  if (failed.length === 0) return null;
+  return (
+    <ul
+      aria-label="Repositories that could not be read"
+      className="space-y-3 border-b px-4 py-3"
+    >
+      {failed.map(({ repository, problem }) => (
+        <li key={repositoryLabel(repository)}>
+          <ProblemNotice
+            problem={problem}
+            login={login}
+            subject={repositoryLabel(repository)}
+            url={repositoryUrl(repository)}
+            onRetry={onRetry}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A repository's page on GitHub. */
+function repositoryUrl(repository: RepositoryAddress): string {
+  return `https://github.com/${repositoryLabel(repository)}`;
 }
 
 /** The scope's list as the core pushes it, from the moment it is opened. */
@@ -234,7 +323,7 @@ function useList(scope: Scope): IssueList | undefined {
         setList({
           scope,
           trees: [],
-          loading: { status: "failed", message },
+          loading: { status: "failed", problem: { kind: "error", message } },
           repositories: [],
         });
       }

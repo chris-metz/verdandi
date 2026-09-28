@@ -67,6 +67,7 @@ export function issuePageTrees(
 ): IssueTree[] {
   const ids = new Set(expanded);
   function visit(node: IssueTree): IssueTree {
+    if (node.unread) return node;
     return {
       ...node,
       expanded: ids.has(node.issue.id),

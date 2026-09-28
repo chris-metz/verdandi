@@ -92,6 +92,38 @@ export type Notice =
   { kind: "gh-replaced"; previous: string; gh: GhExecutable };
 
 /**
+ * Why GitHub would not let this account read something, named only when
+ * GitHub's answer says so.
+ */
+export type AccessEvidence =
+  /**
+   * The organization enforces SAML single sign-on, and gh's credentials are
+   * not authorized for it. The link to authorize them comes only from
+   * GitHub's answer.
+   */
+  | { kind: "sso"; message: string; url: string | undefined }
+  /** The organization restricts OAuth App access and has not approved gh. */
+  | { kind: "organization-approval"; message: string };
+
+/** Why something could not be read. */
+export type Problem =
+  /** GitHub could not be reached, e.g. without a connection. */
+  | { kind: "unreachable"; message: string }
+  /**
+   * GitHub would not show it to this account: it may not exist, or this
+   * account may not read it. GitHub does not say which, unless `access`
+   * names why.
+   */
+  | { kind: "unavailable"; access: AccessEvidence | undefined }
+  /** GitHub's rate limit is reached. */
+  | { kind: "rate-limited"; message: string }
+  /**
+   * Anything else, e.g. a server error that persisted after retrying, or a
+   * settings file that cannot be read.
+   */
+  | { kind: "error"; message: string };
+
+/**
  * A repository's current address on GitHub, `owner/name`. It changes when
  * the repository is renamed or transferred.
  */
@@ -173,8 +205,11 @@ export interface SubIssueProgress {
   total: number;
 }
 
-/** An issue as a list shows it. */
-export interface IssueSummary {
+/**
+ * What a list or page knows of an issue before or without reading it: what
+ * the relationship that names it says.
+ */
+export interface IssueIdentity {
   /** GitHub's node ID, the same wherever the issue appears. */
   id: string;
   /**
@@ -192,26 +227,58 @@ export interface IssueSummary {
   state: "open" | "closed";
   /** Its page on github.com. */
   url: string;
-  /** Its labels, in GitHub's order. */
-  labels: Label[];
   /** Whether it is an external issue: outside every tracked repository. */
   external: boolean;
+}
+
+/** An issue as a list shows it. */
+export interface IssueSummary extends IssueIdentity {
+  /** Its labels, in GitHub's order. */
+  labels: Label[];
   /** Sub-issue progress, from GitHub's `subIssuesSummary`. */
   subIssueProgress: SubIssueProgress;
   /** Issues blocking it, from GitHub's `issueDependenciesSummary`. */
   blockedBy: RelationshipCount;
   /** Issues it blocks, from GitHub's `issueDependenciesSummary`. */
   blocking: RelationshipCount;
+  /**
+   * Why GitHub left out part of it, such as a sub-issue or its parent issue
+   * this account may not read, when GitHub said so; the rest shows. It is
+   * read again as failed parts are.
+   */
+  incomplete: Problem | undefined;
 }
 
 /** An issue in a list, with its sub-issues nested below it. */
-export interface IssueNode {
+export type IssueNode = ReadIssueNode | UnreadIssueNode;
+
+/** An issue that has been read, with its sub-issues nested below it. */
+export interface ReadIssueNode {
   issue: IssueSummary;
-  /** Its sub-issues in GitHub's order, as far as they have loaded. */
+  /** Its sub-issues in GitHub's order, read or not. */
   subIssues: IssueNode[];
   /** Whether its sub-issues show: initially expanded in lists, collapsed on pages. */
   expanded: boolean;
+  unread?: undefined;
 }
+
+/**
+ * An issue a relationship names that has not been read: loading, or failed.
+ * It shows what the relationship says of it; its sub-issues are unknown.
+ */
+export interface UnreadIssueNode {
+  issue: IssueIdentity;
+  subIssues: [];
+  expanded: false;
+  unread: UnreadIssue;
+}
+
+/** Why an issue a relationship names shows only as the relationship names it. */
+export type UnreadIssue =
+  /** It is being read, or will be. */
+  | { status: "loading" }
+  /** It could not be read, or GitHub would not show it to this account. */
+  | { status: "failed"; problem: Problem };
 
 /** A parent issue that a list names instead of showing it above. */
 export interface ParentIssue {
@@ -224,10 +291,12 @@ export interface ParentIssue {
   title: string;
   /** Whether it is an external issue. */
   external: boolean;
+  /** Why it has not been read, unless it has. */
+  unread: UnreadIssue | undefined;
 }
 
 /** A tree at the top level of a list. */
-export interface IssueTree extends IssueNode {
+export type IssueTree = IssueNode & {
   /**
    * Its parent issue, which the list does not show above it: it lives in
    * another repository with no issue of this one above it (in All, outside
@@ -235,7 +304,7 @@ export interface IssueTree extends IssueNode {
    * (yet).
    */
   parent: ParentIssue | undefined;
-}
+};
 
 /**
  * How far a part of a screen has loaded, such as a repository within All, and
@@ -244,7 +313,10 @@ export interface IssueTree extends IssueNode {
  * - `loading`: it has not loaded yet.
  * - `refreshing`: it is being read again, and shows what it has meanwhile.
  * - `current`: it has loaded.
- * - `failed`: it could not be read.
+ * - `stale`: reading it again failed, e.g. GitHub could not be reached, so it
+ *   shows what was read before.
+ * - `failed`: it could not be read, and there is nothing to show from before:
+ *   it never loaded, or GitHub would no longer show it to this account.
  */
 export type LoadingState =
   | { status: "loading" }
@@ -256,7 +328,13 @@ export type LoadingState =
        */
       updatedAt: number;
     }
-  | { status: "failed"; message: string };
+  | {
+      status: "stale";
+      /** When GitHub was asked for the oldest of what it shows. */
+      updatedAt: number;
+      problem: Problem;
+    }
+  | { status: "failed"; problem: Problem };
 
 /** A repository within a list, and how far its open issues have loaded. */
 export interface RepositoryLoading {
@@ -265,36 +343,52 @@ export interface RepositoryLoading {
 }
 
 /**
- * How far a list has loaded, and how current it is. Issues loaded before a
- * failure stay listed. The counts are known only once everything has loaded.
+ * How far a list has loaded, and how current it is. The counts are known only
+ * once its repositories' open issues have loaded; in All, they count the
+ * repositories that have. Issues and repositories that could not be read show
+ * where they belong, in the list or in All's `repositories`.
  *
  * - `loading`: it has not loaded yet; issues fill in as they arrive.
  * - `refreshing`: it is being read again, and shows what it has meanwhile.
  * - `current`: everything it shows has loaded.
- * - `failed`: something it shows could not be read.
+ * - `stale`: reading it again failed, e.g. GitHub could not be reached, so it
+ *   shows what was read before.
+ * - `failed`: its open issues could not be read, of its repository or in All
+ *   of every tracked repository, and there is nothing to show from before.
+ *   What loaded before the failure stays listed, e.g. the first pages.
  */
 export type ListLoading =
   | { status: "loading" }
-  | {
+  | ({
       status: "refreshing" | "current";
       /**
        * When GitHub was asked for the oldest of what it shows, in
        * milliseconds since the epoch.
        */
       updatedAt: number;
-      /**
-       * How many open issues the repository has, or in All every tracked
-       * repository together.
-       */
-      openIssues: number;
-      /**
-       * How many of the repository's closed issues the list leaves out (in
-       * All, of every tracked repository's): all but the ancestors of its
-       * open issues and the sub-issues in it.
-       */
-      closedNotListed: number;
-    }
-  | { status: "failed"; message: string };
+    } & ListCounts)
+  | ({
+      status: "stale";
+      /** When GitHub was asked for the oldest of what it shows. */
+      updatedAt: number;
+      problem: Problem;
+    } & ListCounts)
+  | { status: "failed"; problem: Problem };
+
+/** What a list counts once its open issues have loaded. */
+export interface ListCounts {
+  /**
+   * How many open issues the repository has, or in All every tracked
+   * repository together.
+   */
+  openIssues: number;
+  /**
+   * How many of the repository's closed issues the list leaves out (in All,
+   * of every tracked repository's): all but the ancestors of its open issues
+   * and the sub-issues in it.
+   */
+  closedNotListed: number;
+}
 
 /**
  * A scope's list, as far as it has loaded: its sub-issue forest. The
@@ -311,8 +405,9 @@ export interface IssueList {
   loading: ListLoading;
   /**
    * The repositories All merges, once they are known, in the settings file's
-   * order, each with how far its open issues have loaded. None in a
-   * repository's list, whose loading is the list's own.
+   * order, each with how far its open issues have loaded; one that failed is
+   * missing from the list, or shows as it was before. None in a repository's
+   * list, whose loading is the list's own.
    */
   repositories: RepositoryLoading[];
 }
@@ -336,14 +431,22 @@ export interface IssueActor {
 /** An issue page, including relationships outside tracked repositories. */
 export interface IssuePage {
   issueId: string;
+  /**
+   * The issue, once it has been read; none again once GitHub would no longer
+   * show it to this account.
+   */
   issue: (IssueSummary & IssueMetadata) | undefined;
-  /** Top-most parent first, excluding the issue itself. */
+  /**
+   * Top-most parent first, excluding the issue itself. A parent issue that
+   * has not been read ends it, with why: whatever lies above it is unknown.
+   */
   ancestry: (ParentIssue & { url: string })[];
   /** The list's outline rows, in GitHub order, initially collapsed. */
   subIssues: IssueTree[];
   /**
    * How far the page has loaded, and how current it is. What loaded before a
-   * failure stays usable.
+   * failure stays usable; parts that could not be read show where they
+   * belong.
    */
   loading: LoadingState;
 }
@@ -396,7 +499,7 @@ export interface CoreRequests {
    * once, then again as each page of open issues and each batch of the other
    * issues it shows arrives. Only the opened scope is loaded: opening it again
    * shows what is loaded or loading, and reads it again in the background
-   * when it is older than five minutes, or at once if it failed. All loads
+   * when it is older than five minutes, and what of it failed at once. All loads
    * every tracked repository side by side, and shares each repository's open
    * issues with that repository's list, so neither reads again what the
    * other has read in the last five minutes. The sidebar's counts are read
@@ -427,11 +530,22 @@ export interface CoreRequests {
    */
   refresh: (screen: Screen | undefined) => Promise<void>;
   /**
-   * What is on screen is shown again, e.g. as the window regains focus: the sidebar's counts, and the screen the main area shows, if any,
-   * once opened. What is older than five minutes is read again in the
-   * background, as opening a screen would.
+   * What is on screen is shown again, e.g. as the window regains focus: the
+   * sidebar's counts, and the screen the main area shows, if any, once
+   * opened. What is older than five minutes is read again in the background,
+   * as opening a screen would, and what failed or GitHub would not show, at
+   * once, however recently.
    */
   revalidate: (screen: Screen | undefined) => Promise<void>;
+  /**
+   * Reads again now what is on screen that failed, GitHub would not show, or
+   * left out: the sidebar's counts that failed, and the parts of the screen
+   * the main area shows, if any, once opened. What was read shows meanwhile.
+   * Failures GitHub's server may recover from are tried again twice on their
+   * own; the rest, such as failing to reach GitHub, wait for this, for the
+   * screen to be opened again, or for the window to regain focus.
+   */
+  retry: (screen: Screen | undefined) => Promise<void>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -475,6 +589,7 @@ const requests: Record<keyof CoreRequests, true> = {
   setAllExpanded: true,
   refresh: true,
   revalidate: true,
+  retry: true,
 };
 const events: Record<CoreEventName, true> = {
   accountChanged: true,

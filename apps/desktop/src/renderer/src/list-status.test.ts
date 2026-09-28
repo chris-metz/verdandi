@@ -71,8 +71,23 @@ it("says how many closed issues are not listed", () => {
   );
 });
 
-it("says why loading failed", () => {
-  expect(listStatus({ status: "failed", message: "Cannot reach GitHub" })).toBe(
-    "Cannot reach GitHub",
-  );
+it("says the open issues listed are not all, and why, when loading failed after some", () => {
+  expect(
+    listStatus({
+      status: "failed",
+      problem: { kind: "unreachable", message: "no such host" },
+    }),
+  ).toBe("Not every open issue could be loaded · Cannot reach GitHub");
+});
+
+it("keeps the counts of what a stale list shows", () => {
+  expect(
+    listStatus({
+      status: "stale",
+      updatedAt,
+      problem: { kind: "unreachable", message: "no such host" },
+      openIssues: 3,
+      closedNotListed: 0,
+    }),
+  ).toBe("3 open issues");
 });

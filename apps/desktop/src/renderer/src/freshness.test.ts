@@ -1,9 +1,24 @@
-import type { IssueList, ListLoading } from "@verdandi/core/contract";
+import type {
+  IssueList,
+  IssuePage,
+  ListLoading,
+  LoadingState,
+} from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
-import { listFreshness, loadingFreshness, updatedAgo } from "./freshness";
+import {
+  listFreshness,
+  loadingFreshness,
+  pageFreshness,
+  updatedAgo,
+} from "./freshness";
 
-const now = Date.parse("2026-09-27T14:02:00Z");
+/** 14:32 on the machine's clock, wherever it is. */
+const now = new Date(2026, 8, 27, 14, 32).getTime();
 const minute = 60 * 1000;
+const cannotReachGitHub = {
+  kind: "unreachable",
+  message: "dial tcp: lookup api.github.com: no such host",
+} as const;
 
 /** All's list, loading its repositories, of which `loaded` have loaded. */
 function allLoading(loaded: number, total: number): IssueList {
@@ -38,10 +53,12 @@ describe("a list's header", () => {
     expect(listFreshness(allLoading(3, 14), now)).toEqual({
       text: "Loading… 3 of 14 repositories",
       busy: true,
+      retry: false,
     });
     expect(listFreshness(allLoading(0, 1), now)).toEqual({
       text: "Loading… 0 of 1 repository",
       busy: true,
+      retry: false,
     });
   });
 
@@ -49,6 +66,7 @@ describe("a list's header", () => {
     expect(listFreshness(repositoryList({ status: "loading" }), now)).toEqual({
       text: "Loading…",
       busy: true,
+      retry: false,
     });
   });
 
@@ -60,19 +78,87 @@ describe("a list's header", () => {
     };
     expect(
       listFreshness(repositoryList({ status: "current", ...loaded }), now),
-    ).toEqual({ text: "Updated 3 min ago", busy: false });
+    ).toEqual({ text: "Updated 3 min ago", busy: false, retry: false });
     expect(
       listFreshness(repositoryList({ status: "refreshing", ...loaded }), now),
-    ).toEqual({ text: "Updated 3 min ago", busy: true });
+    ).toEqual({ text: "Updated 3 min ago", busy: true, retry: false });
   });
 
   it("leaves a failure to the list itself", () => {
     expect(
       listFreshness(
-        repositoryList({ status: "failed", message: "Cannot reach GitHub" }),
+        repositoryList({ status: "failed", problem: cannotReachGitHub }),
         now,
       ),
-    ).toEqual({ text: "", busy: false });
+    ).toEqual({ text: "", busy: false, retry: false });
+  });
+
+  it("says since when a stale list shows what it read, and why it could not read it again", () => {
+    expect(
+      listFreshness(
+        repositoryList({
+          status: "stale",
+          updatedAt: now - 30 * minute,
+          problem: cannotReachGitHub,
+          openIssues: 2,
+          closedNotListed: 0,
+        }),
+        now,
+      ),
+    ).toEqual({
+      text: "Showing data from 14:02 · Cannot reach GitHub",
+      detail: cannotReachGitHub.message,
+      busy: false,
+      retry: true,
+    });
+  });
+
+  it("gives the date too when stale data is from another day", () => {
+    expect(
+      listFreshness(
+        repositoryList({
+          status: "stale",
+          updatedAt: new Date(2026, 8, 26, 9, 5).getTime(),
+          problem: cannotReachGitHub,
+          openIssues: 2,
+          closedNotListed: 0,
+        }),
+        now,
+      ).text,
+    ).toBe("Showing data from Sep 26, 09:05 · Cannot reach GitHub");
+  });
+
+  it("sums up what of a list could not be read", () => {
+    const list: IssueList = {
+      ...allLoading(2, 4),
+      loading: {
+        status: "current",
+        updatedAt: now - 3 * minute,
+        openIssues: 2,
+        closedNotListed: 0,
+      },
+      repositories: [
+        { status: "current", updatedAt: now },
+        {
+          status: "failed",
+          problem: { kind: "unavailable", access: undefined },
+        },
+        {
+          status: "failed",
+          problem: { kind: "unavailable", access: undefined },
+        },
+        { status: "failed", problem: cannotReachGitHub },
+      ].map((loading, index) => ({
+        repository: { owner: "acme", name: `repo-${String(index)}` },
+        loading: loading as LoadingState,
+      })),
+    };
+
+    expect(listFreshness(list, now)).toEqual({
+      text: "Updated 3 min ago · 2 repositories unavailable · 1 repository could not be loaded",
+      busy: false,
+      retry: true,
+    });
   });
 });
 
@@ -81,13 +167,80 @@ describe("an issue page's header", () => {
     expect(loadingFreshness({ status: "loading" }, now)).toEqual({
       text: "Loading…",
       busy: true,
+      retry: false,
     });
     expect(
       loadingFreshness({ status: "refreshing", updatedAt: now }, now),
-    ).toEqual({ text: "Updated just now", busy: true });
+    ).toEqual({ text: "Updated just now", busy: true, retry: false });
     expect(
       loadingFreshness({ status: "current", updatedAt: now - minute }, now),
-    ).toEqual({ text: "Updated 1 min ago", busy: false });
+    ).toEqual({ text: "Updated 1 min ago", busy: false, retry: false });
+  });
+
+  it("says since when a stale page shows what it read", () => {
+    expect(
+      loadingFreshness(
+        {
+          status: "stale",
+          updatedAt: now - 30 * minute,
+          problem: { kind: "rate-limited", message: "API rate limit exceeded" },
+        },
+        now,
+      ),
+    ).toEqual({
+      text: "Showing data from 14:02 · GitHub rate limit reached",
+      detail: "API rate limit exceeded",
+      busy: false,
+      retry: true,
+    });
+  });
+
+  it("sums up the parts of a page that could not be read", () => {
+    const failed = {
+      status: "failed",
+      problem: { kind: "unavailable", access: undefined },
+    } as const;
+    const identity = {
+      repository: { owner: "acme", name: "api" },
+      state: "open",
+      external: false,
+    } as const;
+    const page: IssuePage = {
+      issueId: "I_2",
+      issue: undefined,
+      ancestry: [
+        {
+          id: "I_1",
+          url: "https://github.com/acme/api/issues/1",
+          reference: "acme/api#1",
+          title: "Parent",
+          external: false,
+          unread: failed,
+        },
+      ],
+      subIssues: [
+        {
+          issue: {
+            ...identity,
+            id: "I_3",
+            reference: "#3",
+            title: "Sub-issue",
+            url: "https://github.com/acme/api/issues/3",
+          },
+          subIssues: [],
+          expanded: false,
+          parent: undefined,
+          unread: failed,
+        },
+      ],
+      loading: { status: "current", updatedAt: now },
+    };
+
+    expect(pageFreshness(page, now)).toEqual({
+      text: "Updated just now · 2 issues unavailable",
+      busy: false,
+      retry: true,
+    });
   });
 });
 

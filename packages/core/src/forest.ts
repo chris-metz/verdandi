@@ -4,8 +4,9 @@ import type {
   ParentIssue,
   RepositoryAddress,
   Scope,
+  UnreadIssue,
 } from "./contract.ts";
-import { summarizeIssue } from "./issue-summary.ts";
+import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
 import type { Issue, IssueReference } from "./github/port.ts";
 import { nameWithOwner, sameRepository } from "./repository-address.ts";
 
@@ -27,6 +28,8 @@ export interface ForestOptions {
   openIssueIds: Iterable<string>;
   /** An issue read earlier. */
   lookup: (id: string) => Issue | undefined;
+  /** Why an issue the forest names has not been read. */
+  unread: (issue: IssueReference) => UnreadIssue;
   /** Whether a repository is tracked. */
   isTracked: (repository: RepositoryAddress) => boolean;
   /** Whether an issue's sub-issues show. */
@@ -40,12 +43,14 @@ export interface ForestOptions {
  * too, open or closed, however many repositories lie in between. Below each
  * listed issue its sub-issues nest, from any repository. An issue already
  * nested below another listed issue does not also stand at the top, where a
- * chip names a parent issue the list does not show.
+ * chip names a parent issue the list does not show. A sub-issue that has not
+ * been read shows as its parent issue names it, with why.
  */
 export function buildForest({
   scope,
   openIssueIds,
   lookup,
+  unread,
   isTracked,
   isExpanded,
 }: ForestOptions): Forest {
@@ -105,20 +110,34 @@ export function buildForest({
       reference: referenceTo(parent, "parent chip"),
       title: parent.title,
       external: isExternal(parent.repository),
+      unread: lookup(parent.id) ? undefined : unread(parent),
     };
   }
 
   let closedShown = 0;
   const placed = new Set<string>();
-  function place(issue: Issue): IssueNode {
+  function place(issue: Issue): IssueNode & { unread?: undefined } {
     placed.add(issue.id);
     if (issue.state === "closed" && isOwn(issue.repository)) closedShown++;
     const subIssues: IssueNode[] = [];
     for (const reference of issue.subIssues) {
       if (placed.has(reference.id)) continue;
       const subIssue = lookup(reference.id);
-      if (subIssue) subIssues.push(place(subIssue));
-      else missing.set(reference.id, reference);
+      if (subIssue) {
+        subIssues.push(place(subIssue));
+        continue;
+      }
+      placed.add(reference.id);
+      missing.set(reference.id, reference);
+      subIssues.push({
+        issue: identifyIssue(reference, {
+          reference: referenceTo(reference, "row"),
+          external: isExternal(reference.repository),
+        }),
+        subIssues: [],
+        expanded: false,
+        unread: unread(reference),
+      });
     }
     return {
       issue: summarizeIssue(issue, {

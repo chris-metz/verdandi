@@ -1,14 +1,16 @@
 import type {
   IssueMetadata,
+  IssueNode,
   IssuePage,
   IssueTree,
   LoadingState,
+  Problem,
+  UnreadIssue,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
-import { describeGitHubError } from "./github/error-message.ts";
 import type { Issue, SendRequest } from "./github/port.ts";
-import type { IssueStore } from "./issue-store.ts";
-import { summarizeIssue } from "./issue-summary.ts";
+import { keepAnswer, type IssueStore } from "./issue-store.ts";
+import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
 import {
   atOrAfter,
   fiveMinutesAgo,
@@ -16,6 +18,7 @@ import {
   type Clock,
   type Moment,
 } from "./moments.ts";
+import { problemOf } from "./problems.ts";
 import {
   nameWithOwner,
   repositoryKey,
@@ -28,21 +31,30 @@ import type { SettingsStorage } from "./settings/port.ts";
  * level, read without tracking repositories. A page is built from the one
  * store whenever it is pushed, so an issue read again elsewhere shows on it
  * too. It is kept for the session, and read again when it is refreshed, has
- * grown old, or failed.
+ * grown old, or when what of it failed is retried, opened or shown again.
  */
 export interface IssuePages {
   /**
-   * Pushes an issue page at once. If it has not loaded, loads it; if it
-   * failed, or is older than five minutes, reads it again while it shows
-   * what it has. It is pushed again once it has loaded.
+   * Pushes an issue page at once. If it has not loaded, loads it; if it is
+   * older than five minutes, reads it again while it shows what it has;
+   * otherwise reads again what of it failed. It is pushed again once it has
+   * loaded.
    */
   open(issueId: string): void;
   /**
    * Reads everything an issue page shows again now, unless it is being read.
    */
   refresh(issueId: string): void;
-  /** Reads an opened issue page again if it is older than five minutes. */
+  /**
+   * Reads an opened issue page again if it is older than five minutes, and
+   * otherwise what of it failed.
+   */
   revalidate(issueId: string): void;
+  /**
+   * Reads again what of an opened issue page failed, GitHub would not show,
+   * or left out, however recently.
+   */
+  retry(issueId: string): void;
 }
 
 export interface IssuePagesOptions {
@@ -68,12 +80,16 @@ interface PageState {
   validFrom: Moment;
   /** Whether it is being read. */
   reading: boolean;
+  /** When its latest read started. */
+  readStartedAt: Moment;
   /** Whether it was refreshed while it was being read, to be read again. */
   readAgain: boolean;
+  /** Issues this page is reading by ID. */
+  readingIds: Set<string>;
   /** Whether a read of it has completed with its issue. */
   loaded: boolean;
-  /** Why its last read failed, if it did. */
-  failure: string | undefined;
+  /** Why its last read of the issue itself failed, if it did. */
+  problem: Problem | undefined;
 }
 
 /** At most this many issues are read by ID in one request. */
@@ -88,6 +104,21 @@ export function createIssuePages({
 }: IssuePagesOptions): IssuePages {
   const pages = new Map<string, PageState>();
 
+  /**
+   * Why the page shows an issue it names only as a relationship names it:
+   * while the page is read, it is loading unless it failed meanwhile.
+   */
+  function unreadIssue(state: PageState, id: string): UnreadIssue {
+    const failure = store.failure(id);
+    const settled =
+      failure &&
+      !state.readingIds.has(id) &&
+      (!state.reading || atOrAfter(failure.at, state.readStartedAt));
+    return settled
+      ? { status: "failed", problem: failure.problem }
+      : { status: "loading" };
+  }
+
   /** The page as the store has it now, and how far it has loaded. */
   function build(state: PageState): IssuePage {
     const { issueId, tracked, metadata } = state;
@@ -100,54 +131,95 @@ export function createIssuePages({
     };
     const issue = store.get(issueId);
     if (!issue || !metadata) {
-      page.loading = loadingOf(state, undefined);
+      page.loading = loadingOf(state, undefined, undefined);
       return page;
     }
-    // The page is as old as the oldest of what it shows.
+    // The page is as old as the oldest of what it shows, and stale if any
+    // of that could not be read again.
     let updatedAt = Math.min(
       metadata.readAt.time,
       store.readAt(issueId)?.time ?? Infinity,
     );
+    let stale: Problem | undefined;
     const ageWith = (other: Issue) => {
-      updatedAt = Math.min(updatedAt, store.readAt(other.id)?.time ?? Infinity);
+      const readAt = store.readAt(other.id);
+      updatedAt = Math.min(updatedAt, readAt?.time ?? Infinity);
+      if (readAt && !atOrAfter(readAt, state.validFrom)) {
+        stale ??= store.failure(other.id)?.problem;
+      }
     };
-    const external = (other: Issue) =>
+    const external = (other: Pick<Issue, "repository">) =>
       !tracked.has(repositoryKey(other.repository));
-    const summarize = (other: Issue) =>
-      summarizeIssue(other, {
-        reference: sameRepository(issue.repository, other.repository)
-          ? `#${String(other.number)}`
-          : `${nameWithOwner(other.repository)}#${String(other.number)}`,
-        external: external(other),
-      });
-    page.issue = { ...summarize(issue), ...metadata.value };
+    const referenceTo = (other: Pick<Issue, "repository" | "number">) =>
+      sameRepository(issue.repository, other.repository)
+        ? `#${String(other.number)}`
+        : `${nameWithOwner(other.repository)}#${String(other.number)}`;
+    page.issue = {
+      ...summarizeIssue(issue, {
+        reference: referenceTo(issue),
+        external: external(issue),
+      }),
+      ...metadata.value,
+    };
 
+    // A parent issue that has not been read ends the ancestry: what lies
+    // above it is unknown.
     const visited = new Set([issueId]);
-    let parent = issue.parent && store.get(issue.parent.id);
-    while (parent && !visited.has(parent.id)) {
-      visited.add(parent.id);
+    let reference = issue.parent;
+    while (reference && !visited.has(reference.id)) {
+      visited.add(reference.id);
+      const parent = store.get(reference.id);
+      const presentation = {
+        reference: `${nameWithOwner(reference.repository)}#${String(reference.number)}`,
+        external: external(reference),
+      };
+      if (!parent) {
+        const { id, url, title } = identifyIssue(reference, presentation);
+        page.ancestry.unshift({
+          id,
+          url,
+          title,
+          ...presentation,
+          unread: unreadIssue(state, reference.id),
+        });
+        break;
+      }
       ageWith(parent);
       page.ancestry.unshift({
         id: parent.id,
         url: parent.url,
-        reference: `${nameWithOwner(parent.repository)}#${String(parent.number)}`,
         title: parent.title,
-        external: external(parent),
+        ...presentation,
+        unread: undefined,
       });
-      parent = parent.parent && store.get(parent.parent.id);
+      reference = parent.parent;
     }
 
     const placed = new Set([issueId]);
     function nest(parent: Issue): IssueTree[] {
-      return parent.subIssues.flatMap(({ id }) => {
-        if (placed.has(id)) return [];
-        placed.add(id);
-        const loaded = store.get(id);
-        if (!loaded) return [];
+      return parent.subIssues.flatMap((subIssue): IssueTree[] => {
+        if (placed.has(subIssue.id)) return [];
+        placed.add(subIssue.id);
+        const presentation = {
+          reference: referenceTo(subIssue),
+          external: external(subIssue),
+        };
+        const loaded = store.get(subIssue.id);
+        if (!loaded) {
+          return [
+            {
+              issue: identifyIssue(subIssue, presentation),
+              expanded: false,
+              parent: undefined,
+              subIssues: [],
+              unread: unreadIssue(state, subIssue.id),
+            },
+          ];
+        }
         ageWith(loaded);
         return [
           {
-            issue: summarize(loaded),
+            issue: summarizeIssue(loaded, presentation),
             expanded: false,
             parent: undefined,
             subIssues: nest(loaded),
@@ -156,28 +228,32 @@ export function createIssuePages({
       });
     }
     page.subIssues = nest(issue);
-    page.loading = loadingOf(state, updatedAt);
+    page.loading = loadingOf(state, updatedAt, stale);
     return page;
   }
 
   /**
    * How far a page has loaded: loading until a read of it has completed,
-   * then refreshing while it is read again.
+   * then refreshing while it is read again. It is stale when what it shows
+   * could not be read again, and failed when it has nothing to show, also
+   * once GitHub would no longer show the issue.
    */
   function loadingOf(
     state: PageState,
     updatedAt: number | undefined,
+    stale: Problem | undefined,
   ): LoadingState {
     if (state.reading) {
       return state.loaded && updatedAt !== undefined
         ? { status: "refreshing", updatedAt }
         : { status: "loading" };
     }
-    if (state.failure !== undefined) {
-      return { status: "failed", message: state.failure };
+    const problem = state.problem ?? stale;
+    if (updatedAt === undefined) {
+      return problem ? { status: "failed", problem } : { status: "loading" };
     }
-    return updatedAt === undefined
-      ? { status: "loading" }
+    return problem
+      ? { status: "stale", updatedAt, problem }
       : { status: "current", updatedAt };
   }
 
@@ -185,12 +261,13 @@ export function createIssuePages({
    * Reads a page, pushing it as it starts, once its issue has arrived, and
    * once everything has. A refresh meanwhile reads it all again.
    */
-  async function load(state: PageState) {
+  async function load(state: PageState, retrying = false) {
     state.reading = true;
+    state.readStartedAt = clock();
     push(build(state));
     for (;;) {
-      state.failure = undefined;
-      await read(state);
+      state.problem = undefined;
+      await read(state, retrying);
       if (!state.readAgain) break;
       state.readAgain = false;
     }
@@ -202,13 +279,14 @@ export function createIssuePages({
   /**
    * Reads the page's issue with its metadata, then its ancestry and every
    * level of its sub-issues, reading again what is older than the page
-   * needs it.
+   * needs it, what failed, and, when retrying, what GitHub answered only in
+   * part.
    */
-  async function read(state: PageState) {
+  async function read(state: PageState, retrying: boolean) {
     const { issueId } = state;
     const settingsRead = await settings.read();
     if (!settingsRead.ok) {
-      state.failure = settingsRead.message;
+      state.problem = { kind: "error", message: settingsRead.message };
       return;
     }
     state.tracked = new Set(settingsRead.value.repositories.map(repositoryKey));
@@ -218,7 +296,10 @@ export function createIssuePages({
       github.fetchIssueDetails(issueId),
     );
     if (!details.ok) {
-      state.failure = describeGitHubError(details.error);
+      state.problem = problemOf(details.error);
+      store.fail([issueId], state.problem, askedAt);
+      // What GitHub no longer shows this account shows no more.
+      if (state.problem.kind === "unavailable") state.metadata = undefined;
       return;
     }
     const {
@@ -250,22 +331,20 @@ export function createIssuePages({
       const outdated = ids.filter((id) => {
         if (attempted.has(id)) return false;
         const readAt = store.readAt(id);
-        return readAt === undefined || !atOrAfter(readAt, state.validFrom);
+        return (
+          readAt === undefined ||
+          !atOrAfter(readAt, state.validFrom) ||
+          (retrying && store.get(id)?.incomplete !== undefined)
+        );
       });
       for (const id of outdated) attempted.add(id);
       await Promise.all(
         inBatches(outdated, issuesPerRequest).map(async (batch) => {
           const batchAskedAt = clock();
-          const result = await request((github) => github.fetchIssues(batch));
-          if (!result.ok) {
-            state.failure ??= describeGitHubError(result.error);
-            return;
-          }
-          store.put(result.value, batchAskedAt);
-          if (batch.some((id) => !store.get(id))) {
-            state.failure ??=
-              "Some issues are unavailable or not accessible with this account.";
-          }
+          for (const id of batch) state.readingIds.add(id);
+          const answer = await request((github) => github.fetchIssues(batch));
+          for (const id of batch) state.readingIds.delete(id);
+          keepAnswer(store, batch, answer, batchAskedAt);
         }),
       );
     }
@@ -302,6 +381,27 @@ export function createIssuePages({
     else void load(state);
   }
 
+  /**
+   * Reads again what of a page failed or GitHub answered only in part, and
+   * says whether it does.
+   */
+  function retry(state: PageState, page: IssuePage): boolean {
+    if (state.reading || !hasFailedParts(page)) return false;
+    void load(state, true);
+    return true;
+  }
+
+  /**
+   * Reads a page again if it is older than five minutes, and otherwise what
+   * of it failed, and says whether it does.
+   */
+  function revalidate(state: PageState): boolean {
+    const page = build(state);
+    if (!isOutdated(page.loading, clock)) return retry(state, page);
+    refresh(state);
+    return true;
+  }
+
   /** Starts a page, which takes what lists have read in the last five minutes. */
   function create(issueId: string, validFrom: Moment) {
     const state: PageState = {
@@ -310,9 +410,11 @@ export function createIssuePages({
       metadata: undefined,
       validFrom,
       reading: false,
+      readStartedAt: validFrom,
       readAgain: false,
+      readingIds: new Set(),
       loaded: false,
-      failure: undefined,
+      problem: undefined,
     };
     pages.set(issueId, state);
     void load(state);
@@ -321,14 +423,8 @@ export function createIssuePages({
   return {
     open(issueId) {
       const known = pages.get(issueId);
-      if (!known) {
-        create(issueId, fiveMinutesAgo(clock));
-        return;
-      }
-      const page = build(known);
-      if (page.loading.status === "failed" || isOutdated(page.loading, clock)) {
-        refresh(known);
-      } else push(page);
+      if (!known) create(issueId, fiveMinutesAgo(clock));
+      else if (!revalidate(known)) push(build(known));
     },
     refresh(issueId) {
       const known = pages.get(issueId);
@@ -337,7 +433,29 @@ export function createIssuePages({
     },
     revalidate(issueId) {
       const known = pages.get(issueId);
-      if (known && isOutdated(build(known).loading, clock)) refresh(known);
+      if (known) revalidate(known);
+    },
+    retry(issueId) {
+      const known = pages.get(issueId);
+      if (known) retry(known, build(known));
     },
   };
+}
+
+/**
+ * Whether a page shows anything that failed, that GitHub would not show, or
+ * that it answered only in part.
+ */
+function hasFailedParts(page: IssuePage): boolean {
+  const failedNode = (node: IssueNode): boolean =>
+    node.unread
+      ? node.unread.status === "failed"
+      : node.issue.incomplete !== undefined || node.subIssues.some(failedNode);
+  return (
+    page.loading.status === "failed" ||
+    page.loading.status === "stale" ||
+    page.issue?.incomplete !== undefined ||
+    page.ancestry.some(({ unread }) => unread?.status === "failed") ||
+    page.subIssues.some(failedNode)
+  );
 }

@@ -27,6 +27,7 @@ function issue(
       subIssueProgress: { closed: 0, total: subIssues.length },
       blockedBy: { open: 0, total: 0 },
       blocking: { open: 0, total: 0 },
+      incomplete: undefined,
     },
     subIssues,
     expanded,

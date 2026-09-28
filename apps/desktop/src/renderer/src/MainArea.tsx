@@ -8,12 +8,15 @@ import { scopeLabel } from "./scope";
 export function MainArea({
   scope,
   stack,
+  login,
   onNavigate,
   hasKeyboard,
 }: {
   scope: Scope;
   /** The issue pages opened from the list, the one shown last. */
   stack: readonly IssueVisit[];
+  /** The account GitHub is read as, if known. */
+  login: string | undefined;
   onNavigate: (action: IssueNavigation) => void;
   hasKeyboard: boolean;
 }) {
@@ -22,6 +25,7 @@ export function MainArea({
     return (
       <IssueListPane
         scope={scope}
+        login={login}
         hasKeyboard={hasKeyboard}
         onOpen={(issue) => {
           onNavigate({ kind: "open", issue });
@@ -34,6 +38,7 @@ export function MainArea({
       visit={current}
       previous={stack.at(-2)?.issue}
       listLabel={scopeLabel(scope)}
+      login={login}
       hasKeyboard={hasKeyboard}
       onNavigate={onNavigate}
     />

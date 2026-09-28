@@ -1,4 +1,5 @@
 import type {
+  IssueIdentity,
   IssueSummary,
   Label,
   ParentIssue,
@@ -9,13 +10,16 @@ import { cn } from "@/lib/utils";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
 import type { ListRow } from "./list-navigation";
+import { problemText } from "./problem-text";
 import {
   colorStyle,
+  incompleteTitle,
   labelColors,
   labelOverflow,
   progressCell,
   relationshipCell,
   repositoryChipCell,
+  unreadCell,
 } from "./row-cells";
 
 /** The widths of the right-aligned columns, shared with their header. */
@@ -46,27 +50,36 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
 /**
  * One issue in a list: chevron, state, repository chip in All, reference,
  * title, labels and tags, then the sub-issue progress, "Blocked by" and
- * "Blocks" columns.
+ * "Blocks" columns. An issue that has not been read shows as its parent issue
+ * names it, with why, and Retry and Open on GitHub once it failed; its
+ * columns stay empty, as nothing is known of them.
  */
 export const IssueRow = memo(function IssueRow({
   row,
   withRepository,
   selected,
+  login,
   onSelect,
   onToggle,
   onOpen,
+  onRetry,
 }: {
   row: ListRow;
   /** Whether the row names its repository with a chip, as in All. */
   withRepository: boolean;
   selected: boolean;
+  /** The account GitHub is read as, if known, to name it when unavailable. */
+  login: string | undefined;
   onSelect: (issueId: string) => void;
   onToggle: (issueId: string, expanded: boolean) => void;
   onOpen: (issue: IssueDestination) => void;
+  /** Reads what failed on screen again. */
+  onRetry: () => void;
 }) {
   const { node, depth, parent } = row;
   const { issue } = node;
   const hasSubIssues = node.subIssues.length > 0;
+  const read = node.unread ? undefined : node.issue;
   return (
     <div
       role="treeitem"
@@ -113,7 +126,7 @@ export const IssueRow = memo(function IssueRow({
       <span
         className={cn(
           "flex min-w-0 items-center gap-1.5",
-          issue.state === "closed" && "opacity-55",
+          (issue.state === "closed" || !read) && "opacity-55",
         )}
       >
         <IssueStateIcon state={issue.state} />
@@ -122,7 +135,7 @@ export const IssueRow = memo(function IssueRow({
           {issue.reference}
         </span>
         <span className="min-w-0 truncate">{issue.title}</span>
-        <Labels labels={issue.labels} />
+        {read && <Labels labels={read.labels} />}
         {issue.external && (
           <span
             title="Not in a tracked repository"
@@ -131,7 +144,17 @@ export const IssueRow = memo(function IssueRow({
             external
           </span>
         )}
+        {read?.incomplete && (
+          <WarningIcon title={incompleteTitle(read.incomplete)} />
+        )}
       </span>
+      {node.unread && (
+        <UnreadMarker
+          cell={unreadCell(node.unread, login)}
+          url={issue.url}
+          onRetry={onRetry}
+        />
+      )}
       {parent && (
         <ParentChip
           parent={parent}
@@ -149,17 +172,95 @@ export const IssueRow = memo(function IssueRow({
           issue.state === "closed" && "opacity-55",
         )}
       >
-        <Progress progress={issue.subIssueProgress} />
+        {read && <Progress progress={read.subIssueProgress} />}
       </span>
       <span className={cn("flex", columnClasses.blockedBy)}>
-        <Relationship issue={issue} kind="blockedBy" />
+        {read && <Relationship issue={read} kind="blockedBy" />}
       </span>
       <span className={cn("flex", columnClasses.blocking)}>
-        <Relationship issue={issue} kind="blocking" />
+        {read && <Relationship issue={read} kind="blocking" />}
       </span>
     </div>
   );
 });
+
+/**
+ * Why a row shows an issue only as its parent issue names it: loading, or
+ * failed with Retry, Open on GitHub, and GitHub's own link, if it gave one.
+ */
+function UnreadMarker({
+  cell,
+  url,
+  onRetry,
+}: {
+  cell: ReturnType<typeof unreadCell>;
+  url: string;
+  onRetry: () => void;
+}) {
+  if (!cell.failed) {
+    return (
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {cell.text}
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 shrink items-center gap-1 text-xs">
+      <WarningIcon title={cell.title} />
+      <span title={cell.title} className="min-w-0 truncate text-warning">
+        {cell.text}
+      </span>
+      <RowAction label="Retry" onClick={onRetry} />
+      <RowAction
+        label="Open on GitHub"
+        onClick={() => {
+          window.desktop.openExternal(url);
+        }}
+      />
+      {cell.link && (
+        <RowAction
+          label={cell.link.label}
+          onClick={() => {
+            if (cell.link) window.desktop.openExternal(cell.link.url);
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+/** A small action within a row, which leaves the row's selection alone. */
+function RowAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="shrink-0 rounded px-1 text-muted-foreground underline-offset-2 hover:bg-accent hover:text-foreground hover:underline"
+    >
+      {label}
+    </button>
+  );
+}
+
+/** A warning sign, with why in its tooltip. */
+export function WarningIcon({ title }: { title: string | undefined }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      role="img"
+      aria-label={title ?? "Warning"}
+      className="size-3.5 shrink-0 fill-none stroke-warning stroke-[1.5]"
+    >
+      {title !== undefined && <title>{title}</title>}
+      <path d="M8 2.2 14.3 13.3H1.7z" />
+      <path d="M8 6.5v3.2M8 11.4v.4" />
+    </svg>
+  );
+}
 
 function Labels({ labels }: { labels: Label[] }) {
   const { shown, more } = labelOverflow(labels);
@@ -190,7 +291,7 @@ function Labels({ labels }: { labels: Label[] }) {
  * The chip naming an issue's repository: filled in its owner's colour, or
  * outlined for an external repository.
  */
-function RepositoryChip({ issue }: { issue: IssueSummary }) {
+function RepositoryChip({ issue }: { issue: IssueIdentity }) {
   const { text, title, colors } = repositoryChipCell(issue);
   return (
     <span
@@ -207,7 +308,10 @@ function RepositoryChip({ issue }: { issue: IssueSummary }) {
   );
 }
 
-/** The ↑ chip naming a parent issue the list does not show above. */
+/**
+ * The ↑ chip naming a parent issue the list does not show above, marked when
+ * the parent issue could not be read.
+ */
 function ParentChip({
   parent,
   onOpen,
@@ -215,6 +319,9 @@ function ParentChip({
   parent: ParentIssue;
   onOpen: () => void;
 }) {
+  const failed =
+    parent.unread?.status === "failed" ? parent.unread.problem : undefined;
+  const why = failed && ` (${problemText(failed).text})`;
   return (
     <button
       type="button"
@@ -223,8 +330,11 @@ function ParentChip({
         event.stopPropagation();
         onOpen();
       }}
-      title={`Sub-issue of ${parent.reference}: ${parent.title}`}
-      className="flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground"
+      title={`Sub-issue of ${parent.reference}: ${parent.title}${why ?? ""}`}
+      className={cn(
+        "flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground",
+        failed && "border-dashed border-warning",
+      )}
     >
       <svg
         viewBox="0 0 16 16"

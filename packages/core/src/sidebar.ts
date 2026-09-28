@@ -28,10 +28,10 @@ import type { SettingsStorage } from "./settings/port.ts";
  * The sidebar: the tracked repositories from the settings file, with their
  * open-issue counts. Counts are read many repositories at a time and without
  * their issues: when the sidebar is read, again when it is refreshed, when
- * they are older than five minutes as a screen opens or is shown again,
- * and after reading them failed. A count also follows the repository's open
- * issues each time they load, for its list or for All. A known count stays
- * shown while it is read again.
+ * they are older than five minutes as a screen opens or is shown again, and
+ * when reading them failed, as a screen is retried, opened or shown again.
+ * A count also follows the repository's open issues each time they load, for
+ * its list or for All. A known count stays shown while it is read again.
  */
 export interface Sidebar {
   /**
@@ -41,12 +41,14 @@ export interface Sidebar {
    */
   read(): Promise<SidebarEntries>;
   /**
-   * Asks GitHub again for the known counts that are older than five minutes,
-   * of the sidebar as last read.
+   * Asks GitHub again for the counts that failed, and the known ones that
+   * are older than five minutes, of the sidebar as last read.
    */
   revalidate(): void;
   /** Asks GitHub again for every count of the sidebar as last read. */
   refresh(): void;
+  /** Asks GitHub again for the counts that failed, of the sidebar as last read. */
+  retry(): void;
   /**
    * Takes a repository's open-issue count from its open issues, just loaded,
    * with when their read started.
@@ -125,6 +127,11 @@ export function createSidebar({
     return readAt !== undefined && !atOrAfter(readAt, fiveMinutesAgo(clock));
   }
 
+  /** Whether reading a count failed. */
+  function failed(repository: RepositoryAddress): boolean {
+    return countOf(repository).status === "failed";
+  }
+
   /** Whether a count is unknown, or older than five minutes. */
   function unknownOrOutdated(repository: RepositoryAddress): boolean {
     return countOf(repository).status !== "known" || outdated(repository);
@@ -198,10 +205,14 @@ export function createSidebar({
       return entries(tracked);
     },
     revalidate() {
-      if (tracked && ask(tracked.filter(outdated))) pushTracked();
+      if (tracked && ask(tracked.filter((one) => failed(one) || outdated(one))))
+        pushTracked();
     },
     refresh() {
       if (tracked && ask(tracked)) pushTracked();
+    },
+    retry() {
+      if (tracked && ask(tracked.filter(failed))) pushTracked();
     },
     openIssuesLoaded(repository, openIssues, readAt) {
       const key = repositoryKey(repository);

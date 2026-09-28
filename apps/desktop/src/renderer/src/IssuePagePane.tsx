@@ -1,5 +1,6 @@
 import type { IssuePage } from "@verdandi/core/contract";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -8,9 +9,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import { cn } from "@/lib/utils";
-import { loadingFreshness } from "./freshness";
+import { loadingFreshness, pageFreshness } from "./freshness";
 import { IssueMetadataLine } from "./IssueMetadataLine";
-import { IssueColumnHeader, IssueRow } from "./IssueRow";
+import { IssueColumnHeader, IssueRow, WarningIcon } from "./IssueRow";
 import type {
   IssueDestination,
   IssueNavigation,
@@ -25,7 +26,10 @@ import {
   type IssuePageCommand,
 } from "./issue-page-navigation";
 import { visibleRows } from "./list-navigation";
+import { ProblemNotice } from "./ProblemNotice";
+import { problemText } from "./problem-text";
 import { RefreshControl } from "./RefreshControl";
+import { incompleteTitle, unreadCell } from "./row-cells";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
 const buttonClass =
@@ -43,17 +47,30 @@ export function IssuePagePane({
   visit,
   previous,
   listLabel,
+  login,
   hasKeyboard,
   onNavigate,
 }: {
   visit: IssueVisit;
   previous: IssueDestination | undefined;
   listLabel: string;
+  /** The account GitHub is read as, if known, to name it when unavailable. */
+  login: string | undefined;
   hasKeyboard: boolean;
   onNavigate: (action: IssueNavigation) => void;
 }) {
   const page = useIssuePage(visit.issue.id);
   const screen = { kind: "issue", issueId: visit.issue.id } as const;
+  const retry = useCallback(() => {
+    void window.verdandi.retry({ kind: "issue", issueId: visit.issue.id });
+  }, [visit.issue.id]);
+  const failure =
+    page?.loading.status === "failed" ? page.loading.problem : undefined;
+  // What GitHub no longer shows this account is not shown from before.
+  const shownTitle =
+    failure?.kind === "unavailable"
+      ? undefined
+      : (page?.issue?.title ?? visit.issue.title);
   const scroller = useRef<HTMLDivElement>(null);
   const [initialPlace] = useState(visit.place);
   const restored = useRef(false);
@@ -218,11 +235,14 @@ export function IssuePagePane({
         <span className="flex-1" />
         <RefreshControl
           freshness={(now) =>
-            loadingFreshness(page?.loading ?? { status: "loading" }, now)
+            page
+              ? pageFreshness(page, now)
+              : loadingFreshness({ status: "loading" }, now)
           }
           onRefresh={() => {
             void window.verdandi.refresh(screen);
           }}
+          onRetry={retry}
         />
         {page?.issue && (
           <button
@@ -254,31 +274,66 @@ export function IssuePagePane({
               aria-label="Issue ancestry"
               className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
             >
-              {page.ancestry.map((ancestor, index) => (
-                <span
-                  key={ancestor.id}
-                  className="flex min-w-0 items-center gap-1"
-                >
-                  {index > 0 && <span aria-hidden>/</span>}
-                  <button
-                    type="button"
-                    data-issue-id={ancestor.id}
-                    data-page-cursor={cursor === ancestor.id}
-                    className={cn(
-                      buttonClass,
-                      "max-w-80 truncate",
-                      cursor === ancestor.id &&
-                        "bg-muted group-focus:bg-selection",
-                    )}
-                    title={ancestor.title}
-                    onClick={() => {
-                      open(ancestor);
-                    }}
+              {page.ancestry.map((ancestor, index) => {
+                // A parent issue that has not been read ends the ancestry:
+                // what lies above it is unknown.
+                const unread =
+                  ancestor.unread && unreadCell(ancestor.unread, login);
+                return (
+                  <span
+                    key={ancestor.id}
+                    className="flex min-w-0 items-center gap-1"
                   >
-                    {ancestor.reference} · {ancestor.title}
-                  </button>
-                </span>
-              ))}
+                    {index > 0 && <span aria-hidden>/</span>}
+                    {unread && <span aria-hidden>… /</span>}
+                    <button
+                      type="button"
+                      data-issue-id={ancestor.id}
+                      data-page-cursor={cursor === ancestor.id}
+                      className={cn(
+                        buttonClass,
+                        "flex max-w-80 items-center gap-1",
+                        unread && "opacity-70",
+                        cursor === ancestor.id &&
+                          "bg-muted group-focus:bg-selection",
+                      )}
+                      title={
+                        unread
+                          ? `${ancestor.title}: ${unread.title ?? unread.text}`
+                          : ancestor.title
+                      }
+                      onClick={() => {
+                        open(ancestor);
+                      }}
+                    >
+                      {unread?.failed && <WarningIcon title={unread.text} />}
+                      <span className="truncate">
+                        {ancestor.reference} · {ancestor.title}
+                      </span>
+                    </button>
+                    {unread?.failed && (
+                      <>
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          onClick={retry}
+                        >
+                          Retry
+                        </button>
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          onClick={() => {
+                            window.desktop.openExternal(ancestor.url);
+                          }}
+                        >
+                          Open on GitHub
+                        </button>
+                      </>
+                    )}
+                  </span>
+                );
+              })}
             </nav>
           )}
           <div
@@ -289,35 +344,34 @@ export function IssuePagePane({
               cursor === visit.issue.id && "group-focus:border-selection-edge",
             )}
           >
-            <p className="mb-1 text-xs text-muted-foreground">
+            <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
               {page?.issue
                 ? `${page.issue.repository.owner}/${page.issue.repository.name}${page.issue.reference.startsWith("#") ? page.issue.reference : ""}`
                 : visit.issue.reference}
               {page?.issue?.external && " · external"}
+              {page?.issue?.incomplete && (
+                <WarningIcon title={incompleteTitle(page.issue.incomplete)} />
+              )}
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {page?.issue?.title ?? visit.issue.title}
-            </h1>
+            {shownTitle !== undefined && (
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {shownTitle}
+              </h1>
+            )}
           </div>
           {page?.issue && <IssueMetadataLine issue={page.issue} />}
-          {!page?.issue && page?.loading.status !== "failed" && (
+          {!page?.issue && !failure && (
             <p role="status" className="text-muted-foreground">
               Loading issue…
             </p>
           )}
-          {page?.loading.status === "failed" && (
-            <p role="alert" className="text-destructive">
-              {page.loading.message}{" "}
-              <button
-                type="button"
-                className="underline"
-                onClick={() => {
-                  void window.verdandi.refresh(screen);
-                }}
-              >
-                Retry
-              </button>
-            </p>
+          {failure && (
+            <ProblemNotice
+              problem={failure}
+              login={login}
+              url={visit.issue.url}
+              onRetry={retry}
+            />
           )}
         </div>
         {page?.issue && (
@@ -340,19 +394,36 @@ export function IssuePagePane({
                     row={row}
                     withRepository={false}
                     selected={row.node.issue.id === cursor}
+                    login={login}
                     onSelect={select}
                     onToggle={toggle}
                     onOpen={open}
+                    onRetry={retry}
                   />
                 ))}
               </div>
             ) : (
               <p className="px-6 pb-5 text-muted-foreground">
-                {page.loading.status === "failed"
-                  ? "Sub-issues could not be loaded."
-                  : page.loading.status === "loading"
-                    ? "Loading sub-issues…"
-                    : "No sub-issues"}
+                {page.loading.status === "loading" ? (
+                  "Loading sub-issues…"
+                ) : page.issue.subIssueProgress.total > 0 ? (
+                  // GitHub counts sub-issues it did not list: why, if it
+                  // said, never "none".
+                  <>
+                    {page.issue.incomplete
+                      ? problemText(page.issue.incomplete, login).text
+                      : "GitHub did not list its sub-issues"}
+                    <button
+                      type="button"
+                      onClick={retry}
+                      className="ml-2 underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : (
+                  "No sub-issues"
+                )}
               </p>
             )}
           </section>
@@ -382,7 +453,7 @@ function useIssuePage(issueId: string): IssuePage | undefined {
           issue: undefined,
           ancestry: [],
           subIssues: [],
-          loading: { status: "failed", message },
+          loading: { status: "failed", problem: { kind: "error", message } },
         });
       }
     });

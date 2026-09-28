@@ -2,12 +2,14 @@ import type { Label } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
   colorStyle,
+  incompleteTitle,
   labelColors,
   labelOverflow,
   ownerColors,
   progressCell,
   relationshipCell,
   repositoryChipCell,
+  unreadCell,
 } from "./row-cells";
 
 const labels: Label[] = [
@@ -188,3 +190,68 @@ function luminance(hex: string): number {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
+
+describe("a row for an issue that has not been read", () => {
+  it("says it is loading", () => {
+    expect(unreadCell({ status: "loading" }, "octo-reader")).toEqual({
+      text: "Loading…",
+      title: undefined,
+      failed: false,
+      link: undefined,
+    });
+  });
+
+  it("says it could not be loaded, with why in its tooltip", () => {
+    expect(
+      unreadCell(
+        {
+          status: "failed",
+          problem: { kind: "unreachable", message: "no such host" },
+        },
+        "octo-reader",
+      ),
+    ).toEqual({
+      text: "Could not be loaded",
+      title: "Cannot reach GitHub: no such host",
+      failed: true,
+      link: undefined,
+    });
+  });
+
+  it("says GitHub will not show it to the account, with GitHub's reason and link when it gave them", () => {
+    const url = "https://github.com/orgs/acme/sso?authorization_request=A1";
+    expect(
+      unreadCell(
+        {
+          status: "failed",
+          problem: {
+            kind: "unavailable",
+            access: { kind: "sso", message: "SAML enforcement", url },
+          },
+        },
+        "octo-reader",
+      ),
+    ).toEqual({
+      text: "Unavailable or not accessible with this account (@octo-reader)",
+      title: "SAML enforcement",
+      failed: true,
+      link: { label: "Authorize on GitHub", url },
+    });
+  });
+});
+
+describe("an issue GitHub showed only in part", () => {
+  it("says so, with why", () => {
+    expect(
+      incompleteTitle({
+        kind: "unavailable",
+        access: {
+          kind: "organization-approval",
+          message: "OAuth App access restrictions",
+        },
+      }),
+    ).toBe(
+      "Shown in part: Unavailable or not accessible with this account. OAuth App access restrictions",
+    );
+  });
+});
