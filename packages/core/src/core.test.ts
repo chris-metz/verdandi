@@ -1518,10 +1518,10 @@ describe("leaving a screen", () => {
     core.on("issuePageChanged", (page) => {
       left = page;
     });
-    github.pause();
+    github.pause("fetchIssueDetails");
     void core.openIssuePage("I_acme/api#1");
     await vi.waitFor(() => {
-      expect(github.requestsInFlight).toBe(1);
+      expect(github.received).toContain("fetchIssueDetails acme/api#1");
     });
 
     const list = untilSettled(core, acmeWeb, () => core.openList(acmeWeb));
@@ -6231,4 +6231,353 @@ it("updates All from hand-edited tracking and keeps the last valid scope while s
   expect(outline(await openUntilLoaded(core, all))).toEqual([
     "acme/web #2 Web work",
   ]);
+});
+
+describe("removing tracked repositories", () => {
+  it("moves a removed selection to the next repository, then the previous, then All, keeping views and persisting removal", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: ["acme/api", "acme/web", "acme/tools"].map((name) => ({
+        name,
+      })),
+      views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web label:bug" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    for (const name of ["api", "web", "tools"])
+      github.addRepository(`acme/${name}`, []);
+    const core = createTestCore(github);
+    await core.selectSidebarEntry({
+      kind: "repository",
+      repository: { owner: "acme", name: "web" },
+    });
+
+    expect(
+      await core.removeRepository({ owner: "acme", name: "web" }),
+    ).toMatchObject({ ok: true });
+    expect(await core.getSelectedSidebarEntry()).toEqual({
+      kind: "repository",
+      repository: { owner: "acme", name: "tools" },
+    });
+    expect(
+      await core.removeRepository({ owner: "acme", name: "tools" }),
+    ).toMatchObject({ ok: true });
+    expect(await core.getSelectedSidebarEntry()).toEqual({
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    });
+    expect(
+      await core.removeRepository({ owner: "acme", name: "api" }),
+    ).toMatchObject({ ok: true });
+    expect(await core.getSelectedSidebarEntry()).toEqual({ kind: "all" });
+    expect(await createTestCore(github).getSidebar()).toMatchObject({
+      repositories: [],
+      views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web label:bug" }],
+    });
+  });
+});
+
+it("removes issues from All immediately, keeps related external issues and cached pages, and re-adds with fresh list state", async () => {
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/web" }, { name: "acme/api" }],
+  });
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    { number: 1, title: "API", subIssues: ["acme/web#1"] },
+    { number: 2, title: "Protocol" },
+  ]);
+  github.addRepository("acme/web", [
+    { number: 1, title: "Web" },
+    { number: 2, title: "Parent", subIssues: ["acme/api#2"] },
+    { number: 3, title: "Unrelated" },
+  ]);
+  const core = createTestCore(github);
+  const web = {
+    kind: "repository" as const,
+    repository: { owner: "acme", name: "web" },
+  };
+  await openUntilLoaded(core, web);
+  await core.setAllExpanded(web, false);
+  await core.selectSidebarEntry({ kind: "all" });
+  await openUntilLoaded(core, { kind: "all" });
+  await openPageUntilLoaded(core, "I_acme/web#1");
+  await openPageUntilLoaded(core, "I_acme/web#3");
+  let all: IssueList | undefined;
+  let page: IssuePage | undefined;
+  core.on("listChanged", (list) => {
+    if (list.scope.kind === "all") all = list;
+  });
+  core.on("issuePageChanged", (pushed) => {
+    if (pushed.issueId === "I_acme/web#3") page = pushed;
+  });
+  const reads = github.requestsReceived;
+
+  expect(await core.removeRepository(web.repository)).toEqual({
+    ok: true,
+    selection: { kind: "all" },
+  });
+  expect(all?.loading).toMatchObject({ status: "current", openIssues: 2 });
+  expect(all?.trees.map((node) => node.issue.id)).not.toContain("I_acme/web#3");
+  const api = all?.trees.find((node) => node.issue.id === "I_acme/api#1");
+  expect(readSummary(api?.subIssues[0])).toMatchObject({
+    id: "I_acme/web#1",
+    external: true,
+  });
+  const protocol = all?.trees.find((node) => node.issue.id === "I_acme/api#2");
+  expect(protocol?.parent).toMatchObject({
+    reference: "acme/web#2",
+    external: true,
+  });
+  expect(page?.issue).toMatchObject({ id: "I_acme/web#3", external: true });
+  expect((await openPageUntilLoaded(core, "I_acme/web#1")).issue).toMatchObject(
+    { external: true },
+  );
+  expect(github.requestsReceived).toBe(reads);
+  expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api 2"]);
+
+  await core.addRepositories([web.repository]);
+  expect(sidebarLines(await core.getSidebar())).toEqual([
+    "acme/api 2",
+    "acme/web 3",
+  ]);
+  const readded = await openUntilLoaded(core, web);
+  expect(
+    readded.trees.find((node) => node.issue.id === "I_acme/web#2")?.expanded,
+  ).toBe(true);
+});
+
+it("drops unstarted repository reads and removes it from queued count batches while All keeps loading", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  const names = ["one", "two", "three", "four", "five", "six"];
+  for (const name of names)
+    github.addRepository(`acme/${name}`, [{ number: 1, title: name }]);
+  await writeSettings({
+    version: 1,
+    repositories: names.map((name) => ({ name: `acme/${name}` })),
+  });
+  const core = createTestCore(github);
+  await checkedSetup(core);
+  github.pause();
+  await core.openList({ kind: "all" });
+  await vi.waitFor(() => {
+    expect(github.requestsInFlight).toBe(4);
+  });
+  await core.getSidebar();
+  expect(
+    await core.removeRepository({ owner: "acme", name: "six" }),
+  ).toMatchObject({ ok: true });
+  const settled = untilSettled(core, { kind: "all" }, () => {
+    github.resume();
+    return Promise.resolve();
+  });
+  expect((await settled).trees).toHaveLength(5);
+  await vi.waitFor(() => {
+    expect(github.requestsInFlight).toBe(0);
+  });
+  expect(github.received.some((read) => read.includes("acme/six"))).toBe(false);
+});
+
+it.each([
+  { kind: "repository" as const, repository: { owner: "acme", name: "api" } },
+  { kind: "view" as const, id: "bugs" },
+])(
+  "keeps an unremoved selection and its open issue page (%s)",
+  async (selection) => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", []);
+    github.addRepository("acme/web", [{ number: 1, title: "Reading" }]);
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+      views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web" }],
+    });
+    const core = createTestCore(github);
+    await core.selectSidebarEntry(selection);
+    const before = await core.getSelectedSidebarEntry();
+    const page = await openPageUntilLoaded(core, "I_acme/web#1");
+    const after = await pageUntilSettled(core, page.issueId, async () => {
+      expect(
+        await core.removeRepository({ owner: "acme", name: "web" }),
+      ).toEqual({ ok: true, selection: before });
+    });
+    expect(after.issue).toMatchObject({ id: page.issueId, external: true });
+    expect(after.issue).toEqual({ ...page.issue, external: true });
+    expect(await core.getSelectedSidebarEntry()).toEqual(before);
+  },
+);
+
+it.each([
+  "{broken",
+  JSON.stringify({ version: 2, repositories: [{ name: "acme/api" }] }),
+])(
+  "leaves tracking and selection in place when removal cannot be saved (%s)",
+  async (contents) => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Keep" }]);
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const core = createTestCore(github);
+    const selection = {
+      kind: "repository" as const,
+      repository: { owner: "acme", name: "api" },
+    };
+    await core.selectSidebarEntry(selection);
+    await openUntilLoaded(core, selection);
+    await writeFile(join(home, "settings.json"), contents);
+    expect(await core.removeRepository(selection.repository)).toMatchObject({
+      ok: false,
+    });
+    expect(await core.getSelectedSidebarEntry()).toEqual(selection);
+    expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api 1"]);
+    expect(await readFile(join(home, "settings.json"), "utf8")).toBe(contents);
+  },
+);
+
+it("drops queued sub-issue reads that only the removed repository's All tree needed", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  const children = Array.from({ length: 501 }, (_, index) => ({
+    number: index + 2,
+    title: `Sub-issue ${String(index)}`,
+    state: "closed" as const,
+  }));
+  github.addRepository("acme/api", [
+    {
+      number: 1,
+      title: "Parent",
+      subIssues: children.map(({ number }) => `acme/api#${String(number)}`),
+    },
+    ...children,
+  ]);
+  await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+  const core = createTestCore(github);
+  await checkedSetup(core);
+  github.pause("fetchIssues");
+  await core.openList({ kind: "all" });
+  await vi.waitFor(() => {
+    expect(github.requestsInFlight).toBe(4);
+  });
+  await core.removeRepository({ owner: "acme", name: "api" });
+  github.resume();
+  await vi.waitFor(() => {
+    expect(github.requestsInFlight).toBe(0);
+  });
+  expect(github.received.some((read) => read.includes("acme/api#502"))).toBe(
+    false,
+  );
+  expect((await openUntilLoaded(core, { kind: "all" })).trees).toEqual([]);
+});
+
+it("removes only the requested repository identity when its old name has been reused", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", []);
+  await writeSettings({
+    version: 1,
+    repositories: [
+      { name: "acme/api", id: 42 },
+      { name: "acme/api", id: 99 },
+    ],
+  });
+  const core = createTestCore(github);
+  await core.selectSidebarEntry({
+    kind: "repository",
+    repository: { owner: "acme", name: "api" },
+  });
+  expect(
+    await core.removeRepository({ owner: "acme", name: "api", id: 99 }),
+  ).toMatchObject({ ok: true });
+  expect(await core.getSidebar()).toMatchObject({
+    repositories: [{ repository: { owner: "acme", name: "api", id: 42 } }],
+  });
+  expect(await core.getSelectedSidebarEntry()).toEqual({
+    kind: "repository",
+    repository: { owner: "acme", name: "api" },
+  });
+});
+
+it("keeps the restored selection's identity for keyboard removal when an address is reused", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", []);
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api", id: 99 }],
+  });
+  const core = createTestCore(github);
+  await core.selectSidebarEntry({
+    kind: "repository",
+    repository: { owner: "acme", name: "api" },
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [
+      { name: "acme/api", id: 42 },
+      { name: "acme/api", id: 99 },
+    ],
+  });
+  const restarted = createTestCore(github);
+  const selection = await restarted.getSelectedSidebarEntry();
+  if (selection.kind !== "repository")
+    throw new Error("Expected repository selection");
+  expect(await restarted.removeRepository(selection.repository)).toMatchObject({
+    ok: true,
+  });
+  expect(await restarted.getSidebar()).toMatchObject({
+    repositories: [{ repository: { owner: "acme", name: "api", id: 42 } }],
+  });
+});
+
+it("loads a removed repository's parent when a remaining in-flight response reveals it later", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  const children = Array.from({ length: 501 }, (_, index) => ({
+    number: index + 2,
+    title: `Child ${String(index)}`,
+    state: "closed" as const,
+    ...(index === 500 ? { subIssues: ["acme/web#1"] } : {}),
+  }));
+  github.addRepository("acme/api", [
+    {
+      number: 1,
+      title: "Removed parent",
+      subIssues: children.map(({ number }) => `acme/api#${String(number)}`),
+    },
+    ...children,
+  ]);
+  github.addRepository("acme/web", [{ number: 1, title: "Remaining child" }]);
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+  });
+  const heldIssues = Promise.withResolvers<undefined>();
+  const heldWeb = Promise.withResolvers<undefined>();
+  const fetchIssues = github.fetchIssues.bind(github);
+  const fetchOpenIssues = github.fetchOpenIssues.bind(github);
+  let issueReads = 0;
+  github.fetchIssues = async (ids) => {
+    issueReads++;
+    const answer = await fetchIssues(ids);
+    await heldIssues.promise;
+    return answer;
+  };
+  github.fetchOpenIssues = async (repository, after) => {
+    const answer = await fetchOpenIssues(repository, after);
+    if (repository.name === "web") await heldWeb.promise;
+    return answer;
+  };
+  const core = createTestCore(github);
+  await checkedSetup(core);
+  await core.openList({ kind: "all" });
+  try {
+    await vi.waitFor(() => {
+      expect(issueReads).toBe(3);
+    });
+    await core.removeRepository({ owner: "acme", name: "api" });
+  } finally {
+    heldWeb.resolve(undefined);
+    heldIssues.resolve(undefined);
+  }
+  const list = await openUntilLoaded(core, { kind: "all" });
+  expect(list.trees).toHaveLength(1);
+  expect(list.trees[0]?.parent).toMatchObject({
+    id: "I_acme/api#502",
+    external: true,
+  });
+  expect(list.trees[0]?.parent?.unread).toBeUndefined();
 });

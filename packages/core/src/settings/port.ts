@@ -1,5 +1,6 @@
 import type {
   RepositoryAddress,
+  TrackedRepository,
   SavedView,
   SidebarEntryKey,
   SidebarDestination,
@@ -31,6 +32,10 @@ export interface SettingsStorage {
   addRepositories(
     repositories: readonly (RepositoryAddress & { id: number })[],
   ): Promise<SettingsChangeResult>;
+  /** Removes this sidebar entry; views are kept verbatim. */
+  removeRepository(
+    repository: TrackedRepository,
+  ): Promise<SettingsChangeResult>;
   /** Creates the file empty if there is none; an existing one stays as it is. */
   createIfMissing(): Promise<SettingsChangeResult>;
 }
@@ -38,7 +43,7 @@ export interface SettingsStorage {
 /** Portable user data as the core and sidebar use it. */
 export interface Settings {
   /** The tracked repositories, in sidebar order. */
-  repositories: (RepositoryAddress & { id?: number })[];
+  repositories: TrackedRepository[];
   views: SavedView[];
 }
 

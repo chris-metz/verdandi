@@ -328,3 +328,40 @@ it("moves a view only within Views, even when views have the same name", () => {
     destination: { direction: "down" },
   });
 });
+
+it("asks to remove only a repository with unmodified Backspace in the sidebar", () => {
+  expect(press(key("Backspace"), { selected: "api" })).toEqual({
+    kind: "remove-repository",
+    repository: { owner: "acme", name: "api" },
+  });
+  expect(press(key("Delete"), { selected: "api" })).toBeUndefined();
+  expect(
+    press(key("Backspace"), { selected: "api", focused: "main" }),
+  ).toBeUndefined();
+  for (const modifiers of [
+    { metaKey: true },
+    { ctrlKey: true },
+    { altKey: true },
+    { shiftKey: true },
+  ]) {
+    expect(
+      press(key("Backspace", modifiers), { selected: "api" }),
+    ).toBeUndefined();
+  }
+  for (const selected of [
+    { kind: "all" as const },
+    {
+      kind: "view" as const,
+      view: { id: "bugs", name: "Bugs", query: "label:bug" },
+    },
+  ]) {
+    expect(
+      commandForWindowKey(key("Backspace"), {
+        focused: "sidebar",
+        selected,
+        entries: [selected],
+        modifier: macOS,
+      }),
+    ).toBeUndefined();
+  }
+});

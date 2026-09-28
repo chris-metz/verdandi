@@ -25,3 +25,8 @@ export function rememberedPlace(scope: Scope): ListPlace {
 export function rememberPlace(scope: Scope, place: ListPlace): void {
   places.set(scopeLabel(scope), place);
 }
+
+/** Removing an entry discards its cursor and scroll position. */
+export function forgetPlace(scope: Scope): void {
+  places.delete(scopeLabel(scope));
+}

@@ -1,6 +1,7 @@
 import type {
   SidebarEntryKey,
   SidebarDestination,
+  RepositoryAddress,
 } from "@verdandi/core/contract";
 import type { Platform } from "../../shared/ipc";
 import { sameScope, type SidebarScope as Scope } from "./scope";
@@ -25,6 +26,7 @@ export type WindowCommand =
   | { kind: "select"; scope: Scope }
   | { kind: "refresh" }
   | { kind: "add-repository" }
+  | { kind: "remove-repository"; repository: RepositoryAddress }
   | {
       kind: "reorder";
       entry: SidebarEntryKey;
@@ -106,6 +108,9 @@ export function commandForWindowKey(
   if (key === "r") return { kind: "refresh" };
   if (key === "a") return { kind: "add-repository" };
   if (focused !== "sidebar") return undefined;
+  if (key === "Backspace" && !shiftKey && selected?.kind === "repository") {
+    return { kind: "remove-repository", repository: selected.repository };
+  }
   const index =
     selected === undefined
       ? -1

@@ -19,7 +19,7 @@ import { createIssuePages, type IssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
 import { isTransient, problemOf } from "./problems.ts";
-import { qualifiedReference } from "./repository-address.ts";
+import { qualifiedReference, sameRepository } from "./repository-address.ts";
 import {
   createRepositoryPicker,
   type RepositoryPicker,
@@ -183,7 +183,11 @@ export function createCore({
       const access = await setup.access();
       const result = await queue.run(readPools[read], urgency, async () => {
         const tag = setup.accountTag();
-        const response = await send(access, read, args);
+        const response = await send(
+          access,
+          read,
+          typeof args === "function" ? args() : args,
+        );
         if (response.viewerLogin !== undefined) {
           setup.answeredAs(response.viewerLogin, tag);
         }
@@ -282,14 +286,20 @@ export function createCore({
   }
 
   let session = createSession();
-  const stopWatchingSettings = settings.watch(() => {
-    void session.sidebar.reload();
-    session.lists.settingsChanged();
+  const selection = createSidebarSelection(settings, localState);
+  async function settingsChanged() {
+    await session.lists.settingsChanged();
+    await session.pages.settingsChanged();
+    await session.sidebar.reload();
     session.picker.settingsChanged();
+    queue.sweep();
+  }
+  const stopWatchingSettings = settings.watch(() => {
+    void settingsChanged();
   });
 
   return {
-    ...createSidebarSelection(settings, localState),
+    ...selection,
     async getWindowState() {
       return (await localState.read()).window;
     },
@@ -302,13 +312,11 @@ export function createCore({
       queue.cancel();
     },
     reloadSettings() {
-      session.lists.settingsChanged();
-      return session.sidebar.reload();
+      return settingsChanged();
     },
     async resetSettings() {
       const result = await settings.reset();
-      session.lists.settingsChanged();
-      await session.sidebar.reload();
+      await settingsChanged();
       return result;
     },
     openRepositoryPicker() {
@@ -327,10 +335,47 @@ export function createCore({
     async addRepositories(repositories) {
       const additions = await session.picker.add(repositories);
       if (additions.some(({ status }) => status === "added")) {
-        session.lists.settingsChanged();
-        await session.sidebar.reload();
+        await settingsChanged();
       }
       return additions;
+    },
+    async removeRepository(repository) {
+      const selected = await selection.getSelectedSidebarEntry();
+      const { selectedEntry: storedSelection } = await localState.read();
+      const { value } = await settings.read();
+      // Restored selections expose their current address. For the keyboard
+      // action, keep the stored identity even if that old name was reused.
+      const id =
+        repository.id ??
+        (selected.kind === "repository" &&
+        sameRepository(selected.repository, repository) &&
+        storedSelection?.kind === "repository" &&
+        "id" in storedSelection
+          ? storedSelection.id
+          : undefined);
+      const index = value.repositories.findIndex((entry) =>
+        id !== undefined ? entry.id === id : sameRepository(entry, repository),
+      );
+      const tracked = value.repositories[index];
+      if (!tracked) return { ok: true, selection: selected };
+      const result = await settings.removeRepository(tracked);
+      if (!result.ok) return result;
+      if (
+        selected.kind === "repository" &&
+        (storedSelection?.kind === "repository" && "id" in storedSelection
+          ? storedSelection.id === tracked.id
+          : sameRepository(selected.repository, tracked))
+      ) {
+        const neighbour =
+          value.repositories[index + 1] ?? value.repositories[index - 1];
+        await selection.selectSidebarEntry(
+          neighbour
+            ? { kind: "repository", repository: neighbour }
+            : { kind: "all" },
+        );
+      }
+      await settingsChanged();
+      return { ok: true, selection: await selection.getSelectedSidebarEntry() };
     },
     async skipRepositoryPicker() {
       const result = await settings.createIfMissing();

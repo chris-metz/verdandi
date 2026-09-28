@@ -3,7 +3,9 @@ import type {
   SidebarEntries,
   SidebarEntryKey,
   SidebarDestination,
+  TrackedRepository,
 } from "@verdandi/core/contract";
+import { ContextMenu } from "@base-ui/react/context-menu";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
@@ -30,6 +32,7 @@ export function Sidebar({
   onSelect,
   onReorder,
   onAddRepository,
+  onRemoveRepository,
   settingsError,
   focused,
   shortcutsShown,
@@ -48,6 +51,7 @@ export function Sidebar({
   ) => Promise<void>;
   /** Opens the repository picker. */
   onAddRepository: () => void;
+  onRemoveRepository: (repository: TrackedRepository) => void;
   settingsError: string | undefined;
   /** Whether the sidebar has the keyboard. */
   focused: boolean;
@@ -83,6 +87,15 @@ export function Sidebar({
         key={key}
         item={item}
         draggable={writable && entry !== undefined}
+        onRemove={
+          item.scope.kind === "repository"
+            ? () => {
+                if (item.scope.kind === "repository")
+                  onRemoveRepository(item.scope.repository);
+              }
+            : undefined
+        }
+        removable={writable}
         dropSide={drop?.key === key ? drop.side : undefined}
         onDragStart={(event) => {
           dragged.current = entry;
@@ -240,6 +253,8 @@ function Entry({
   onSelect,
   draggable,
   dropSide,
+  onRemove,
+  removable,
   ...dragHandlers
 }: {
   item: SidebarItem;
@@ -249,13 +264,15 @@ function Entry({
   onSelect: () => void;
   draggable: boolean;
   dropSide: "before" | "after" | undefined;
+  onRemove: (() => void) | undefined;
+  removable: boolean;
   onDragStart: React.DragEventHandler<HTMLLIElement>;
   onDragOver: React.DragEventHandler<HTMLLIElement>;
   onDrop: React.DragEventHandler<HTMLLIElement>;
   onDragEnd: React.DragEventHandler<HTMLLIElement>;
 }) {
   const { description, entry } = presentScope(scope);
-  return (
+  const row = (
     <li
       role="option"
       aria-selected={selected}
@@ -316,6 +333,25 @@ function Entry({
         </span>
       )}
     </li>
+  );
+  if (!onRemove) return row;
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger render={row} />
+      <ContextMenu.Portal>
+        <ContextMenu.Positioner className="z-50">
+          <ContextMenu.Popup className="min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md outline-none">
+            <ContextMenu.Item
+              disabled={!removable}
+              onClick={onRemove}
+              className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50"
+            >
+              Remove repository…
+            </ContextMenu.Item>
+          </ContextMenu.Popup>
+        </ContextMenu.Positioner>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 

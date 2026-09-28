@@ -2,6 +2,7 @@ import type {
   SidebarEntryKey,
   SidebarDestination,
   Screen,
+  TrackedRepository,
 } from "@verdandi/core/contract";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,8 @@ import {
   type Pane,
 } from "./pane-navigation";
 import { RepositoryPicker } from "./RepositoryPicker";
+import { RemoveRepositoryDialog } from "./RemoveRepositoryDialog";
+import { forgetPlace } from "./list-places";
 import { sameScope, scopeLabel, type SidebarScope as Scope } from "./scope";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
@@ -59,6 +62,8 @@ export function App() {
   const sidebarPane = useRef<HTMLElement>(null);
   const mainPane = useRef<HTMLElement>(null);
   const [picking, setPicking] = useState(false);
+  const [removing, setRemoving] = useState<TrackedRepository>();
+  const removalPending = useRef(false);
   const login =
     setup?.status === "ready" && setup.account.status === "known"
       ? setup.account.account.login
@@ -87,6 +92,15 @@ export function App() {
   function closePicker() {
     setPicking(false);
     focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+  }
+
+  function confirmRemoval(repository: TrackedRepository) {
+    if (
+      !blocked &&
+      sidebar?.status === "read" &&
+      sidebar.settings.status === "writable"
+    )
+      setRemoving(repository);
   }
 
   /** Selects an entry, whose list starts without issue pages on top. */
@@ -167,9 +181,9 @@ export function App() {
       const current = entryOrder(changed).find((item) =>
         sameScope(item.scope, selected),
       )?.scope;
-      if (!current) select({ kind: "all" });
+      if (!current && !removalPending.current) select({ kind: "all" });
       else if (
-        current.kind === "view" &&
+        current?.kind === "view" &&
         selected.kind === "view" &&
         (current.view.name !== selected.view.name ||
           current.view.query !== selected.view.query)
@@ -193,11 +207,11 @@ export function App() {
     function onKeyDown(event: KeyboardEvent) {
       // A key the focused pane has handled is not the window's, and none is
       // while the setup blocker or the picker is up.
-      if (event.defaultPrevented || blocked || picking) return;
+      if (event.defaultPrevented || blocked || picking || removing) return;
       if (
         event.target instanceof Element &&
         event.target.closest(
-          "button, input, textarea, select, [contenteditable=true]",
+          "button, input, textarea, select, [contenteditable=true], [role=menu]",
         )
       )
         return;
@@ -226,6 +240,9 @@ export function App() {
           break;
         case "add-repository":
           openPicker();
+          break;
+        case "remove-repository":
+          confirmRemoval(command.repository);
           break;
       }
     }
@@ -257,6 +274,7 @@ export function App() {
             onSelect={select}
             onReorder={reorder}
             onAddRepository={openPicker}
+            onRemoveRepository={confirmRemoval}
             settingsError={settingsError}
             focused={focused === "sidebar"}
             shortcutsShown={shortcutsShown}
@@ -293,7 +311,9 @@ export function App() {
               stack={stack}
               login={login}
               onNavigate={navigate}
-              hasKeyboard={focused === "main"}
+              hasKeyboard={
+                focused === "main" && !removing && !picking && !blocked
+              }
             />
           ) : (
             <p className="m-auto text-muted-foreground">
@@ -315,6 +335,29 @@ export function App() {
           }
           login={login}
           onClose={closePicker}
+        />
+      )}
+      {removing && (
+        <RemoveRepositoryDialog
+          repository={removing}
+          returnFocus={sidebarPane}
+          onRemove={async () => {
+            removalPending.current = true;
+            try {
+              return await window.verdandi.removeRepository(removing);
+            } finally {
+              removalPending.current = false;
+            }
+          }}
+          onRemoved={(selection) => {
+            const scope = { kind: "repository" as const, repository: removing };
+            forgetPlace(scope);
+            if (selected && sameScope(selected, scope)) select(selection);
+            setRemoving(undefined);
+          }}
+          onClose={() => {
+            setRemoving(undefined);
+          }}
         />
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}

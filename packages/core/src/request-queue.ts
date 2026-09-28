@@ -77,11 +77,12 @@ export const interrupted = {
  * Sends one GitHub read through the core's request queue, which schedules
  * them all; the core's modules take this instead of the port itself. The
  * queue asks `urgency` whenever it picks what to send next: a request that
- * nothing needs any more by then is dropped, unsent, as interrupted.
+ * nothing needs any more by then is dropped, unsent, as interrupted. An
+ * argument factory trims a shared batch to what is needed when it is sent.
  */
 export type SendRequest = <R extends GitHubRead>(
   read: R,
-  args: Parameters<GitHubAccess[R]>,
+  args: Parameters<GitHubAccess[R]> | (() => Parameters<GitHubAccess[R]>),
   urgency: () => Urgency | undefined,
 ) => Promise<RequestResult<ReadValue<R>>>;
 

@@ -60,6 +60,8 @@ import type { SettingsStorage } from "./settings/port.ts";
  * lacks something, until it shows again.
  */
 export interface IssuePages {
+  /** Updates external status on cached pages without reading GitHub again. */
+  settingsChanged(): Promise<void>;
   /**
    * Pushes an issue page at once. If it has not loaded, loads it; if it is
    * older than five minutes, reads it again while it shows what it has;
@@ -582,6 +584,14 @@ export function createIssuePages({
   }
 
   return {
+    async settingsChanged() {
+      const { value } = await settings.read();
+      const tracked = new Set(value.repositories.map(repositoryKey));
+      for (const state of pages.values()) {
+        state.tracked = tracked;
+        push(build(state));
+      }
+    },
     requestsChanged() {
       const screen = shown();
       const state = screen?.kind === "issue" && pages.get(screen.issueId);

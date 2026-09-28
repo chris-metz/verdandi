@@ -6,7 +6,12 @@ import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { atOrAfter, type Clock, type Moment } from "./moments.ts";
 import { problemOf } from "./problems.ts";
 import { repositoryKey } from "./repository-address.ts";
-import { mostUrgent, type SendRequest, type Urgency } from "./request-queue.ts";
+import {
+  interrupted,
+  mostUrgent,
+  type SendRequest,
+  type Urgency,
+} from "./request-queue.ts";
 
 /**
  * Reads issues from GitHub into the one store, for every list: a
@@ -34,7 +39,7 @@ export interface IssueLoader {
   readIssues(
     ids: readonly string[],
     since: Moment,
-    urgency: () => Urgency | undefined,
+    urgency: (id: string) => Urgency | undefined,
   ): Promise<void>[];
   /** Whether an issue is being read by ID. */
   isReading(id: string): boolean;
@@ -101,7 +106,7 @@ interface ReadUnderWay {
   answer: Promise<void>;
   askedAt: Moment;
   /** How urgently each list that waits for it needs it. */
-  needs: (() => Urgency | undefined)[];
+  needs: ((id: string) => Urgency | undefined)[];
 }
 
 export function createIssueLoader({
@@ -123,17 +128,30 @@ export function createIssueLoader({
    */
   function read(
     ids: string[],
-    urgency: () => Urgency | undefined,
+    urgency: (id: string) => Urgency | undefined,
   ): Promise<void> {
     const askedAt = clock();
     const needs = [urgency];
-    const answer = request("fetchIssues", [ids], () =>
-      mostUrgent(needs.map((need) => need())),
+    const urgencyOf = (id: string) => mostUrgent(needs.map((need) => need(id)));
+    let sent: string[] = [];
+    const answer = request(
+      "fetchIssues",
+      () => {
+        sent = ids.filter((id) => urgencyOf(id) !== undefined);
+        return [sent];
+      },
+      () => mostUrgent(ids.map(urgencyOf)),
     ).then((result) => {
       for (const id of ids) {
         if (reading.get(id)?.answer === answer) reading.delete(id);
       }
-      keepAnswer(store, ids, result, askedAt);
+      keepAnswer(store, sent, result, askedAt);
+      keepAnswer(
+        store,
+        ids.filter((id) => !sent.includes(id)),
+        interrupted,
+        askedAt,
+      );
     });
     const underWay = { answer, askedAt, needs };
     for (const id of ids) reading.set(id, underWay);

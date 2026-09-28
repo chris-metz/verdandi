@@ -255,6 +255,16 @@ export function createSettingsFile(
         }
       });
     },
+    removeRepository(repository) {
+      return change((document) => {
+        const name = nameWithOwner(repository).toLowerCase();
+        document.repositories = document.repositories.filter((entry) =>
+          repository.id !== undefined
+            ? entry.id !== repository.id
+            : entry.id !== undefined || entry.name.toLowerCase() !== name,
+        );
+      });
+    },
     createIfMissing() {
       return serial(async () => {
         const empty: Document = { version: 1, repositories: [], views: [] };

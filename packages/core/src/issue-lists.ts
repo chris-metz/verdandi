@@ -49,7 +49,7 @@ import type { SettingsStorage } from "./settings/port.ts";
  */
 export interface IssueLists {
   /** Applies hand-edited tracking to cached lists, loading only the shown one. */
-  settingsChanged(): void;
+  settingsChanged(): Promise<void>;
   /**
    * Pushes a scope's list at once. If it has not loaded, loads it, pushing
    * the list after each response; if it is older than five minutes, reads it
@@ -196,7 +196,9 @@ export function createIssueLists({
   function isShown(list: ListState): boolean {
     const screen = shown();
     return (
-      screen?.kind === "list" && scopeKey(screen.scope) === scopeKey(list.scope)
+      screen?.kind === "list" &&
+      scopeKey(screen.scope) === scopeKey(list.scope) &&
+      lists.get(scopeKey(list.scope)) === list
     );
   }
 
@@ -334,6 +336,7 @@ export function createIssueLists({
 
   /** Pushes a list as it is now. */
   function update(list: ListState) {
+    if (lists.get(scopeKey(list.scope)) !== list) return;
     push(arrange(list));
   }
 
@@ -354,7 +357,21 @@ export function createIssueLists({
     ];
     if (ids.length === 0) return;
     for (const id of ids) list.requested.add(id);
-    const urgency = () => urgencyOf(list, part);
+    let tracked = list.tracked;
+    let needed: Set<string> | undefined;
+    const urgency = (id: string) => {
+      // Tracking can change while a batch waits. Keep only issues that
+      // still belong to this forest, including its external relationships.
+      if (tracked !== list.tracked) {
+        tracked = list.tracked;
+        const forest = forestOf(list, tracked ?? []);
+        needed = new Set([
+          ...readIssues(forest.trees),
+          ...forest.missing.map((issue) => issue.id),
+        ]);
+      }
+      return needed && !needed.has(id) ? undefined : urgencyOf(list, part);
+    };
     for (const read of loader.readIssues(ids, list.validFrom, urgency)) {
       void awaitRead(list, read);
     }
@@ -362,9 +379,18 @@ export function createIssueLists({
 
   /** Updates a list once a read of issues it waits for has settled. */
   async function awaitRead(list: ListState, read: Promise<void>) {
+    const tracked = list.tracked;
     list.pendingRequests++;
     await read;
     list.pendingRequests--;
+    if (tracked !== list.tracked) {
+      // A remaining repository may reveal a relationship after removal
+      // dropped its earlier read. Let the forest ask for it if needed again.
+      for (const id of list.requested) {
+        if (store.failure(id)?.problem.kind === "interrupted")
+          list.requested.delete(id);
+      }
+    }
     update(list);
   }
 
@@ -375,6 +401,7 @@ export function createIssueLists({
   async function start(list: ListState) {
     list.readingTracked = true;
     const read = await settings.read();
+    if (lists.get(scopeKey(list.scope)) !== list) return;
     list.readingTracked = false;
     if (
       !read.ok &&
@@ -561,8 +588,23 @@ export function createIssueLists({
   }
 
   return {
-    settingsChanged() {
-      for (const list of lists.values()) void start(list);
+    async settingsChanged() {
+      const { value } = await settings.read();
+      for (const [key, list] of lists) {
+        const { scope } = list;
+        if (
+          scope.kind === "repository" &&
+          !value.repositories.some((repository) =>
+            sameRepository(repository, scope.repository),
+          )
+        ) {
+          lists.delete(key);
+          continue;
+        }
+        list.tracked = value.repositories;
+        update(list);
+        if (isShown(list)) void start(list);
+      }
     },
     open(scope) {
       const known = lists.get(scopeKey(scope));

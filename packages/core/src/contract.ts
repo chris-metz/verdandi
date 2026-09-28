@@ -167,6 +167,9 @@ export interface RepositoryAddress {
   name: string;
 }
 
+/** A stored repository, with its stable GitHub identity once verified. */
+export type TrackedRepository = RepositoryAddress & { id?: number };
+
 /** The sidebar's entries, or why the settings file could not be read. */
 export type SidebarEntries =
   | {
@@ -230,7 +233,7 @@ export interface AllEntry {
 /** A tracked repository as the sidebar lists it. */
 export interface RepositoryEntry {
   /** Its address, as the settings file names it. */
-  repository: RepositoryAddress;
+  repository: TrackedRepository;
   openIssues: OpenIssueCount;
 }
 
@@ -887,6 +890,17 @@ export interface CoreRequests {
     repositories: RepositoryAddress[],
   ) => Promise<RepositoryAddition[]>;
   /**
+   * Removes a tracked repository after the interface has confirmed it.
+   * Views and cached issues stay; its list state is discarded and All is
+   * updated. A removed selection moves to the next repository, the previous
+   * if last, or All. Open issue pages stay, with external status updated.
+   */
+  removeRepository: (
+    repository: TrackedRepository,
+  ) => Promise<
+    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
+  >;
+  /**
    * **Skip** on first launch: creates the settings file empty, so that the
    * picker does not open on its own again. An existing file is left as it
    * is.
@@ -1016,6 +1030,7 @@ const requests: Record<keyof CoreRequests, true> = {
   closeRepositoryPicker: true,
   checkRepository: true,
   addRepositories: true,
+  removeRepository: true,
   skipRepositoryPicker: true,
 };
 const events: Record<CoreEventName, true> = {

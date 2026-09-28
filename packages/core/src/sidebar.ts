@@ -195,13 +195,26 @@ export function createSidebar({
   /** Asks GitHub for some repositories' counts in one request. */
   async function requestCounts(repositories: RepositoryAddress[]) {
     const askedAt = clock();
+    const stillTracked = () =>
+      repositories.filter((repository) =>
+        tracked?.some((entry) => sameRepository(entry, repository)),
+      );
+    let sent: RepositoryAddress[] = [];
     const result = await request(
       "fetchRepositorySummaries",
-      [repositories],
-      () => "background",
+      () => {
+        sent = stillTracked();
+        return [sent];
+      },
+      () => (stillTracked().length > 0 ? "background" : undefined),
     );
+    // A removed entry is not left asking if it is added again later.
+    for (const repository of repositories) {
+      const count = counts.get(repositoryKey(repository));
+      if (count) count.asking = false;
+    }
     let changed = false;
-    for (const [index, repository] of repositories.entries()) {
+    for (const [index, repository] of sent.entries()) {
       const count = counts.get(repositoryKey(repository));
       if (!count) continue;
       count.asking = false;
