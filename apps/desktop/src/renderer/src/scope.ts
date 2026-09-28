@@ -1,4 +1,11 @@
-import type { RepositoryAddress, Scope } from "@verdandi/core/contract";
+import type {
+  RepositoryAddress,
+  Scope,
+  SavedView,
+} from "@verdandi/core/contract";
+
+/** A saved view can be arranged before its search list is opened. */
+export type SidebarScope = Scope | { kind: "view"; view: SavedView };
 
 /** How the window presents a scope, wherever it shows it. */
 export interface ScopePresentation {
@@ -15,12 +22,13 @@ export interface ScopePresentation {
    */
   entry:
     | { section: "pinned"; name: string }
-    | { section: "repositories"; name: string; owner: string };
+    | { section: "repositories"; name: string; owner: string }
+    | { section: "views"; name: string; query: string };
   /** Whether each row of its list names the issue's repository with a chip. */
   repositoryChips: boolean;
 }
 
-export function presentScope(scope: Scope): ScopePresentation {
+export function presentScope(scope: SidebarScope): ScopePresentation {
   if (scope.kind === "all") {
     return {
       label: "All",
@@ -29,6 +37,17 @@ export function presentScope(scope: Scope): ScopePresentation {
       repositoryChips: true,
     };
   }
+  if (scope.kind === "view")
+    return {
+      label: scope.view.name,
+      description: scope.view.query,
+      entry: {
+        section: "views",
+        name: scope.view.name,
+        query: scope.view.query,
+      },
+      repositoryChips: true,
+    };
   const { repository } = scope;
   return {
     label: repositoryLabel(repository),
@@ -43,12 +62,14 @@ export function presentScope(scope: Scope): ScopePresentation {
 }
 
 /** How the window names a scope, which also tells scopes apart. */
-export function scopeLabel(scope: Scope): string {
-  return presentScope(scope).label;
+export function scopeLabel(scope: SidebarScope): string {
+  return scope.kind === "view"
+    ? `view:${scope.view.id}`
+    : presentScope(scope).label;
 }
 
 /** Whether two scopes are the same, e.g. a pushed list's and the selected. */
-export function sameScope(a: Scope, b: Scope): boolean {
+export function sameScope(a: SidebarScope, b: SidebarScope): boolean {
   return scopeLabel(a) === scopeLabel(b);
 }
 

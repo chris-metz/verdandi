@@ -1,4 +1,8 @@
-import type { Scope, Screen } from "@verdandi/core/contract";
+import type {
+  SidebarEntryKey,
+  SidebarDestination,
+  Screen,
+} from "@verdandi/core/contract";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { navigateIssues } from "./issue-navigation";
@@ -9,7 +13,7 @@ import {
   shortcutModifier,
   type Pane,
 } from "./pane-navigation";
-import { sameScope, scopeLabel } from "./scope";
+import { sameScope, scopeLabel, type SidebarScope as Scope } from "./scope";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder } from "./sidebar-entries";
@@ -44,12 +48,29 @@ export function App() {
     if (shownIssueId !== undefined) {
       return { kind: "issue", issueId: shownIssueId };
     }
-    return selected && { kind: "list", scope: selected };
+    return selected && selected.kind !== "view"
+      ? { kind: "list", scope: selected }
+      : undefined;
   }, [selected, shownIssueId]);
   const [focused, setFocused] = useState<Pane>("sidebar");
   const shortcutsShown = useShortcutsShown();
+  const [settingsError, setSettingsError] = useState<string>();
   const sidebarPane = useRef<HTMLElement>(null);
   const mainPane = useRef<HTMLElement>(null);
+
+  async function reorder(
+    entry: SidebarEntryKey,
+    destination: SidebarDestination,
+  ) {
+    if (sidebar?.status !== "read" || sidebar.settings.status !== "writable")
+      return;
+    try {
+      const result = await window.verdandi.reorderSidebar(entry, destination);
+      setSettingsError(result.ok ? undefined : result.message);
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   /** Selects an entry, whose list starts without issue pages on top. */
   function select(scope: Scope) {
@@ -83,6 +104,24 @@ export function App() {
     [],
   );
 
+  // A hand edit or Reset can remove the selected entry or rename a view.
+  useEffect(() =>
+    window.verdandi.on("sidebarChanged", (changed) => {
+      if (!selected || changed.status !== "read") return;
+      const current = entryOrder(changed).find((item) =>
+        sameScope(item.scope, selected),
+      )?.scope;
+      if (!current) select({ kind: "all" });
+      else if (
+        current.kind === "view" &&
+        selected.kind === "view" &&
+        (current.view.name !== selected.view.name ||
+          current.view.query !== selected.view.query)
+      )
+        setSelected(current);
+    }),
+  );
+
   // Back in the window, what is on screen is read again if it is old.
   useEffect(() => {
     function revalidate() {
@@ -99,6 +138,13 @@ export function App() {
       // A key the focused pane has handled is not the window's, and none is
       // while the setup blocker is up.
       if (event.defaultPrevented || blocked) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          "button, input, textarea, select, [contenteditable=true]",
+        )
+      )
+        return;
       const command = commandForWindowKey(event, {
         focused,
         entries,
@@ -115,6 +161,9 @@ export function App() {
           break;
         case "select":
           select(command.scope);
+          break;
+        case "reorder":
+          void reorder(command.entry, command.destination);
           break;
         case "refresh":
           void window.verdandi.refresh(screen);
@@ -147,6 +196,8 @@ export function App() {
             items={items}
             selected={selected}
             onSelect={select}
+            onReorder={reorder}
+            settingsError={settingsError}
             focused={focused === "sidebar"}
             shortcutsShown={shortcutsShown}
             modifier={modifier}
@@ -167,7 +218,14 @@ export function App() {
             focused === "main" && focusedPaneMark,
           )}
         >
-          {selected ? (
+          {selected?.kind === "view" ? (
+            <header className="border-b p-4">
+              <h1 className="font-semibold">{selected.view.name}</h1>
+              <p className="mt-1 text-muted-foreground">
+                {selected.view.query}
+              </p>
+            </header>
+          ) : selected ? (
             // A new scope starts from a fresh list, never the previous one's.
             <MainArea
               key={scopeLabel(selected)}

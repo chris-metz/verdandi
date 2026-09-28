@@ -1,4 +1,9 @@
-import type { Scope, Setup, SidebarEntries } from "@verdandi/core/contract";
+import type {
+  Setup,
+  SidebarEntries,
+  SidebarEntryKey,
+  SidebarDestination,
+} from "@verdandi/core/contract";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
@@ -8,6 +13,7 @@ import {
   sameScope,
   scopeLabel,
   type ScopePresentation,
+  type SidebarScope as Scope,
 } from "./scope";
 import { countLabel, type SidebarItem } from "./sidebar-entries";
 
@@ -22,6 +28,8 @@ export function Sidebar({
   items,
   selected,
   onSelect,
+  onReorder,
+  settingsError,
   focused,
   shortcutsShown,
   modifier,
@@ -33,6 +41,11 @@ export function Sidebar({
   items: readonly SidebarItem[];
   selected: Scope | undefined;
   onSelect: (scope: Scope) => void;
+  onReorder: (
+    entry: SidebarEntryKey,
+    destination: SidebarDestination,
+  ) => Promise<void>;
+  settingsError: string | undefined;
   /** Whether the sidebar has the keyboard. */
   focused: boolean;
   /** Whether entries show their ⌘/Ctrl+1…9 shortcut instead of the count. */
@@ -40,6 +53,10 @@ export function Sidebar({
   modifier: ShortcutModifier;
 }) {
   const nav = useRef<HTMLElement>(null);
+  const dragged = useRef<SidebarEntryKey | undefined>(undefined);
+  const [drop, setDrop] = useState<{ key: string; side: "before" | "after" }>();
+  const writable =
+    sidebar?.status === "read" && sidebar.settings.status === "writable";
 
   // A selection moved by keyboard stays in sight.
   useLayoutEffect(() => {
@@ -51,10 +68,59 @@ export function Sidebar({
   /** An entry, with the shortcut of its place in visual order. */
   function renderEntry(item: SidebarItem) {
     const position = items.indexOf(item);
+    const key = scopeLabel(item.scope);
+    const entry: SidebarEntryKey | undefined =
+      item.scope.kind === "all"
+        ? undefined
+        : item.scope.kind === "view"
+          ? { kind: "view", id: item.scope.view.id }
+          : item.scope;
     return (
       <Entry
-        key={`${String(position)}:${scopeLabel(item.scope)}`}
+        key={key}
         item={item}
+        draggable={writable && entry !== undefined}
+        dropSide={drop?.key === key ? drop.side : undefined}
+        onDragStart={(event) => {
+          dragged.current = entry;
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", key);
+          onSelect(item.scope);
+        }}
+        onDragOver={(event) => {
+          if (!writable || !entry || dragged.current?.kind !== entry.kind)
+            return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setDrop({
+            key,
+            side:
+              event.clientY < bounds.top + bounds.height / 2
+                ? "before"
+                : "after",
+          });
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const source = dragged.current;
+          if (writable && source && entry && source.kind === entry.kind) {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            void onReorder(source, {
+              relativeTo: entry,
+              side:
+                event.clientY < bounds.top + bounds.height / 2
+                  ? "before"
+                  : "after",
+            });
+          }
+          dragged.current = undefined;
+          setDrop(undefined);
+        }}
+        onDragEnd={() => {
+          dragged.current = undefined;
+          setDrop(undefined);
+        }}
         selected={selected !== undefined && sameScope(item.scope, selected)}
         focused={focused}
         shortcut={
@@ -80,6 +146,15 @@ export function Sidebar({
         <ul role="listbox" aria-label="All" className="flex flex-col gap-px">
           {inSection("pinned").map(renderEntry)}
         </ul>
+        {sidebar?.status === "read" &&
+          sidebar.settings.status !== "writable" && (
+            <SettingsProblem status={sidebar.settings} />
+          )}
+        {settingsError && (
+          <p role="alert" className="px-2 py-1 break-words text-destructive">
+            {settingsError}
+          </p>
+        )}
         <SectionHeading>Repositories</SectionHeading>
         {sidebar === undefined ? null : sidebar.status === "failed" ? (
           <p
@@ -101,8 +176,10 @@ export function Sidebar({
             {repositories.map(renderEntry)}
           </ul>
         )}
-        {/* Empty until views arrive. */}
         <SectionHeading>Views</SectionHeading>
+        <ul role="listbox" aria-label="Views" className="flex flex-col gap-px">
+          {inSection("views").map(renderEntry)}
+        </ul>
       </nav>
       <Account setup={setup} />
     </>
@@ -128,12 +205,21 @@ function Entry({
   focused,
   shortcut,
   onSelect,
+  draggable,
+  dropSide,
+  ...dragHandlers
 }: {
   item: SidebarItem;
   selected: boolean;
   focused: boolean;
   shortcut: string | undefined;
   onSelect: () => void;
+  draggable: boolean;
+  dropSide: "before" | "after" | undefined;
+  onDragStart: React.DragEventHandler<HTMLLIElement>;
+  onDragOver: React.DragEventHandler<HTMLLIElement>;
+  onDrop: React.DragEventHandler<HTMLLIElement>;
+  onDragEnd: React.DragEventHandler<HTMLLIElement>;
 }) {
   const { description, entry } = presentScope(scope);
   return (
@@ -142,8 +228,12 @@ function Entry({
       aria-selected={selected}
       title={description}
       onClick={onSelect}
+      draggable={draggable}
+      {...dragHandlers}
       className={cn(
         "flex items-center gap-2 rounded-md px-2 py-1 select-none",
+        dropSide === "before" && "border-t-2 border-t-ring",
+        dropSide === "after" && "border-b-2 border-b-ring",
         entry.section === "pinned" ? "min-h-8" : "min-h-10",
         selected
           ? focused
@@ -174,7 +264,7 @@ function Entry({
             {entry.name}
           </span>
           <span className="truncate text-xs text-muted-foreground">
-            {entry.owner}
+            {entry.section === "repositories" ? entry.owner : entry.query}
           </span>
         </span>
       )}
@@ -193,6 +283,71 @@ function Entry({
         </span>
       )}
     </li>
+  );
+}
+
+function SettingsProblem({
+  status,
+}: {
+  status: Exclude<
+    import("@verdandi/core/contract").SettingsStatus,
+    { status: "writable" }
+  >;
+}) {
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  async function act(action: "reload" | "reset" | "folder") {
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (action === "folder") await window.desktop.showSettingsFolder();
+      else if (action === "reload") await window.verdandi.reloadSettings();
+      else {
+        const result = await window.verdandi.resetSettings();
+        if (!result.ok) setError(result.message);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="my-2 rounded-md border border-destructive/40 p-2 text-xs">
+      <p role="alert" className="break-words whitespace-pre-line">
+        {status.message}
+      </p>
+      {status.status === "invalid" && (
+        <p className="mt-2 text-muted-foreground">
+          Reset keeps a backup and starts empty.
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {(
+          [
+            ["folder", "Show folder"],
+            ["reload", "Reload"],
+            ...(status.status === "invalid" ? [["reset", "Reset"]] : []),
+          ] as const
+        ).map(([action, label]) => (
+          <button
+            key={action}
+            disabled={busy}
+            className="rounded border px-2 py-1 hover:bg-sidebar-accent disabled:opacity-50"
+            onClick={() => {
+              void act(action as "folder" | "reload" | "reset");
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 break-words text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

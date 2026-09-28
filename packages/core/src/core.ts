@@ -90,7 +90,7 @@ export function createCore({
   now = Date.now,
   wait = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
-}: CoreOptions): Contract {
+}: CoreOptions): Contract & { dispose(): void } {
   const events = createEmitter<CoreEvents>();
   const clock = createClock(now);
   const queue = createRequestQueue({
@@ -152,7 +152,7 @@ export function createCore({
       session = createSession();
       events.emit("notice", { kind: "account-changed", previous, account });
       openShown();
-      session.sidebar.reload();
+      void session.sidebar.reload();
     },
   });
 
@@ -262,8 +262,32 @@ export function createCore({
   }
 
   let session = createSession();
+  const stopWatchingSettings = settings.watch(() => {
+    void session.sidebar.reload();
+    session.lists.settingsChanged();
+  });
 
   return {
+    dispose() {
+      stopWatchingSettings();
+      session.end();
+      queue.cancel();
+    },
+    reloadSettings() {
+      session.lists.settingsChanged();
+      return session.sidebar.reload();
+    },
+    async resetSettings() {
+      const result = await settings.reset();
+      session.lists.settingsChanged();
+      await session.sidebar.reload();
+      return result;
+    },
+    async reorderSidebar(entry, destination) {
+      const result = await settings.reorder(entry, destination);
+      await session.sidebar.reload();
+      return result;
+    },
     retryBlockingBranch(issueId, cardId, side) {
       session.pages.retryBlockingBranch(issueId, cardId, side);
       return Promise.resolve();

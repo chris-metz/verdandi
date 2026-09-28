@@ -128,7 +128,7 @@ describe("sidebar keys", () => {
 
   it("are left alone with ⌘, Ctrl or Alt", () => {
     expect(
-      press(key("ArrowDown", { altKey: true }), { selected: "api" }),
+      press(key("j", { altKey: true }), { selected: "api" }),
     ).toBeUndefined();
     expect(
       press(key("ArrowDown", { metaKey: true }), { selected: "api" }),
@@ -246,5 +246,67 @@ describe("All, pinned on top", () => {
       scope: all,
     });
     expect(pressWithAll(key("ArrowUp"), all)).toBeUndefined();
+  });
+});
+
+it("moves the focused repository with Alt+arrows, keeping All fixed and stopping at section edges", () => {
+  expect(press(key("ArrowUp", { altKey: true }), { selected: "web" })).toEqual({
+    kind: "reorder",
+    entry: repository("web"),
+    destination: { direction: "up" },
+  });
+  expect(
+    press(key("ArrowDown", { altKey: true }), { selected: "api" }),
+  ).toEqual({
+    kind: "reorder",
+    entry: repository("api"),
+    destination: { direction: "down" },
+  });
+  expect(
+    press(key("ArrowUp", { altKey: true }), { selected: "api" }),
+  ).toBeUndefined();
+  expect(
+    press(key("ArrowDown", { altKey: true }), { selected: "infra" }),
+  ).toBeUndefined();
+  expect(
+    press(key("ArrowDown", { altKey: true }), {
+      focused: "main",
+      selected: "api",
+    }),
+  ).toBeUndefined();
+  expect(
+    commandForWindowKey(key("ArrowDown", { altKey: true }), {
+      focused: "sidebar",
+      entries: [{ kind: "all" }, ...entries],
+      selected: { kind: "all" },
+      modifier: macOS,
+    }),
+  ).toBeUndefined();
+});
+
+it("moves a view only within Views, even when views have the same name", () => {
+  const first = {
+    kind: "view" as const,
+    view: { id: "one", name: "Bugs", query: "label:bug" },
+  };
+  const second = {
+    kind: "view" as const,
+    view: { id: "two", name: "Bugs", query: "label:bug is:open" },
+  };
+  const state = {
+    focused: "sidebar" as const,
+    entries: [...entries, first, second],
+    selected: first,
+    modifier: macOS,
+  };
+  expect(
+    commandForWindowKey(key("ArrowUp", { altKey: true }), state),
+  ).toBeUndefined();
+  expect(
+    commandForWindowKey(key("ArrowDown", { altKey: true }), state),
+  ).toEqual({
+    kind: "reorder",
+    entry: { kind: "view", id: "one" },
+    destination: { direction: "down" },
   });
 });

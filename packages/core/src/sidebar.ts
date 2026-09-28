@@ -2,6 +2,8 @@ import type {
   OpenIssueCount,
   RepositoryAddress,
   SidebarEntries,
+  SavedView,
+  SettingsStatus,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import type { GitHubResult, RepositorySummary } from "./github/port.ts";
@@ -44,7 +46,7 @@ export interface Sidebar {
    * count it asks for arrives, e.g. in place of counts read as another
    * account.
    */
-  reload(): void;
+  reload(): Promise<void>;
   /**
    * Asks GitHub again for the counts that failed, and the known ones that
    * are older than five minutes, of the sidebar as last read.
@@ -110,6 +112,8 @@ export function createSidebar({
   const counts = new Map<string, Count>();
   /** The tracked repositories as last read: what a push lists. */
   let tracked: RepositoryAddress[] | undefined;
+  let views: SavedView[] = [];
+  let settingsStatus: SettingsStatus = { status: "writable" };
 
   function countOf(repository: RepositoryAddress): OpenIssueCount {
     return (
@@ -120,6 +124,8 @@ export function createSidebar({
   function entries(repositories: RepositoryAddress[]): SidebarEntries {
     return {
       status: "read",
+      views,
+      settings: settingsStatus,
       all: { openIssues: allCount(repositories, countOf) },
       repositories: repositories.map((repository) => ({
         repository,
@@ -224,15 +230,13 @@ export function createSidebar({
     announce: boolean;
   }): Promise<SidebarEntries> {
     const result = await settings.read();
-    let listed: SidebarEntries;
-    if (result.ok) {
-      tracked = result.value.repositories;
-      ask(tracked.filter(unknownOrDue));
-      listed = entries(tracked);
-    } else {
-      tracked = undefined;
-      listed = { status: "failed", message: result.message };
-    }
+    tracked = result.value.repositories;
+    views = result.value.views;
+    settingsStatus = result.ok
+      ? result.status
+      : { status: "invalid", message: result.message };
+    ask(tracked.filter(unknownOrDue));
+    const listed = entries(tracked);
     if (announce) push(listed);
     return listed;
   }
@@ -241,8 +245,8 @@ export function createSidebar({
     read() {
       return read({ announce: false });
     },
-    reload() {
-      void read({ announce: true });
+    async reload() {
+      await read({ announce: true });
     },
     revalidate() {
       if (tracked && ask(tracked.filter((one) => failed(one) || dueAgain(one))))

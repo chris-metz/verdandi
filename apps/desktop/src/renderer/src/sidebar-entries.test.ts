@@ -14,6 +14,8 @@ describe("entry order", () => {
     expect(
       entryOrder({
         status: "read",
+        views: [],
+        settings: { status: "writable" },
         all: { openIssues: { status: "known", count: 3 } },
         repositories: [
           entry("acme", "web"),

@@ -17,6 +17,7 @@ export const ipcChannels = {
   chooseGhExecutable: "desktop:choose-gh-executable",
   /** Renderer → main: `(url)` of an image to load from elsewhere than GitHub. */
   loadImage: "desktop:load-image",
+  showSettingsFolder: "desktop:show-settings-folder",
 } as const;
 
 /**
@@ -43,6 +44,8 @@ export const rendererRequestNames = requestNames.filter(
  * not part of the contract: another interface opens links its own way.
  */
 export interface DesktopApi {
+  /** Reveals the user-data folder containing settings.json. */
+  showSettingsFolder: () => Promise<void>;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**

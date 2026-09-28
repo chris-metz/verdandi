@@ -379,10 +379,6 @@ export function createIssuePages({
   async function read(state: PageState, retrying: boolean) {
     const { issueId } = state;
     const settingsRead = await settings.read();
-    if (!settingsRead.ok) {
-      state.problem = { kind: "error", message: settingsRead.message };
-      return;
-    }
     state.tracked = new Set(settingsRead.value.repositories.map(repositoryKey));
 
     const askedAt = clock();

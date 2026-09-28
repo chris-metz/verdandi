@@ -33,6 +33,9 @@ const api = {
 contextBridge.exposeInMainWorld("verdandi", api);
 
 const desktop: DesktopApi = {
+  showSettingsFolder() {
+    return ipcRenderer.invoke(ipcChannels.showSettingsFolder) as Promise<void>;
+  },
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
   },

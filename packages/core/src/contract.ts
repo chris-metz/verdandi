@@ -181,8 +181,35 @@ export type SidebarEntries =
        * file's order.
        */
       repositories: RepositoryEntry[];
+      views: SavedView[];
+      settings: SettingsStatus;
     }
   | { status: "failed"; message: string };
+
+/** Whether repository and view changes can be written safely. */
+export type SettingsStatus =
+  | { status: "writable" }
+  | { status: "invalid" | "newer-version"; message: string };
+
+/** A saved GitHub issue search, in sidebar order. */
+export interface SavedView {
+  id: string;
+  name: string;
+  query: string;
+}
+
+/** All is fixed and cannot be the source or destination of a move. */
+export type SidebarEntryKey =
+  | { kind: "repository"; repository: RepositoryAddress }
+  | { kind: "view"; id: string };
+
+/** A move relative to the latest file, never a replacement of its whole order. */
+export type SidebarDestination =
+  | { direction: "up" | "down" }
+  | { relativeTo: SidebarEntryKey; side: "before" | "after" };
+
+export type SettingsChangeResult =
+  { ok: true } | { ok: false; message: string };
 
 /** All as the sidebar lists it. */
 export interface AllEntry {
@@ -677,6 +704,15 @@ export interface CoreRequests {
    * could not be read is asked for again the next time.
    */
   getSidebar: () => Promise<SidebarEntries>;
+  /** Re-reads settings and pushes the sidebar, including recovery status. */
+  reloadSettings: () => Promise<void>;
+  /** Renames an invalid file to a dated backup, then starts empty. */
+  resetSettings: () => Promise<SettingsChangeResult>;
+  /** Moves one entry within its section, re-reading the file before writing. */
+  reorderSidebar: (
+    entry: SidebarEntryKey,
+    destination: SidebarDestination,
+  ) => Promise<SettingsChangeResult>;
   /**
    * Opens a scope's list. Its current state is pushed as `listChanged` at
    * once, then again as each page of open issues and each batch of the other
@@ -748,8 +784,8 @@ export interface CoreEvents {
   /** An issue page's state, when it is opened and whenever it changes. */
   issuePageChanged: IssuePage;
   /**
-   * The sidebar as last read, whenever an open-issue count changes: when
-   * counts arrive, and when a repository's list loads with a new count.
+   * The sidebar whenever settings or an open-issue count change: on hand
+   * edits, writes and recovery, as counts arrive, and when a list loads.
    */
   sidebarChanged: SidebarEntries;
   /**
@@ -781,6 +817,9 @@ const requests: Record<keyof CoreRequests, true> = {
   checkSetupAgain: true,
   chooseGhExecutable: true,
   getSidebar: true,
+  reloadSettings: true,
+  resetSettings: true,
+  reorderSidebar: true,
   openList: true,
   setExpanded: true,
   setAllExpanded: true,

@@ -32,12 +32,14 @@ import { createFakeGitHub, type FakeGitHub } from "./testing/fake-github.ts";
 
 /** A temporary `VERDANDI_HOME`, so tests never touch the real user data. */
 let home: string;
+const cores: ReturnType<typeof createCore>[] = [];
 
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "verdandi-test-"));
 });
 
 afterEach(async () => {
+  for (const core of cores.splice(0)) core.dispose();
   await rm(home, { recursive: true, force: true });
 });
 
@@ -137,7 +139,7 @@ function createTestCore(
     timers = false,
   }: { clock?: TestClock; machine?: TestMachine; timers?: boolean } = {},
 ): Contract {
-  return createCore({
+  const core = createCore({
     github: () => github,
     runCommand: runnerOn(machine),
     host: machine.host,
@@ -146,6 +148,8 @@ function createTestCore(
     now: clock.now,
     ...(timers ? {} : { wait: () => Promise.resolve() }),
   });
+  cores.push(core);
+  return core;
 }
 
 /** Moves the clock and the faked timers on together, as time passes. */
@@ -1937,6 +1941,8 @@ describe("sidebar", () => {
 
     expect(await core.getSidebar()).toEqual({
       status: "read",
+      settings: { status: "writable" },
+      views: [],
       all: { openIssues: { status: "known", count: 0 } },
       repositories: [],
     });
@@ -1989,6 +1995,7 @@ describe("sidebar", () => {
       localState: createLocalStateFile(verdandiHome()),
     });
 
+    cores.push(core);
     expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api –"]);
   });
 
@@ -1996,11 +2003,16 @@ describe("sidebar", () => {
     await writeFile(join(home, "settings.json"), '{ "repositories": [ }');
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
-    expect(await core.getSidebar()).toEqual({
-      status: "failed",
-      message: expect.stringContaining(
-        `${join(home, "settings.json")} is not valid JSON:`,
-      ) as unknown,
+    expect(await core.getSidebar()).toMatchObject({
+      status: "read",
+      repositories: [],
+      views: [],
+      settings: {
+        status: "invalid",
+        message: expect.stringContaining(
+          `${join(home, "settings.json")}: not valid JSON:`,
+        ) as unknown,
+      },
     });
   });
 
@@ -2012,9 +2024,14 @@ describe("sidebar", () => {
     });
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
-    expect(await core.getSidebar()).toEqual({
-      status: "failed",
-      message: `${join(home, "settings.json")}: repositories[1].name is not "owner/name".`,
+    expect(await core.getSidebar()).toMatchObject({
+      status: "read",
+      repositories: [],
+      views: [],
+      settings: {
+        status: "invalid",
+        message: `${join(home, "settings.json")}: repositories[1].name is not "owner/name".`,
+      },
     });
   });
 
@@ -2022,11 +2039,16 @@ describe("sidebar", () => {
     await mkdir(join(home, "settings.json"));
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
-    expect(await core.getSidebar()).toEqual({
-      status: "failed",
-      message: expect.stringContaining(
-        `Cannot read ${join(home, "settings.json")}:`,
-      ) as unknown,
+    expect(await core.getSidebar()).toMatchObject({
+      status: "read",
+      repositories: [],
+      views: [],
+      settings: {
+        status: "invalid",
+        message: expect.stringContaining(
+          `Cannot read ${join(home, "settings.json")}:`,
+        ) as unknown,
+      },
     });
   });
 });
@@ -2058,6 +2080,8 @@ describe("sidebar counts", () => {
 
     expect(read).toEqual({
       status: "read",
+      settings: { status: "writable" },
+      views: [],
       all: { openIssues: { status: "loading" } },
       repositories: [
         {
@@ -2129,6 +2153,8 @@ describe("sidebar counts", () => {
 
     expect(await readUntilCounted(core)).toEqual({
       status: "read",
+      settings: { status: "writable" },
+      views: [],
       all: {
         openIssues: {
           status: "failed",
@@ -3601,7 +3627,7 @@ describe("All", () => {
         problem: {
           kind: "error",
           message: expect.stringContaining(
-            `${join(home, "settings.json")} is not valid JSON:`,
+            `${join(home, "settings.json")}: not valid JSON:`,
           ) as unknown,
         },
       },
@@ -6183,4 +6209,23 @@ it("refreshes cached cards themselves when re-reading the list that names them f
     ["New title", "closed"],
   ]);
   expect(refreshed.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+});
+
+it("updates All from hand-edited tracking and keeps the last valid scope while settings are broken", async () => {
+  await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [{ number: 1, title: "API work" }]);
+  github.addRepository("acme/web", [{ number: 2, title: "Web work" }]);
+  const core = createTestCore(github);
+  await openUntilLoaded(core, all);
+  const pushed: IssueList[] = [];
+  core.on("listChanged", (list) => pushed.push(list));
+  await writeSettings({ version: 1, repositories: [{ name: "acme/web" }] });
+  await expect
+    .poll(() => pushed.at(-1) && outline(pushed.at(-1) as IssueList))
+    .toEqual(["acme/web #2 Web work"]);
+  await writeFile(join(home, "settings.json"), "broken");
+  expect(outline(await openUntilLoaded(core, all))).toEqual([
+    "acme/web #2 Web work",
+  ]);
 });

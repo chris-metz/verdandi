@@ -1,6 +1,9 @@
-import type { Scope } from "@verdandi/core/contract";
+import type {
+  SidebarEntryKey,
+  SidebarDestination,
+} from "@verdandi/core/contract";
 import type { Platform } from "../../shared/ipc";
-import { sameScope } from "./scope";
+import { sameScope, type SidebarScope as Scope } from "./scope";
 
 /** The window's two panes, which have the keyboard in turn. */
 export type Pane = "sidebar" | "main";
@@ -20,7 +23,12 @@ export interface KeyPress {
 export type WindowCommand =
   | { kind: "focus"; pane: Pane }
   | { kind: "select"; scope: Scope }
-  | { kind: "refresh" };
+  | { kind: "refresh" }
+  | {
+      kind: "reorder";
+      entry: SidebarEntryKey;
+      destination: SidebarDestination;
+    };
 
 export interface WindowState {
   /** The pane that has the keyboard. */
@@ -66,6 +74,28 @@ export function commandForWindowKey(
   // The shortcut modifier, and no other.
   if (shortcut && modifier.isHeld(press) && modifiersHeld.length === 1) {
     return select(entries[Number(shortcut[1]) - 1]);
+  }
+  if (
+    focused === "sidebar" &&
+    selected !== undefined &&
+    selected.kind !== "all" &&
+    altKey &&
+    modifiersHeld.length === 1 &&
+    (key === "ArrowUp" || key === "ArrowDown")
+  ) {
+    const index = entries.findIndex((entry) => sameScope(entry, selected));
+    const direction = key === "ArrowUp" ? "up" : "down";
+    const neighbour = entries[index + (direction === "up" ? -1 : 1)];
+    if (neighbour?.kind === selected.kind)
+      return {
+        kind: "reorder",
+        entry:
+          selected.kind === "view"
+            ? { kind: "view", id: selected.view.id }
+            : selected,
+        destination: { direction },
+      };
+    return undefined;
   }
   if (metaKey || ctrlKey || altKey) return undefined;
   if (key === "Tab") {

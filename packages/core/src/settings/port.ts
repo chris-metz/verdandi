@@ -1,24 +1,39 @@
-import type { RepositoryAddress } from "../contract.ts";
+import type {
+  RepositoryAddress,
+  SavedView,
+  SidebarEntryKey,
+  SidebarDestination,
+  SettingsChangeResult,
+  SettingsStatus,
+} from "../contract.ts";
 
 /**
  * The settings-storage port: where the core keeps user data, the tracked
- * repositories and views. So far the core only reads it.
+ * repositories and views, including recovery from hand edits.
  */
 export interface SettingsStorage {
   /** Reads the user data. If there is none yet, nothing is tracked. */
   read(): Promise<SettingsResult>;
+  /** Watches the containing folder, including editor rename replacements. */
+  watch(changed: () => void): () => void;
+  reset(): Promise<SettingsChangeResult>;
+  reorder(
+    entry: SidebarEntryKey,
+    destination: SidebarDestination,
+  ): Promise<SettingsChangeResult>;
 }
 
-/** User data, as far as the core uses it so far. */
+/** Portable user data as the core and sidebar use it. */
 export interface Settings {
   /** The tracked repositories, in sidebar order. */
   repositories: RepositoryAddress[];
+  views: SavedView[];
 }
 
 export type SettingsResult =
-  | { ok: true; value: Settings }
-  /** The user data exists but cannot be used; `message` says why. */
-  | { ok: false; message: string };
+  | { ok: true; value: Settings; status: SettingsStatus }
+  /** The file cannot be used; value keeps the last valid data (empty at startup). */
+  | { ok: false; message: string; value: Settings };
 
 /**
  * The machine-local-state port: what Verdandi keeps for this machine only,

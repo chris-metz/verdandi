@@ -1,8 +1,6 @@
-import type {
-  OpenIssueCount,
-  Scope,
-  SidebarEntries,
-} from "@verdandi/core/contract";
+import type { OpenIssueCount, SidebarEntries } from "@verdandi/core/contract";
+
+import type { SidebarScope as Scope } from "./scope";
 
 /** A sidebar entry: what it selects, and its open-issue count. */
 export interface SidebarItem {
@@ -13,7 +11,7 @@ export interface SidebarItem {
 /**
  * The sidebar's entries in visual order, which ⌘/Ctrl+1…9 and ↑/↓ follow:
  * All, pinned on top and always there, then the Repositories section, then
- * the Views section, which has none yet.
+ * the Views section.
  */
 export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
   if (sidebar?.status !== "read") {
@@ -29,6 +27,10 @@ export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
     ...sidebar.repositories.map(({ repository, openIssues }): SidebarItem => ({
       scope: { kind: "repository", repository },
       openIssues,
+    })),
+    ...sidebar.views.map((view): SidebarItem => ({
+      scope: { kind: "view", view },
+      openIssues: { status: "loading" },
     })),
   ];
 }

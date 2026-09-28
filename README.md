@@ -58,7 +58,11 @@ Until Verdandi can add repositories itself, list them by hand in `settings.json`
 }
 ```
 
-The sidebar lists them in this order. Verdandi reads the file when its window opens.
+The sidebar follows the file order. Drag an entry within its section, or press ⌥/Alt+↑/↓ on the selected entry, to reorder and save it. All stays first.
+
+**File → Show Settings File** opens the folder. Hand edits appear live. Settings use strict JSON: unknown fields and invalid values are reported with their location. While the file is broken or unreadable, Verdandi keeps its last valid sidebar and disables changes. **Reload** checks again; **Reset** preserves the original as `settings.json.broken-<timestamp>` and starts empty.
+
+Files from a newer version are read-only until Verdandi is updated. Older files are migrated on the next change, with a one-time `settings.json.backup-v<version>` backup.
 
 ## Check before pushing
 

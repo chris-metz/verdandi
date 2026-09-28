@@ -48,6 +48,8 @@ import type { SettingsStorage } from "./settings/port.ts";
  * interrupted where it lacks something, until it shows again.
  */
 export interface IssueLists {
+  /** Applies hand-edited tracking to cached lists, loading only the shown one. */
+  settingsChanged(): void;
   /**
    * Pushes a scope's list at once. If it has not loaded, loads it, pushing
    * the list after each response; if it is older than five minutes, reads it
@@ -374,10 +376,14 @@ export function createIssueLists({
     list.readingTracked = true;
     const read = await settings.read();
     list.readingTracked = false;
-    if (!read.ok && list.scope.kind === "all") {
+    if (
+      !read.ok &&
+      read.value.repositories.length === 0 &&
+      list.scope.kind === "all"
+    ) {
       list.settingsProblem = { kind: "error", message: read.message };
-    }
-    list.tracked = read.ok ? read.value.repositories : [];
+    } else list.settingsProblem = undefined;
+    list.tracked = read.value.repositories;
     const own = repositoriesOf(list);
     // A list whose repositories other lists have read shows what they read,
     // while it reads again what is older than it needs.
@@ -555,6 +561,9 @@ export function createIssueLists({
   }
 
   return {
+    settingsChanged() {
+      for (const list of lists.values()) void start(list);
+    },
     open(scope) {
       const known = lists.get(scopeKey(scope));
       if (!known) {
