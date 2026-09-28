@@ -1,4 +1,9 @@
 import type { IssueTree } from "@verdandi/core/contract";
+import {
+  directionForKey,
+  spatialNeighbour,
+  type MapTarget,
+} from "./map-navigation";
 import type { IssueDestination } from "./issue-navigation";
 import {
   commandForKey,
@@ -17,9 +22,29 @@ export function commandForIssuePageKey(
   cursor: string,
   targets: readonly PageTarget[],
   trees: readonly IssueTree[],
+  map: readonly MapTarget[] = [],
 ): IssuePageCommand | undefined {
+  const card = map.find(({ id }) => id === cursor);
+  if (card) {
+    const direction = directionForKey(event.key);
+    if (direction) {
+      const next = spatialNeighbour(map, cursor, direction);
+      if (next) return { kind: "select", issueId: next };
+      if (direction === "down") {
+        const first = visibleRows(trees)[0];
+        return first && { kind: "select", issueId: first.node.issue.id };
+      }
+      if (direction === "up") {
+        const centre = map.find(({ step }) => step === 0);
+        const index = targets.findIndex(({ id }) => id === centre?.issue?.id);
+        const ancestor = targets[index - 1];
+        return ancestor && { kind: "select", issueId: ancestor.id };
+      }
+      return undefined;
+    }
+  }
   const index = targets.findIndex(({ id }) => id === cursor);
-  const target = targets[index];
+  const target = card ? card.issue : targets[index];
   const select = (offset: number): IssuePageCommand | undefined => {
     const next = targets[index + offset];
     return next && { kind: "select", issueId: next.id };

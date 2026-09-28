@@ -505,6 +505,29 @@ export interface IssueComments {
   loading: CommentsLoading;
 }
 
+/** The direction followed outwards from the issue in a blocking map. */
+export type BlockingSide = "blockedBy" | "blocking";
+
+export type BlockingBadge =
+  { kind: "unloaded"; count: number } | { kind: "closed" };
+
+export type BlockingEnd =
+  { kind: "none" } | { kind: "unknown" } | { kind: "folded"; count: number };
+
+/** Domain layout: steps are signed, with blockers on the negative side. */
+export interface BlockingMap {
+  cards: {
+    issue: IssueSummary;
+    step: number;
+    badges: Partial<Record<BlockingSide, BlockingBadge>>;
+  }[];
+  /** Arrows always point from the blocker to the issue that waits. */
+  edges: { from: string; to: string; cycle: boolean; closed: boolean }[];
+  ends: Record<BlockingSide, BlockingEnd>;
+  /** Failed reads stay local to the map and can be retried with the page. */
+  problems: Problem[];
+}
+
 /** An issue page, including relationships outside tracked repositories. */
 export interface IssuePage {
   issueId: string;
@@ -520,6 +543,8 @@ export interface IssuePage {
   ancestry: (ParentIssue & { url: string })[];
   /** The list's outline rows, in GitHub order, initially collapsed. */
   subIssues: IssueTree[];
+  /** The two-step blocking map, once the issue has loaded. */
+  blockingMap?: BlockingMap;
   /** The issue's comments, once the issue has been read. */
   comments: IssueComments | undefined;
   /**

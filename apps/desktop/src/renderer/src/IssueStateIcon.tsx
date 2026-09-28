@@ -2,7 +2,13 @@ import type { IssueSummary } from "@verdandi/core/contract";
 import { cn } from "@/lib/utils";
 
 /** An issue's state as GitHub draws it: a ringed dot if open, a check if closed. */
-export function IssueStateIcon({ state }: { state: IssueSummary["state"] }) {
+export function IssueStateIcon({
+  state,
+  blocked = false,
+}: {
+  state: IssueSummary["state"];
+  blocked?: boolean;
+}) {
   const open = state === "open";
   return (
     <svg
@@ -11,7 +17,11 @@ export function IssueStateIcon({ state }: { state: IssueSummary["state"] }) {
       aria-label={open ? "Open" : "Closed"}
       className={cn(
         "size-4 shrink-0 fill-none stroke-current stroke-[1.5]",
-        open ? "text-issue-open" : "text-issue-closed",
+        blocked
+          ? "text-blocked"
+          : open
+            ? "text-issue-open"
+            : "text-issue-closed",
       )}
     >
       <circle cx="8" cy="8" r="6.25" />

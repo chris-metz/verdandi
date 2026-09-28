@@ -67,6 +67,9 @@ export function pageFreshness(page: IssuePage, now: number): Freshness {
       page.issue?.incomplete === undefined ? 0 : 1,
     ),
     ...missingComments(page.comments),
+    ...((page.blockingMap?.problems.length ?? 0) > 0
+      ? ["blocking relationships shown in part"]
+      : []),
   ];
   return withMissing(loadingFreshness(page.loading, now), missing);
 }

@@ -11,6 +11,8 @@ import {
 import { cn } from "@/lib/utils";
 import { loadingFreshness, pageFreshness } from "./freshness";
 import { openLinkToIssue } from "./follow-link";
+import { BlockingMapBand } from "./BlockingMapBand";
+import type { MapTarget } from "./map-navigation";
 import { IssueConversation } from "./IssueConversation";
 import { IssueMetadataLine } from "./IssueMetadataLine";
 import { IssueColumnHeader, IssueRow, WarningIcon } from "./IssueRow";
@@ -86,10 +88,12 @@ export function IssuePagePane({
   const [initialPlace] = useState(visit.place);
   const restored = useRef(false);
   const reveal = useRef(false);
+  const anchor = useRef<ScrollAnchor>(undefined);
   const trees = useMemo(
     () => issuePageTrees(page?.subIssues ?? [], visit.place.expanded),
     [page, visit.place.expanded],
   );
+  const [mapTargets, setMapTargets] = useState<readonly MapTarget[]>([]);
   const rows = useMemo(() => visibleRows(trees), [trees]);
   const targets = useMemo(
     () => [
@@ -101,7 +105,15 @@ export function IssuePagePane({
   );
   // The cursor follows its issue as the page changes under it, or a
   // neighbour if the issue disappeared.
-  const targetIds = useMemo(() => targets.map(({ id }) => id), [targets]);
+  const targetIds = useMemo(
+    () => [
+      ...new Set([
+        ...targets.map(({ id }) => id),
+        ...mapTargets.map(({ id }) => id),
+      ]),
+    ],
+    [targets, mapTargets],
+  );
   const [cursorPlace, setCursorPlace] = useState<CursorPlace>({
     targets: targetIds,
     placed: visit.place.cursor,
@@ -124,7 +136,8 @@ export function IssuePagePane({
     });
   }
   function open(issue: IssueDestination) {
-    remember({ cursor: issue.id });
+    if (!mapTargets.some((target) => target.issue?.id === issue.id))
+      remember({ cursor: issue.id });
     onNavigate({ kind: "open", issue });
   }
   // The latest `remember` and `onNavigate`, for following links in bodies,
@@ -217,7 +230,13 @@ export function IssuePagePane({
         event.target instanceof HTMLAnchorElement)
     )
       return;
-    const command = commandForIssuePageKey(event, cursor, targets, trees);
+    const command = commandForIssuePageKey(
+      event,
+      cursor,
+      targets,
+      trees,
+      mapTargets,
+    );
     if (!command) return;
     event.preventDefault();
     run(command);
@@ -228,26 +247,33 @@ export function IssuePagePane({
   }, [hasKeyboard]);
   // Back where the user left this visit, once the page is there to scroll.
   useLayoutEffect(() => {
-    if (!page?.issue || restored.current || !scroller.current) return;
+    if (
+      !page?.issue ||
+      restored.current ||
+      !scroller.current ||
+      (page.blockingMap && mapTargets.length === 0)
+    )
+      return;
     restored.current = true;
     scroller.current.scrollTop = initialPlace.scrollTop;
-  }, [page, initialPlace]);
+    anchor.current = undefined;
+  }, [page, initialPlace, mapTargets]);
   useLayoutEffect(() => {
     if (!reveal.current) return;
     reveal.current = false;
     scroller.current
       ?.querySelector(cursorTarget)
-      ?.scrollIntoView({ block: "nearest" });
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
   // What the cursor is on stays where it is on screen as the content changes
   // under it; where it is is noted after every render and scroll.
-  const anchor = useRef<ScrollAnchor>(undefined);
   useLayoutEffect(() => {
-    if (scroller.current)
+    if (restored.current && scroller.current)
       keepAnchored(scroller.current, anchor.current, cursorTarget);
-  }, [page]);
+  }, [page, mapTargets]);
   useLayoutEffect(noteScroll);
   function noteScroll() {
+    if (!restored.current) return;
     anchor.current = scroller.current
       ? noteAnchor(scroller.current, cursorTarget, readingTargets)
       : undefined;
@@ -384,10 +410,12 @@ export function IssuePagePane({
           )}
           <div
             data-issue-id={visit.issue.id}
-            data-page-cursor={cursor === visit.issue.id}
+            data-page-cursor={!page?.blockingMap && cursor === visit.issue.id}
             className={cn(
               "rounded border-l-2 border-transparent pl-3",
-              cursor === visit.issue.id && "group-focus:border-selection-edge",
+              !page?.blockingMap &&
+                cursor === visit.issue.id &&
+                "group-focus:border-selection-edge",
             )}
           >
             <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
@@ -420,6 +448,21 @@ export function IssuePagePane({
             />
           )}
         </div>
+        {page?.blockingMap && (
+          <BlockingMapBand
+            map={page.blockingMap}
+            root={visit.issue.id}
+            cursor={cursor}
+            savedScrollLeft={visit.place.mapScrollLeft}
+            onScroll={(mapScrollLeft) => {
+              remember({ mapScrollLeft });
+            }}
+            onLayout={setMapTargets}
+            onSelect={select}
+            onOpen={open}
+            onRetry={retry}
+          />
+        )}
         {page?.issue && (
           <section aria-label="Sub-issues" className="border-t">
             <div className="flex items-center justify-between px-6 py-3">

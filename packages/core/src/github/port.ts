@@ -1,5 +1,6 @@
 import type {
   AccessEvidence,
+  BlockingSide,
   IssueComment,
   IssueMetadata,
   Label,
@@ -21,6 +22,12 @@ export interface GitHubAccess {
    * confirmed either way, e.g. without a connection.
    */
   fetchAuthStatus(): Promise<GitHubResult<AuthStatus>>;
+  /** Reads one page of a blocking relationship list, including closed issues. */
+  fetchRelationships(
+    issueId: string,
+    side: BlockingSide,
+    after?: string,
+  ): Promise<GitHubResponse<RelationshipPage>>;
   /** Reads a single issue with the metadata shown on its page. */
   fetchIssueDetails(id: string): Promise<GitHubResponse<Issue & IssueMetadata>>;
   /**
@@ -90,6 +97,7 @@ export type GitHubRead = Exclude<keyof GitHubAccess, "fetchAuthStatus">;
 /** The rate-limit pool each read draws on. */
 export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchIssueDetails: "graphql",
+  fetchRelationships: "graphql",
   fetchIssueComments: "graphql",
   fetchBodyHtml: "graphql",
   fetchIssueByNumber: "graphql",
@@ -276,3 +284,9 @@ export type GitHubError =
   | { kind: "graphql"; messages: string[] }
   /** The response could not be read, e.g. it was not JSON. */
   | { kind: "unexpected-response" };
+
+export interface RelationshipPage {
+  issues: Issue[];
+  nextPage: string | undefined;
+  incomplete: GitHubError | undefined;
+}

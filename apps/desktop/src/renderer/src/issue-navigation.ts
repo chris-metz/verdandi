@@ -13,6 +13,7 @@ export type IssueDestination = Pick<
 export interface IssuePlace {
   cursor: string;
   scrollTop: number;
+  mapScrollLeft?: number;
   expanded: string[];
 }
 

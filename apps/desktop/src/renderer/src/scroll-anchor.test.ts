@@ -118,3 +118,15 @@ describe("scroll anchoring", () => {
     expect(scroller.scrollTop).toBe(0);
   });
 });
+
+it("anchors a map card independently of the same issue in the page heading", () => {
+  const scroller = scrollerWith(["root", "root"], "none");
+  const card = scroller.lastElementChild as HTMLElement;
+  card.dataset.mapCard = "root";
+  card.setAttribute("aria-selected", "true");
+  const anchor = noteAnchor(scroller, selectedRow);
+  card.getBoundingClientRect = () =>
+    new DOMRect(0, 120 - scroller.scrollTop, 200, 100);
+  keepAnchored(scroller, anchor, selectedRow);
+  expect(card.getBoundingClientRect().top).toBe(32);
+});

@@ -61,7 +61,8 @@ export function keepAnchored(
 
 /** How to find an element again, by what tells it apart. */
 function selectorOf(element: HTMLElement): string | undefined {
-  const { issueId, scrollAnchor } = element.dataset;
+  const { issueId, scrollAnchor, mapCard } = element.dataset;
+  if (mapCard !== undefined) return `[data-map-card="${CSS.escape(mapCard)}"]`;
   if (issueId !== undefined) {
     return `[data-issue-id="${CSS.escape(issueId)}"]`;
   }

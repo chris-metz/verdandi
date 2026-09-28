@@ -9,6 +9,7 @@ import type {
   Screen,
   UnreadIssue,
 } from "./contract.ts";
+import { createBlockingMaps } from "./blocking-maps.ts";
 import { inBatches } from "./batches.ts";
 import { keepUnlessChanged } from "./body-html.ts";
 import {
@@ -150,6 +151,7 @@ export function createIssuePages({
   push,
 }: IssuePagesOptions): IssuePages {
   const pages = new Map<string, PageState>();
+  const maps = createBlockingMaps(store, request, clock);
 
   /** How urgently a page needs a part of what it asks for. */
   function urgencyOf(state: PageState, part: ScreenPart): Urgency | undefined {
@@ -287,6 +289,15 @@ export function createIssuePages({
       });
     }
     page.subIssues = nest(issue);
+    page.blockingMap = maps.build(issueId, (id) => {
+      const related = store.get(id);
+      if (!related) return undefined;
+      ageWith(related);
+      return summarizeIssue(related, {
+        reference: referenceTo(related),
+        external: external(related),
+      });
+    });
 
     const comments = state.comments.read;
     if (comments) {
@@ -468,7 +479,23 @@ export function createIssuePages({
         },
       });
     }
-    await Promise.all([ancestry(), subIssues(), comments()]);
+    async function blockingMap() {
+      // A retained relationship list cannot refresh the cards it names when
+      // its own request fails. Re-read those cards independently as well.
+      await readIssues(
+        maps.issueIds(issueId).filter((id) => id !== issueId),
+        "visible",
+      );
+      await maps.load(
+        issueId,
+        state.validFrom,
+        () => urgencyOf(state, "visible"),
+        () => {
+          push(build(state));
+        },
+      );
+    }
+    await Promise.all([ancestry(), subIssues(), comments(), blockingMap()]);
   }
 
   /**
@@ -599,6 +626,7 @@ function hasFailedParts(page: IssuePage): boolean {
     comments === "stale" ||
     page.issue?.incomplete !== undefined ||
     page.ancestry.some(({ unread }) => unread?.status === "failed") ||
+    (page.blockingMap?.problems.length ?? 0) > 0 ||
     page.subIssues.some(failedNode)
   );
 }

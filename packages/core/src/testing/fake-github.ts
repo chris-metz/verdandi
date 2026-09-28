@@ -1,5 +1,6 @@
 import type {
   AccessEvidence,
+  BlockingSide,
   IssueMetadata,
   Label,
   RateLimitPool,
@@ -40,6 +41,8 @@ export interface FakeIssue {
    * declared in any repository. Parent issues and sub-issue progress follow.
    */
   subIssues?: string[];
+  /** Blocking relationships, as owner/name#number; the reverse side is derived. */
+  blockers?: string[];
   blockedBy?: RelationshipCount;
   blocking?: RelationshipCount;
   /**
@@ -362,6 +365,26 @@ export function createFakeGitHub({
     };
   }
 
+  function relationships(ref: string, side: BlockingSide): string[] {
+    if (side === "blockedBy") return find(ref)?.blockers ?? [];
+    return [...repositories].flatMap(([repo, issues]) =>
+      issues
+        .filter((issue) => issue.blockers?.includes(ref))
+        .map((issue) => `${repo}#${String(issue.number)}`),
+    );
+  }
+
+  function relationshipCount(
+    ref: string,
+    side: BlockingSide,
+  ): RelationshipCount {
+    const refs = relationships(ref, side);
+    return {
+      total: refs.length,
+      open: refs.filter((ref) => find(ref)?.state !== "closed").length,
+    };
+  }
+
   /**
    * The issue as GitHub reads it, with its relationships. Those GitHub hides
    * are left out, and the issue marked incomplete for them.
@@ -390,8 +413,8 @@ export function createFakeGitHub({
         }
       }
     }
-    const blockedBy = issue.blockedBy ?? { open: 0, total: 0 };
-    const blocking = issue.blocking ?? { open: 0, total: 0 };
+    const blockedBy = issue.blockedBy ?? relationshipCount(ref, "blockedBy");
+    const blocking = issue.blocking ?? relationshipCount(ref, "blocking");
     return {
       id: `I_${ref}`,
       repository: addressOf(nameWithOwner),
@@ -541,6 +564,38 @@ export function createFakeGitHub({
           },
         };
       });
+    },
+    fetchRelationships(id, side, after) {
+      const ref = id.replace(/^I_/, "");
+      return answer(
+        "fetchRelationships",
+        `${ref} ${side}${after ? ` after ${after}` : ""}`,
+        () => {
+          const error = unavailable(ref, "Issue unavailable");
+          if (error) return { ok: false, error };
+          const all = relationships(ref, side);
+          const start = after === undefined ? 0 : Number(after);
+          const end = start + issuesPerPage;
+          let incomplete: GitHubError | undefined;
+          const issues = all.slice(start, end).flatMap((related) => {
+            const error = unavailable(related, "Related issue unavailable");
+            if (error) {
+              incomplete = error;
+              return [];
+            }
+            const issue = find(related);
+            return issue ? [read(related.split("#")[0] ?? "", issue)] : [];
+          });
+          return {
+            ok: true,
+            value: {
+              issues,
+              incomplete,
+              nextPage: end < all.length ? String(end) : undefined,
+            },
+          };
+        },
+      );
     },
     fetchIssueComments(id, after) {
       const ref = id.replace(/^I_/, "");

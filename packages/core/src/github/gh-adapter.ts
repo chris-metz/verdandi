@@ -217,6 +217,62 @@ export function createGhAdapter({
         },
       );
     },
+    fetchRelationships(issueId, side, after) {
+      return graphql(
+        `node(id: $id) { ... on Issue {
+          ${side}(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { ${issueFields} }
+          }
+        } }`,
+        {
+          id: { type: "ID!", value: issueId },
+          after: { type: "String", value: after },
+        },
+        ({ data, errors, headers }) => {
+          const node = isObject(data) ? data.node : undefined;
+          const connection = isObject(node) ? node[side] : undefined;
+          const info = isObject(connection) ? connection.pageInfo : undefined;
+          const nodes = isObject(connection) ? connection.nodes : undefined;
+          if (
+            !isObject(info) ||
+            typeof info.hasNextPage !== "boolean" ||
+            !Array.isArray(nodes) ||
+            (info.hasNextPage && typeof info.endCursor !== "string")
+          ) {
+            return {
+              ok: false,
+              error: errors.length
+                ? graphqlError(errors, headers)
+                : node == null
+                  ? issueUnavailable
+                  : { kind: "unexpected-response" },
+            };
+          }
+          const issues: Issue[] = [];
+          let incomplete = errors.length
+            ? graphqlError(errors, headers)
+            : undefined;
+          for (const [index, value] of nodes.entries()) {
+            const read = readIssueNode(
+              value,
+              errorsAbout(errors, ["node", side, "nodes", index]),
+              headers,
+            );
+            if (read.ok) issues.push(read.value);
+            else incomplete ??= read.error;
+          }
+          return {
+            ok: true,
+            value: {
+              issues,
+              incomplete,
+              nextPage: info.hasNextPage ? String(info.endCursor) : undefined,
+            },
+          };
+        },
+      );
+    },
     fetchIssueComments(issueId, after) {
       return graphql(
         // Only comments: GitHub's timeline events are left out.

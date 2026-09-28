@@ -2188,3 +2188,95 @@ describe("gh adapter: issues by number", () => {
     });
   });
 });
+
+describe("blocking relationship pages", () => {
+  it("reads closed and cross-repository issues with the next cursor and preserves partial errors", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 1,
+          stderr: "gh: a related issue is unavailable",
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo" },
+                node: {
+                  blockedBy: {
+                    nodes: [
+                      issueNode({
+                        number: 3,
+                        repository: "other/lib",
+                        state: "CLOSED",
+                      }),
+                      null,
+                    ],
+                    pageInfo: { hasNextPage: true, endCursor: "next" },
+                  },
+                },
+              },
+              errors: [
+                {
+                  type: "FORBIDDEN",
+                  message: "A related issue is unavailable",
+                  path: ["node", "blockedBy", "nodes", 1],
+                },
+              ],
+            }),
+          ),
+        },
+        requests,
+      ),
+    });
+    const answer = await github.fetchRelationships(
+      "I_root",
+      "blockedBy",
+      "previous",
+    );
+    expect(answer).toMatchObject({
+      ok: true,
+      viewerLogin: "octo",
+      budget: graphqlBudget,
+      value: {
+        nextPage: "next",
+        issues: [
+          {
+            number: 3,
+            state: "closed",
+            repository: { owner: "other", name: "lib" },
+          },
+        ],
+        incomplete: { kind: "unavailable" },
+      },
+    });
+    expect(requests[0]?.variables).toEqual({ id: "I_root", after: "previous" });
+    expect(requests[0]?.query).toContain(
+      "blockedBy(first: 100, after: $after)",
+    );
+  });
+
+  it("does not mistake a missing relationship connection for an empty list", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 0,
+        stderr: "",
+        stdout: transcript(
+          "200 OK",
+          graphqlHeaders,
+          JSON.stringify({
+            data: { viewer: { login: "octo" }, node: { blocking: null } },
+          }),
+        ),
+      }),
+    });
+    expect(await github.fetchRelationships("I_root", "blocking")).toMatchObject(
+      { ok: false, error: { kind: "unexpected-response" } },
+    );
+  });
+});
