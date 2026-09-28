@@ -1,8 +1,9 @@
 import type { IssueActor, IssueMetadata, Label } from "../contract.ts";
 import { isObject } from "../json.ts";
 import { parseRepositoryAddress } from "../repository-address.ts";
-import type { CommandRunner } from "./command-runner.ts";
+import type { CommandResult, CommandRunner } from "./command-runner.ts";
 import type {
+  AuthStatus,
   GitHubAccess,
   GitHubError,
   GitHubResult,
@@ -14,7 +15,12 @@ import type {
 
 export interface GhAdapterOptions {
   runCommand: CommandRunner;
+  /** The gh executable to run. */
+  gh: string;
 }
+
+/** How long `gh auth status` may take, in milliseconds. */
+const authStatusTimeout = 30 * 1000;
 
 /** The most issues GitHub returns in one page. */
 const issuesPerPage = 100;
@@ -45,6 +51,7 @@ const repositorySummaryFields = `
 /** The GitHub-access port implemented with `gh api`. */
 export function createGhAdapter({
   runCommand,
+  gh,
 }: GhAdapterOptions): GitHubAccess {
   /**
    * Runs one GraphQL query, failing on any error GitHub reports. Every query
@@ -83,7 +90,7 @@ export function createGhAdapter({
       ? Object.fromEntries(entries.map(([name, { value }]) => [name, value]))
       : undefined;
     const result = await runCommand(
-      "gh",
+      gh,
       [
         "api",
         "graphql",
@@ -95,22 +102,11 @@ export function createGhAdapter({
       ],
       { input: JSON.stringify({ query, variables: values }) },
     );
-    if (result.kind === "not-found") {
-      return { ok: false, error: { kind: "gh-not-found" } };
-    }
-    if (result.kind === "failed-to-start") {
-      return {
-        ok: false,
-        error: { kind: "gh-failed", message: result.message },
-      };
+    if (result.kind !== "exited") {
+      return { ok: false, error: runFailure(result) };
     }
     const response = parseTranscript(result.stdout);
-    if (!response) {
-      const message =
-        result.stderr.trim() ||
-        `gh exited with code ${String(result.exitCode)}`;
-      return { ok: false, error: { kind: "gh-failed", message } };
-    }
+    if (!response) return { ok: false, error: exitFailure(result) };
     if (response.status >= 400) {
       const message =
         readMessage(response.body) ?? `HTTP ${String(response.status)}`;
@@ -130,6 +126,30 @@ export function createGhAdapter({
   }
 
   return {
+    async fetchAuthStatus() {
+      const result = await runCommand(
+        gh,
+        [
+          "auth",
+          "status",
+          "--json",
+          "hosts",
+          "--hostname",
+          "github.com",
+          "--active",
+        ],
+        // Every request waits for this check, so it must end.
+        { timeout: authStatusTimeout },
+      );
+      if (result.kind !== "exited") {
+        return { ok: false, error: runFailure(result) };
+      }
+      // With `--json`, gh exits with 0 whatever the credentials' state.
+      if (result.exitCode !== 0) {
+        return { ok: false, error: exitFailure(result) };
+      }
+      return readAuthStatus(parseJson(result.stdout));
+    },
     async fetchIssueDetails(id) {
       const result = await graphql(
         `node(id: $id) { ... on Issue {
@@ -159,11 +179,6 @@ export function createGhAdapter({
       if (!issue || !metadata)
         return { ok: false, error: { kind: "unexpected-response" } };
       return { ok: true, value: { ...issue, ...metadata } };
-    },
-    async fetchViewer() {
-      const result = await graphql("");
-      if (!result.ok) return result;
-      return { ok: true, value: { login: result.value.viewerLogin } };
     },
     async fetchOpenIssues({ owner, name }, after) {
       const result = await graphql(
@@ -239,6 +254,89 @@ export function createGhAdapter({
       };
     },
   };
+}
+
+/** The domain error for gh that did not run to its end. */
+function runFailure(
+  result: Exclude<CommandResult, { kind: "exited" }>,
+): GitHubError {
+  switch (result.kind) {
+    case "not-found":
+      return { kind: "gh-not-found" };
+    case "failed-to-start":
+      return { kind: "gh-unusable", message: result.message };
+    case "timed-out":
+      return { kind: "gh-failed", message: "gh did not finish in time." };
+  }
+}
+
+/**
+ * The domain error for gh that exited without an answer from GitHub. Exit
+ * code 4 is gh's own: it has no credentials and asks to log in.
+ */
+function exitFailure(
+  result: Extract<CommandResult, { kind: "exited" }>,
+): GitHubError {
+  const message =
+    result.stderr.trim() || `gh exited with code ${String(result.exitCode)}`;
+  return result.exitCode === 4
+    ? { kind: "gh-signed-out", message }
+    : { kind: "gh-failed", message };
+}
+
+/**
+ * Reads `gh auth status --json hosts` for github.com's active account. A
+ * rejection counts only with GitHub's HTTP 401 as evidence; any other
+ * failure to check, such as a timeout, a connection or server error,
+ * confirms nothing.
+ */
+function readAuthStatus(json: unknown): GitHubResult<AuthStatus> {
+  const hosts = isObject(json) ? json.hosts : undefined;
+  if (!isObject(hosts)) {
+    return { ok: false, error: { kind: "unexpected-response" } };
+  }
+  const entries = hosts["github.com"];
+  if (entries === undefined) {
+    return { ok: true, value: { state: "signed-out" } };
+  }
+  const entry = Array.isArray(entries)
+    ? (entries as unknown[]).find(
+        (candidate) => isObject(candidate) && candidate.active === true,
+      )
+    : undefined;
+  if (!isObject(entry)) {
+    return { ok: false, error: { kind: "unexpected-response" } };
+  }
+  const { state, login, tokenSource, error } = entry;
+  if (typeof login !== "string" || typeof tokenSource !== "string") {
+    return { ok: false, error: { kind: "unexpected-response" } };
+  }
+  const source =
+    tokenSource === "GH_TOKEN" || tokenSource === "GITHUB_TOKEN"
+      ? tokenSource
+      : "stored";
+  if (state === "success" && login !== "") {
+    return {
+      ok: true,
+      value: { state: "signed-in", login, tokenSource: source },
+    };
+  }
+  const message = typeof error === "string" ? error : "";
+  if (state === "error" && /\b(?:HTTP|status code:) 401\b/.test(message)) {
+    return {
+      ok: true,
+      value: {
+        state: "rejected",
+        login: login === "" ? undefined : login,
+        tokenSource: source,
+        message,
+      },
+    };
+  }
+  if (state === "error" || state === "timeout") {
+    return { ok: false, error: { kind: "gh-failed", message } };
+  }
+  return { ok: false, error: { kind: "unexpected-response" } };
 }
 
 /** GraphQL variables by name, each with its GraphQL type. */

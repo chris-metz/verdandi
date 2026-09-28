@@ -3,12 +3,14 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { navigateIssues } from "./issue-navigation";
 import { MainArea } from "./MainArea";
+import { Notices } from "./Notices";
 import {
   commandForWindowKey,
   shortcutModifier,
   type Pane,
 } from "./pane-navigation";
 import { sameScope, scopeLabel } from "./scope";
+import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder } from "./sidebar-entries";
 
@@ -22,9 +24,13 @@ const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
  * The window: the sidebar and the main area, which have the keyboard in turn.
  * The pane that has it follows the DOM focus, and survives the main area's
  * list being replaced when another entry is selected. What is on screen is
- * read again with `r`, and when it is old as the window regains focus.
+ * read again with `r`, and when it is old as the window regains focus. While
+ * the setup blocker is up, everything behind it stays as it was but is inert;
+ * once it goes, the pane that had the keyboard has it again.
  */
 export function App() {
+  const setup = useSetup();
+  const blocked = setup?.status === "blocked";
   const sidebar = useSidebar();
   const items = useMemo(() => entryOrder(sidebar), [sidebar]);
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
@@ -55,6 +61,16 @@ export function App() {
     focusPane(sidebarPane.current);
   }, []);
 
+  // Back from the setup blocker, the pane that had the keyboard has it again.
+  const blockedBefore = useRef(blocked);
+  useEffect(() => {
+    const wasBlocked = blockedBefore.current;
+    blockedBefore.current = blocked;
+    if (wasBlocked && !blocked) {
+      focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+    }
+  }, [blocked, focused]);
+
   // Back in the window, what is on screen is read again if it is old.
   useEffect(() => {
     function revalidate() {
@@ -68,8 +84,9 @@ export function App() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      // A key the focused pane has handled is not the window's.
-      if (event.defaultPrevented) return;
+      // A key the focused pane has handled is not the window's, and none is
+      // while the setup blocker is up.
+      if (event.defaultPrevented || blocked) return;
       const command = commandForWindowKey(event, {
         focused,
         entries,
@@ -99,59 +116,64 @@ export function App() {
   });
 
   return (
-    <div className="flex h-screen text-sm">
-      <aside
-        ref={sidebarPane}
-        tabIndex={-1}
-        onFocus={() => {
-          setFocused("sidebar");
-        }}
-        className={cn(
-          "flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground outline-none",
-          focused === "sidebar" && focusedPaneMark,
-        )}
-      >
-        <Sidebar
-          sidebar={sidebar}
-          items={items}
-          selected={selected}
-          onSelect={select}
-          focused={focused === "sidebar"}
-          shortcutsShown={shortcutsShown}
-          modifier={modifier}
-        />
-      </aside>
-      <main
-        ref={mainPane}
-        tabIndex={-1}
-        onFocus={(event) => {
-          setFocused("main");
-          // A click beside the list still gives the list the keyboard.
-          if (event.target === event.currentTarget) {
-            focusPane(event.currentTarget);
-          }
-        }}
-        className={cn(
-          "flex min-w-0 flex-1 flex-col outline-none",
-          focused === "main" && focusedPaneMark,
-        )}
-      >
-        {selected ? (
-          // A new scope starts from a fresh list, never the previous one's.
-          <MainArea
-            key={scopeLabel(selected)}
-            scope={selected}
-            stack={stack}
-            onNavigate={navigate}
-            hasKeyboard={focused === "main"}
+    <>
+      <div className="flex h-screen text-sm" inert={blocked}>
+        <aside
+          ref={sidebarPane}
+          tabIndex={-1}
+          onFocus={() => {
+            setFocused("sidebar");
+          }}
+          className={cn(
+            "flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground outline-none",
+            focused === "sidebar" && focusedPaneMark,
+          )}
+        >
+          <Sidebar
+            sidebar={sidebar}
+            setup={setup}
+            items={items}
+            selected={selected}
+            onSelect={select}
+            focused={focused === "sidebar"}
+            shortcutsShown={shortcutsShown}
+            modifier={modifier}
           />
-        ) : (
-          <p className="m-auto text-muted-foreground">
-            Select All or a repository.
-          </p>
-        )}
-      </main>
-    </div>
+        </aside>
+        <main
+          ref={mainPane}
+          tabIndex={-1}
+          onFocus={(event) => {
+            setFocused("main");
+            // A click beside the list still gives the list the keyboard.
+            if (event.target === event.currentTarget) {
+              focusPane(event.currentTarget);
+            }
+          }}
+          className={cn(
+            "flex min-w-0 flex-1 flex-col outline-none",
+            focused === "main" && focusedPaneMark,
+          )}
+        >
+          {selected ? (
+            // A new scope starts from a fresh list, never the previous one's.
+            <MainArea
+              key={scopeLabel(selected)}
+              scope={selected}
+              stack={stack}
+              onNavigate={navigate}
+              hasKeyboard={focused === "main"}
+            />
+          ) : (
+            <p className="m-auto text-muted-foreground">
+              Select All or a repository.
+            </p>
+          )}
+        </main>
+      </div>
+      {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
+      <Notices />
+    </>
   );
 }
 

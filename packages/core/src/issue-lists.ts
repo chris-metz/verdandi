@@ -293,25 +293,36 @@ export function createIssueLists({
     update(list);
   }
 
-  /** Starts a list over, keeping its expansion. */
+  /**
+   * Starts a list over, keeping its expansion. One that failed keeps showing
+   * what it showed while it is read again.
+   */
   function create(scope: Scope, validFrom: Moment): ListState {
     const key = scopeKey(scope);
+    const previous = lists.get(key);
     const list: ListState = {
       scope,
-      tracked: undefined,
+      tracked: previous?.tracked,
       readingTracked: false,
       validFrom,
       checkedAt: clock().time,
       requested: new Set(),
       pendingRequests: 0,
       failure: undefined,
-      expansion: lists.get(key)?.expansion ?? {
+      expansion: previous?.expansion ?? {
         expanded: true,
         except: new Set(),
       },
       loaded: false,
     };
     lists.set(key, list);
+    // Its repositories' pages start at once, so that it shows as loading
+    // again rather than as it failed.
+    if (list.tracked !== undefined) {
+      for (const repository of repositoriesOf(list)) {
+        loader.loadOpenIssues(repository, validFrom);
+      }
+    }
     update(list);
     void start(list);
     return list;

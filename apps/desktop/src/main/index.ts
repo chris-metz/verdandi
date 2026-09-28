@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   createCore,
   createGhAdapter,
+  createLocalStateFile,
   createSettingsFile,
   desktopStateDirectory,
   runCommand,
@@ -10,12 +11,23 @@ import {
 } from "@verdandi/core";
 import {
   eventNames,
-  requestNames,
   type Contract,
   type CoreRequests,
 } from "@verdandi/core/contract";
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from "electron";
-import { ipcChannels } from "../shared/ipc";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  shell,
+  type OpenDialogOptions,
+} from "electron";
+import {
+  ipcChannels,
+  rendererRequestNames,
+  type DesktopApi,
+} from "../shared/ipc";
 
 const host: HostEnvironment = {
   platform: process.platform,
@@ -27,9 +39,14 @@ const host: HostEnvironment = {
 // and out of the roaming profile on Windows.
 app.setPath("userData", desktopStateDirectory(host));
 
+// gh is looked for in this environment, which a launch from Finder, the
+// Start menu or a desktop entry gives without the shell's PATH.
 const core = createCore({
-  github: createGhAdapter({ runCommand }),
+  github: (gh) => createGhAdapter({ runCommand, gh }),
+  runCommand,
+  host,
   settings: createSettingsFile(host),
+  localState: createLocalStateFile(host),
 });
 
 wireContract(core);
@@ -37,6 +54,9 @@ wireContract(core);
 ipcMain.on(ipcChannels.openExternal, (_event, url: unknown) => {
   if (typeof url === "string") openExternal(url);
 });
+ipcMain.handle(ipcChannels.chooseGhExecutable, (event) =>
+  chooseGhExecutable(BrowserWindow.fromWebContents(event.sender)),
+);
 
 void app.whenReady().then(() => {
   createWindow();
@@ -72,8 +92,37 @@ function wireContract(contract: Contract) {
   }
 }
 
+/** Whether a renderer may make a request of this name. */
 function isRequestName(name: unknown): name is keyof CoreRequests {
-  return requestNames.includes(name as keyof CoreRequests);
+  return rendererRequestNames.includes(name as keyof CoreRequests);
+}
+
+/**
+ * Lets the user choose gh in a file dialog, then has the core check and use
+ * it. The renderer only asks for the dialog; it never names the file.
+ */
+async function chooseGhExecutable(
+  window: BrowserWindow | null,
+): ReturnType<DesktopApi["chooseGhExecutable"]> {
+  const options: OpenDialogOptions = {
+    title: "Choose gh executable",
+    buttonLabel: "Choose",
+    message: "Choose the gh executable, e.g. /opt/homebrew/bin/gh.",
+    // Package managers put gh in folders Finder hides, such as /opt.
+    properties: ["openFile", "showHiddenFiles"],
+    ...(process.platform === "win32" && {
+      filters: [
+        { name: "Programs", extensions: ["exe"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    }),
+  };
+  const { canceled, filePaths } = window
+    ? await dialog.showOpenDialog(window, options)
+    : await dialog.showOpenDialog(options);
+  const [file] = filePaths;
+  if (canceled || file === undefined) return { status: "canceled" };
+  return core.chooseGhExecutable(file);
 }
 
 function createWindow() {

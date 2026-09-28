@@ -8,10 +8,13 @@ interface GraphqlRequest {
   variables?: Record<string, unknown>;
 }
 
+/** Where the adapter is told gh is. */
+const ghPath = "/opt/homebrew/bin/gh";
+
 /**
- * A `gh` that answers every `gh api --include` call for github.com with the
- * same result, and records the GraphQL requests it is given. Without
- * `--hostname`, gh would follow an inherited `GH_HOST`.
+ * A `gh` at `ghPath` that answers every `gh api --include` call for
+ * github.com with the same result, and records the GraphQL requests it is
+ * given. Without `--hostname`, gh would follow an inherited `GH_HOST`.
  */
 function ghAnswering(
   result: CommandResult,
@@ -20,7 +23,7 @@ function ghAnswering(
   return (command, args, options) => {
     const hostname = args[args.indexOf("--hostname") + 1];
     if (
-      command !== "gh" ||
+      command !== ghPath ||
       args[0] !== "api" ||
       !args.includes("--include") ||
       hostname !== "github.com"
@@ -92,39 +95,21 @@ function issueNode({
 }
 
 describe("gh adapter", () => {
-  it("reads the viewer's login", async () => {
+  it("reports gh missing", async () => {
     const github = createGhAdapter({
-      runCommand: ghAnswering({
-        kind: "exited",
-        exitCode: 0,
-        stdout: transcript(
-          "200 OK",
-          graphqlHeaders,
-          '{"data":{"viewer":{"login":"octo-reader"}}}',
-        ),
-        stderr: "",
-      }),
-    });
-
-    expect(await github.fetchViewer()).toEqual({
-      ok: true,
-      value: { login: "octo-reader" },
-    });
-  });
-
-  it("reports gh missing from PATH", async () => {
-    const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({ kind: "not-found" }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: { kind: "gh-not-found" },
     });
   });
 
-  it("reports gh failing before it reaches GitHub", async () => {
+  it("reports gh without credentials for github.com, which exits with code 4 before asking GitHub", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 4,
@@ -135,10 +120,10 @@ describe("gh adapter", () => {
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: {
-        kind: "gh-failed",
+        kind: "gh-signed-out",
         message:
           "To get started with GitHub CLI, please run:  gh auth login\n" +
           "Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.",
@@ -146,8 +131,31 @@ describe("gh adapter", () => {
     });
   });
 
+  it("reports gh failing before it reaches GitHub, e.g. without a connection", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host\n',
+      }),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: {
+        kind: "gh-failed",
+        message:
+          'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
+      },
+    });
+  });
+
   it("reports an HTTP error status from GitHub", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -164,7 +172,7 @@ describe("gh adapter", () => {
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: { kind: "http", status: 401, message: "Bad credentials" },
     });
@@ -174,6 +182,7 @@ describe("gh adapter", () => {
     const message =
       "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `0000:1111:2222:3333:44445555` when reporting this issue.";
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -186,7 +195,7 @@ describe("gh adapter", () => {
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: { kind: "graphql", messages: [message] },
     });
@@ -194,20 +203,61 @@ describe("gh adapter", () => {
 
   it("reports gh that cannot be started", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "failed-to-start",
-        message: "spawn gh EACCES",
+        message: "spawn /opt/homebrew/bin/gh EACCES",
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
-      error: { kind: "gh-failed", message: "spawn gh EACCES" },
+      error: {
+        kind: "gh-unusable",
+        message: "spawn /opt/homebrew/bin/gh EACCES",
+      },
+    });
+  });
+
+  it.each([
+    [
+      "403 Forbidden",
+      "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+    ],
+    ["404 Not Found", "Not Found"],
+    ["410 Gone", "Issues are disabled for this repo"],
+    ["502 Bad Gateway", "Server Error"],
+    [
+      "403 Forbidden",
+      "API rate limit exceeded for user ID 1234567. If you reach out to GitHub Support for help, please include the request ID 0000:1111:2222:3333:44445555 and timestamp 2026-09-28 06:20:48 UTC.",
+    ],
+  ])("reports HTTP %s from GitHub by its status", async (status, message) => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript(
+          status,
+          ["Content-Type: application/json; charset=utf-8"],
+          JSON.stringify({
+            message,
+            documentation_url: "https://docs.github.com/rest",
+          }),
+        ),
+        stderr: `gh: ${message} (HTTP ${status.slice(0, 3)})\n`,
+      }),
+    });
+
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
+      ok: false,
+      error: { kind: "http", status: Number(status.slice(0, 3)), message },
     });
   });
 
   it("reports a response body that is not JSON", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 0,
@@ -220,7 +270,7 @@ describe("gh adapter", () => {
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: { kind: "unexpected-response" },
     });
@@ -228,6 +278,7 @@ describe("gh adapter", () => {
 
   it("reports a GraphQL response without the viewer", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 0,
@@ -236,7 +287,7 @@ describe("gh adapter", () => {
       }),
     });
 
-    expect(await github.fetchViewer()).toEqual({
+    expect(await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"])).toEqual({
       ok: false,
       error: { kind: "unexpected-response" },
     });
@@ -245,6 +296,7 @@ describe("gh adapter", () => {
   it("reads a page of a repository's open issues", async () => {
     const requests: GraphqlRequest[] = [];
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering(
         {
           kind: "exited",
@@ -419,6 +471,7 @@ describe("gh adapter", () => {
   it("reads the page after a cursor, up to the last one", async () => {
     const requests: GraphqlRequest[] = [];
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering(
         {
           kind: "exited",
@@ -463,6 +516,7 @@ describe("gh adapter", () => {
     const message =
       "Could not resolve to a Repository with the name 'acme/gone'.";
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -495,6 +549,7 @@ describe("gh adapter", () => {
 
   it("reports an issue page it cannot read", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 0,
@@ -529,6 +584,7 @@ describe("gh adapter", () => {
   it("reads issues by node ID, from any repositories", async () => {
     const requests: GraphqlRequest[] = [];
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering(
         {
           kind: "exited",
@@ -604,6 +660,7 @@ describe("gh adapter", () => {
     const message =
       "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'.";
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -636,6 +693,7 @@ describe("gh adapter", () => {
 
   it("reports a node it cannot read as an issue", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 0,
@@ -687,6 +745,7 @@ describe("gh adapter: repository summaries", () => {
   it("reads several repositories in one request", async () => {
     const requests: GraphqlRequest[] = [];
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering(
         {
           kind: "exited",
@@ -758,6 +817,7 @@ describe("gh adapter: repository summaries", () => {
     const message =
       "Could not resolve to a Repository with the name 'acme/gone'.";
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -809,6 +869,7 @@ describe("gh adapter: repository summaries", () => {
 
   it("reports a repository it cannot read, and reads the others", async () => {
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 0,
@@ -854,6 +915,7 @@ describe("gh adapter: repository summaries", () => {
   it("reports a query GitHub rejected as a whole", async () => {
     const message = "API rate limit already exceeded for user ID 1234567.";
     const github = createGhAdapter({
+      gh: ghPath,
       runCommand: ghAnswering({
         kind: "exited",
         exitCode: 1,
@@ -898,6 +960,7 @@ it("reads issue page metadata, including nullable authors and milestones", async
     comments: { totalCount: 12 },
   };
   const github = createGhAdapter({
+    gh: ghPath,
     runCommand: ghAnswering({
       kind: "exited",
       exitCode: 0,
@@ -927,5 +990,291 @@ it("reads issue page metadata, including nullable authors and milestones", async
       ],
       commentCount: 12,
     },
+  });
+});
+
+describe("gh adapter: auth status", () => {
+  /**
+   * A `gh` at `ghPath` that answers `gh auth status` for github.com's active
+   * account, as JSON, with `result`.
+   */
+  function ghAuthStatus(result: CommandResult): CommandRunner {
+    return (command, args) => {
+      const expected = [
+        "auth",
+        "status",
+        "--json",
+        "hosts",
+        "--hostname",
+        "github.com",
+        "--active",
+      ];
+      if (command !== ghPath || args.join(" ") !== expected.join(" ")) {
+        throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+      }
+      return Promise.resolve(result);
+    };
+  }
+
+  /** gh's answer to `gh auth status --json hosts`, which always exits 0. */
+  function hosts(entries: Record<string, unknown>[] | undefined) {
+    return ghAuthStatus({
+      kind: "exited",
+      exitCode: 0,
+      stdout: JSON.stringify({
+        hosts: entries === undefined ? {} : { "github.com": entries },
+      }),
+      stderr:
+        entries === undefined
+          ? "You are not logged into any GitHub hosts. To log in, run: gh auth login\n"
+          : "",
+    });
+  }
+
+  it("reads the account gh's stored credentials sign in as", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: hosts([
+        {
+          state: "success",
+          active: true,
+          host: "github.com",
+          login: "octo-reader",
+          tokenSource: "keyring",
+          scopes: "gist, read:org, repo, workflow",
+          gitProtocol: "https",
+        },
+      ]),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: true,
+      value: {
+        state: "signed-in",
+        login: "octo-reader",
+        tokenSource: "stored",
+      },
+    });
+  });
+
+  it("counts a token in gh's config file as stored", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: hosts([
+        {
+          state: "success",
+          active: true,
+          host: "github.com",
+          login: "octo-reader",
+          tokenSource: "/home/octo/.config/gh/hosts.yml",
+          gitProtocol: "https",
+        },
+      ]),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: true,
+      value: {
+        state: "signed-in",
+        login: "octo-reader",
+        tokenSource: "stored",
+      },
+    });
+  });
+
+  it.each(["GH_TOKEN", "GITHUB_TOKEN"] as const)(
+    "names %s when its token overrides gh's stored credentials",
+    async (variable) => {
+      const github = createGhAdapter({
+        gh: ghPath,
+        runCommand: hosts([
+          {
+            state: "success",
+            active: true,
+            host: "github.com",
+            login: "octo-bot",
+            tokenSource: variable,
+            gitProtocol: "https",
+          },
+        ]),
+      });
+
+      expect(await github.fetchAuthStatus()).toEqual({
+        ok: true,
+        value: { state: "signed-in", login: "octo-bot", tokenSource: variable },
+      });
+    },
+  );
+
+  it("reports gh without credentials for github.com", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: hosts(undefined),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: true,
+      value: { state: "signed-out" },
+    });
+  });
+
+  it("reports stored credentials GitHub rejected", async () => {
+    const error =
+      "HTTP 401: Bad credentials (https://api.github.com/)\nTry authenticating with:  gh auth login";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: hosts([
+        {
+          state: "error",
+          error,
+          active: true,
+          host: "github.com",
+          login: "octo-reader",
+          tokenSource: "keyring",
+          gitProtocol: "https",
+        },
+      ]),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: true,
+      value: {
+        state: "rejected",
+        login: "octo-reader",
+        tokenSource: "stored",
+        message: error,
+      },
+    });
+  });
+
+  it("reports a token in GH_TOKEN that GitHub rejected", async () => {
+    const error =
+      'non-200 OK status code: 401 Unauthorized body: "{\\r\\n  \\"message\\": \\"Bad credentials\\",\\r\\n  \\"documentation_url\\": \\"https://docs.github.com/rest\\",\\r\\n  \\"status\\": \\"401\\"\\r\\n}"';
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: hosts([
+        {
+          state: "error",
+          error,
+          active: true,
+          host: "github.com",
+          login: "",
+          tokenSource: "GH_TOKEN",
+          gitProtocol: "https",
+        },
+      ]),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: true,
+      value: {
+        state: "rejected",
+        login: undefined,
+        tokenSource: "GH_TOKEN",
+        message: error,
+      },
+    });
+  });
+
+  it.each([
+    [
+      "error",
+      'Get "https://api.github.com/": dial tcp: lookup api.github.com: no such host',
+    ],
+    [
+      "timeout",
+      'Get "https://api.github.com/": net/http: request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers)',
+    ],
+    ["error", "HTTP 502: Server Error (https://api.github.com/)"],
+  ])(
+    "cannot confirm the credentials when checking them ends in %s: %s",
+    async (state, error) => {
+      const github = createGhAdapter({
+        gh: ghPath,
+        runCommand: hosts([
+          {
+            state,
+            error,
+            active: true,
+            host: "github.com",
+            login: "octo-reader",
+            tokenSource: "keyring",
+            gitProtocol: "https",
+          },
+        ]),
+      });
+
+      expect(await github.fetchAuthStatus()).toEqual({
+        ok: false,
+        error: { kind: "gh-failed", message: error },
+      });
+    },
+  );
+
+  it("reports gh that fails without an answer", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAuthStatus({
+        kind: "exited",
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "failed to read configuration: open config.yml: permission denied\n",
+      }),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: false,
+      error: {
+        kind: "gh-failed",
+        message:
+          "failed to read configuration: open config.yml: permission denied",
+      },
+    });
+  });
+
+  it("gives up on a check that does not finish, confirming nothing", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      // Only a timeout ends it.
+      runCommand: (_command, _args, options) =>
+        options?.timeout === undefined
+          ? new Promise(() => undefined)
+          : Promise.resolve({ kind: "timed-out" }),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: false,
+      error: { kind: "gh-failed", message: "gh did not finish in time." },
+    });
+  });
+
+  it("reports gh missing", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAuthStatus({ kind: "not-found" }),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: false,
+      error: { kind: "gh-not-found" },
+    });
+  });
+
+  it("reports an answer it cannot read", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAuthStatus({
+        kind: "exited",
+        exitCode: 0,
+        stdout: "github.com\n  ✓ Logged in to github.com account octo-reader\n",
+        stderr: "",
+      }),
+    });
+
+    expect(await github.fetchAuthStatus()).toEqual({
+      ok: false,
+      error: { kind: "unexpected-response" },
+    });
   });
 });

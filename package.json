@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @verdandi/desktop dev",
+    "package": "pnpm --filter @verdandi/desktop package",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint --max-warnings 0 .",

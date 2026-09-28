@@ -1,8 +1,4 @@
-import type {
-  AccountStatus,
-  Scope,
-  SidebarEntries,
-} from "@verdandi/core/contract";
+import type { Scope, Setup, SidebarEntries } from "@verdandi/core/contract";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
@@ -22,6 +18,7 @@ import { countLabel, type SidebarItem } from "./sidebar-entries";
  */
 export function Sidebar({
   sidebar,
+  setup,
   items,
   selected,
   onSelect,
@@ -30,6 +27,8 @@ export function Sidebar({
   modifier,
 }: {
   sidebar: SidebarEntries | undefined;
+  /** Whether Verdandi can read GitHub, and as which account. */
+  setup: Setup | undefined;
   /** The sidebar's entries, in visual order. */
   items: readonly SidebarItem[];
   selected: Scope | undefined;
@@ -105,7 +104,7 @@ export function Sidebar({
         {/* Empty until views arrive. */}
         <SectionHeading>Views</SectionHeading>
       </nav>
-      <Account />
+      <Account setup={setup} />
     </>
   );
 }
@@ -197,23 +196,28 @@ function Entry({
   );
 }
 
-/** Which account Verdandi reads GitHub as, or why that is unknown. */
-function Account() {
-  const account = useAccount();
+/**
+ * Which account Verdandi reads GitHub as, and where its token comes from when
+ * an environment variable overrides gh's stored account, or why the account
+ * is not confirmed. While the setup blocker covers the app, it says nothing.
+ */
+function Account({ setup }: { setup: Setup | undefined }) {
+  if (setup?.status === "blocked") return null;
+  const label =
+    setup?.status === "ready" ? accountLabel(setup.account) : undefined;
   return (
     <footer className="border-t border-sidebar-border px-4 py-2 text-xs">
-      {account === undefined ? (
+      {label === undefined ? (
         <p className="text-muted-foreground">Checking GitHub access…</p>
-      ) : account.status === "known" ? (
-        <p className="truncate text-muted-foreground">
-          {accountLabel(account.account)}
-        </p>
       ) : (
         <p
-          role="alert"
-          className="break-words whitespace-pre-line text-destructive"
+          title={label.detail}
+          className={cn(
+            "truncate text-muted-foreground",
+            label.detail !== undefined && "cursor-help",
+          )}
         >
-          {account.message}
+          {label.text}
         </p>
       )}
     </footer>
@@ -249,29 +253,4 @@ export function useSidebar(): SidebarEntries | undefined {
     };
   }, []);
   return sidebar;
-}
-
-/** The account Verdandi reads GitHub as, once the core has asked. */
-function useAccount(): AccountStatus | undefined {
-  const [account, setAccount] = useState<AccountStatus>();
-  useEffect(() => {
-    let current = true;
-    window.verdandi.getAccount().then(
-      (status) => {
-        if (current) setAccount(status);
-      },
-      (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        if (current) setAccount({ status: "failed", message });
-      },
-    );
-    const unsubscribe = window.verdandi.on("accountChanged", (changed) => {
-      setAccount({ status: "known", account: changed });
-    });
-    return () => {
-      current = false;
-      unsubscribe();
-    };
-  }, []);
-  return account;
 }

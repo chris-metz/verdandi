@@ -4,7 +4,11 @@ import type { GitHubError } from "./port.ts";
 export function describeGitHubError(error: GitHubError): string {
   switch (error.kind) {
     case "gh-not-found":
-      return "GitHub CLI (gh) was not found on PATH.";
+      return "GitHub CLI (gh) could not be found.";
+    case "gh-unusable":
+      return `GitHub CLI (gh) could not be started: ${error.message}`;
+    case "gh-signed-out":
+      return "GitHub CLI (gh) is not signed in to github.com.";
     case "gh-failed":
       return `GitHub CLI (gh) failed: ${error.message}`;
     case "http":

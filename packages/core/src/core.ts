@@ -1,21 +1,33 @@
-import type { Account, Contract, CoreEvents } from "./contract.ts";
+import type { Contract, CoreEvents, Screen } from "./contract.ts";
+import type { HostEnvironment } from "./directories.ts";
 import { createEmitter } from "./emitter.ts";
-import { describeGitHubError } from "./github/error-message.ts";
+import type { CommandRunner } from "./github/command-runner.ts";
 import type { GitHubAccess, SendRequest } from "./github/port.ts";
 import { createIssueLists } from "./issue-lists.ts";
 import { createIssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
 import { createRequestQueue } from "./request-queue.ts";
-import type { SettingsStorage } from "./settings/port.ts";
+import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
+import { createGhSetup } from "./setup.ts";
 import { createSidebar } from "./sidebar.ts";
 
 /** At most this many `gh` processes run at once. */
 const maxConcurrentRequests = 4;
 
 export interface CoreOptions {
-  github: GitHubAccess;
+  /** GitHub access through the gh executable at a path, once one is found. */
+  github: (gh: string) => GitHubAccess;
+  /** Runs the gh executables found or chosen, to check them. */
+  runCommand: CommandRunner;
+  /**
+   * Where gh is looked for: the operating system, the environment's PATH and
+   * the home directory.
+   */
+  host: HostEnvironment;
   settings: SettingsStorage;
+  /** Machine-local state, which keeps the gh the user chose. */
+  localState: LocalStateStorage;
   /** The time, in milliseconds since the epoch: the system clock by default. */
   now?: () => number;
 }
@@ -23,15 +35,50 @@ export interface CoreOptions {
 /** Creates the core, which implements the contract every interface uses. */
 export function createCore({
   github,
+  runCommand,
+  host,
   settings,
+  localState,
   now = Date.now,
 }: CoreOptions): Contract {
   const events = createEmitter<CoreEvents>();
   const clock = createClock(now);
   const queue = createRequestQueue({ concurrency: maxConcurrentRequests });
-  let knownAccount: Account | undefined;
+  /** The screen the main area shows, as last opened, refreshed or shown. */
+  let shown: Screen | undefined;
 
-  const request: SendRequest = (send) => queue.run(() => send(github));
+  const setup = createGhSetup({
+    runCommand,
+    host,
+    localState,
+    github,
+    push: (changed) => {
+      events.emit("setupChanged", changed);
+    },
+    notify: (notice) => {
+      events.emit("notice", notice);
+    },
+    // Back from the blocker, what is on screen is shown again at once, as
+    // if it had been opened now: what failed meanwhile, or is older than five
+    // minutes, is read again, and what waited is not asked for twice.
+    recovered: () => {
+      if (shown?.kind === "list") lists.open(shown.scope);
+      if (shown?.kind === "issue") pages.open(shown.issueId);
+      void sidebar.read();
+    },
+    accountChanged: (account) => {
+      events.emit("accountChanged", account);
+    },
+  });
+
+  // Every request waits until gh is usable and signed in, and has what
+  // becomes of it checked for signs that it is no longer.
+  const request: SendRequest = async (send) => {
+    const access = await setup.access();
+    const result = await queue.run(() => send(access));
+    if (!result.ok) setup.requestFailed(result.error);
+    return result;
+  };
 
   const sidebar = createSidebar({
     settings,
@@ -67,34 +114,27 @@ export function createCore({
     },
   });
 
-  /** Records the account GitHub answered as, pushing a change. */
-  function observeAccount(login: string): Account {
-    const previous = knownAccount;
-    const account: Account = { login, host: "github.com" };
-    knownAccount = account;
-    if (previous !== undefined && previous.login !== login) {
-      events.emit("accountChanged", account);
-    }
-    return account;
-  }
-
   return {
     openIssuePage(issueId) {
+      shown = { kind: "issue", issueId };
       pages.open(issueId);
       sidebar.revalidate();
       return Promise.resolve();
     },
-    async getAccount() {
-      const result = await request((github) => github.fetchViewer());
-      if (!result.ok) {
-        return { status: "failed", message: describeGitHubError(result.error) };
-      }
-      return { status: "known", account: observeAccount(result.value.login) };
+    getSetup() {
+      return Promise.resolve(setup.current());
+    },
+    checkSetupAgain() {
+      return setup.checkAgain();
+    },
+    chooseGhExecutable(path) {
+      return setup.choose(path);
     },
     getSidebar() {
       return sidebar.read();
     },
     openList(scope) {
+      shown = { kind: "list", scope };
       lists.open(scope);
       sidebar.revalidate();
       return Promise.resolve();
@@ -108,12 +148,14 @@ export function createCore({
       return Promise.resolve();
     },
     refresh(screen) {
+      shown = screen;
       if (screen?.kind === "list") lists.refresh(screen.scope);
       if (screen?.kind === "issue") pages.refresh(screen.issueId);
       sidebar.refresh();
       return Promise.resolve();
     },
     revalidate(screen) {
+      shown = screen;
       if (screen?.kind === "list") lists.revalidate(screen.scope);
       if (screen?.kind === "issue") pages.revalidate(screen.issueId);
       sidebar.revalidate();

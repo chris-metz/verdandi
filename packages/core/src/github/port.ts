@@ -1,4 +1,9 @@
-import type { IssueMetadata, Label, RepositoryAddress } from "../contract.ts";
+import type {
+  IssueMetadata,
+  Label,
+  RepositoryAddress,
+  TokenSource,
+} from "../contract.ts";
 
 /**
  * The GitHub-access port. Every GitHub read the core makes goes through it,
@@ -6,10 +11,14 @@ import type { IssueMetadata, Label, RepositoryAddress } from "../contract.ts";
  * can schedule and count them.
  */
 export interface GitHubAccess {
+  /**
+   * Asks gh whether its credentials for github.com work, as `gh auth
+   * status` does: gh asks GitHub with them. It fails when that cannot be
+   * confirmed either way, e.g. without a connection.
+   */
+  fetchAuthStatus(): Promise<GitHubResult<AuthStatus>>;
   /** Reads a single issue with the metadata shown on its page. */
   fetchIssueDetails(id: string): Promise<GitHubResult<Issue & IssueMetadata>>;
-  /** Reads the account GitHub answers as. */
-  fetchViewer(): Promise<GitHubResult<Viewer>>;
   /**
    * Reads one page of a repository's open issues, newest first: the first
    * page, or the one after the `after` cursor of the previous page. Each page
@@ -40,12 +49,23 @@ export interface GitHubAccess {
  * them all. The core's modules take this instead of the port itself.
  */
 export type SendRequest = <T>(
-  send: (github: GitHubAccess) => Promise<T>,
-) => Promise<T>;
+  send: (github: GitHubAccess) => Promise<GitHubResult<T>>,
+) => Promise<GitHubResult<T>>;
 
-export interface Viewer {
-  login: string;
-}
+/** Whether gh has working credentials for github.com. */
+export type AuthStatus =
+  /** GitHub accepted them. */
+  | { state: "signed-in"; login: string; tokenSource: TokenSource }
+  /** gh has none for github.com. */
+  | { state: "signed-out" }
+  /** GitHub rejected them with HTTP 401, e.g. an expired or revoked token. */
+  | {
+      state: "rejected";
+      /** The account they belong to, if gh knows it without GitHub. */
+      login: string | undefined;
+      tokenSource: TokenSource;
+      message: string;
+    };
 
 export interface Issue {
   /** GitHub's node ID. */
@@ -113,9 +133,19 @@ export type GitHubResult<T> =
   { ok: true; value: T } | { ok: false; error: GitHubError };
 
 export type GitHubError =
-  /** `gh` is not on PATH. */
+  /** There is no gh where it was found, e.g. it has been uninstalled since. */
   | { kind: "gh-not-found" }
-  /** `gh` could not start, or exited without an HTTP response from GitHub. */
+  /** gh could not be started, e.g. it is no longer executable. */
+  | { kind: "gh-unusable"; message: string }
+  /**
+   * gh has no credentials for github.com: it exited with code 4, asking to
+   * log in, without asking GitHub.
+   */
+  | { kind: "gh-signed-out"; message: string }
+  /**
+   * gh exited without an HTTP response from GitHub, e.g. because it could
+   * not reach GitHub.
+   */
   | { kind: "gh-failed"; message: string }
   /** GitHub answered with an HTTP error status. */
   | { kind: "http"; status: number; message: string }

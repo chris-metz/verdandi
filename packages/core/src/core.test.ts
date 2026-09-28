@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -9,10 +16,16 @@ import type {
   IssueList,
   IssueNode,
   IssuePage,
+  Notice,
   Scope,
+  Setup,
   SidebarEntries,
 } from "./contract.ts";
 import { createCore } from "./core.ts";
+import type { HostEnvironment } from "./directories.ts";
+import type { CommandResult, CommandRunner } from "./github/command-runner.ts";
+import type { GitHubError } from "./github/port.ts";
+import { createLocalStateFile } from "./settings/local-state-file.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
 import { createFakeGitHub, type FakeGitHub } from "./testing/fake-github.ts";
 
@@ -54,21 +67,77 @@ function createClock(): TestClock {
   };
 }
 
+/** What `gh --version` prints, for a version of GitHub CLI. */
+function ghVersion(version = "2.101.0"): CommandResult {
+  return {
+    kind: "exited",
+    exitCode: 0,
+    stdout: `gh version ${version} (2026-09-15)\nhttps://github.com/cli/cli/releases/tag/v${version}\n`,
+    stderr: "",
+  };
+}
+
 /**
- * The core on a fake GitHub, with the real settings file below `home`, and a
- * clock that stands still unless the test moves it on.
+ * The machine the core looks for gh on: its platform, environment and home
+ * directory, and its executables by path, each with what it answers to
+ * `--version`. Any other path holds nothing.
+ */
+interface TestMachine {
+  host: HostEnvironment;
+  executables: Map<string, CommandResult>;
+}
+
+/** A Linux machine with gh 2.101.0 in `/usr/bin`, which is on PATH. */
+function linuxWithGh(): TestMachine {
+  return {
+    host: {
+      platform: "linux",
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+      homedir: "/home/octo",
+    },
+    executables: new Map([["/usr/bin/gh", ghVersion()]]),
+  };
+}
+
+/** Runs the machine's executables, which only ever answer `--version`. */
+function runnerOn(machine: TestMachine): CommandRunner {
+  return (command, args) => {
+    if (args.join(" ") !== "--version") {
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    }
+    return Promise.resolve(
+      machine.executables.get(command) ?? { kind: "not-found" },
+    );
+  };
+}
+
+/** Where Verdandi keeps its files in tests: below `home`. */
+function verdandiHome(): HostEnvironment {
+  return {
+    platform: process.platform,
+    env: { VERDANDI_HOME: home },
+    homedir: join(home, "no-such-home"),
+  };
+}
+
+/**
+ * The core on a fake GitHub and a machine with gh on PATH unless said
+ * otherwise, with the real settings file and machine-local state below
+ * `home`, and a clock that stands still unless the test moves it on.
  */
 function createTestCore(
   github: FakeGitHub,
-  clock: TestClock = createClock(),
+  {
+    clock = createClock(),
+    machine = linuxWithGh(),
+  }: { clock?: TestClock; machine?: TestMachine } = {},
 ): Contract {
   return createCore({
-    github,
-    settings: createSettingsFile({
-      platform: process.platform,
-      env: { VERDANDI_HOME: home },
-      homedir: join(home, "no-such-home"),
-    }),
+    github: () => github,
+    runCommand: runnerOn(machine),
+    host: machine.host,
+    settings: createSettingsFile(verdandiHome()),
+    localState: createLocalStateFile(verdandiHome()),
     now: clock.now,
   });
 }
@@ -268,68 +337,780 @@ const acmeWeb: Scope = {
 
 const all: Scope = { kind: "all" };
 
-describe("account", () => {
-  it("reports the account GitHub answers as", async () => {
+/** The setup once the core has checked it, which it starts to. */
+async function checkedSetup(core: Contract): Promise<Setup> {
+  const pushed = nextSetup(core, () => Promise.resolve());
+  const current = await core.getSetup();
+  return current.status === "checking" ? pushed : current;
+}
+
+/** The setup pushed next, after `act`. */
+async function nextSetup(
+  core: Contract,
+  act: () => Promise<unknown>,
+): Promise<Setup> {
+  const pushed = new Promise<Setup>((resolve) => {
+    const unsubscribe = core.on("setupChanged", (setup) => {
+      unsubscribe();
+      resolve(setup);
+    });
+  });
+  await act();
+  return pushed;
+}
+
+/** The notices the core pushes from now on. */
+function collectNotices(core: Contract): Notice[] {
+  const notices: Notice[] = [];
+  core.on("notice", (notice) => notices.push(notice));
+  return notices;
+}
+
+/** The machine-local state file below `home`, parsed, or none. */
+async function readLocalState(): Promise<unknown> {
+  try {
+    return JSON.parse(
+      await readFile(join(home, "desktop", "state.json"), "utf8"),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/** The setup when gh at a path signs in as `login` with stored credentials. */
+function readyAs(login: string, path = "/usr/bin/gh"): Setup {
+  return {
+    status: "ready",
+    gh: { path, version: "2.101.0" },
+    account: {
+      status: "known",
+      account: { login, host: "github.com" },
+      tokenSource: "stored",
+    },
+  };
+}
+
+describe("setup: finding gh", () => {
+  it("finds gh on PATH and names the account it signs in to github.com as", async () => {
     const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
 
-    expect(await core.getAccount()).toEqual({
-      status: "known",
-      account: { login: "octo-reader", host: "github.com" },
+    expect(await checkedSetup(core)).toEqual(readyAs("octo-reader"));
+  });
+
+  it.each([
+    {
+      platform: "darwin",
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      homedir: "/Users/octo",
+      gh: "/opt/homebrew/bin/gh",
+    },
+    {
+      platform: "linux",
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+      homedir: "/home/octo",
+      gh: "/home/linuxbrew/.linuxbrew/bin/gh",
+    },
+    {
+      platform: "win32",
+      PATH: "C:\\Windows\\system32;C:\\Windows",
+      homedir: "C:\\Users\\octo",
+      gh: "C:\\Program Files\\GitHub CLI\\gh.exe",
+    },
+  ] as const)(
+    "finds gh in a well-known install location on $platform, although a desktop launch leaves it off PATH",
+    async ({ platform, PATH, homedir, gh }) => {
+      const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+        machine: {
+          host: {
+            platform,
+            env: { PATH, ProgramFiles: "C:\\Program Files" },
+            homedir,
+          },
+          executables: new Map([[gh, ghVersion()]]),
+        },
+      });
+
+      expect(await checkedSetup(core)).toEqual(readyAs("octo-reader", gh));
+    },
+  );
+
+  it("prefers gh on PATH, in PATH's order, to a well-known install location", async () => {
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine: {
+        host: {
+          platform: "darwin",
+          env: { PATH: "/Users/octo/bin:/usr/local/bin:/usr/bin" },
+          homedir: "/Users/octo",
+        },
+        executables: new Map([
+          ["/opt/homebrew/bin/gh", ghVersion()],
+          ["/usr/local/bin/gh", ghVersion()],
+          ["/Users/octo/bin/gh", ghVersion()],
+        ]),
+      },
+    });
+
+    expect(await checkedSetup(core)).toMatchObject({
+      gh: { path: "/Users/octo/bin/gh" },
     });
   });
 
-  it("reports that gh is missing", async () => {
+  it("never runs gh from a relative PATH entry", async () => {
+    const machine = linuxWithGh();
+    machine.host.env.PATH = `.:bin:${machine.host.env.PATH ?? ""}`;
+    machine.executables.set("gh", ghVersion());
+    machine.executables.set(join("bin", "gh"), ghVersion());
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine,
+    });
+
+    expect(await checkedSetup(core)).toMatchObject({
+      gh: { path: "/usr/bin/gh" },
+    });
+  });
+
+  it("passes over an unusable gh for a usable one found later", async () => {
+    const machine = linuxWithGh();
+    machine.executables.set("/usr/local/bin/gh", ghVersion("2.40.0"));
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine,
+    });
+
+    expect(await checkedSetup(core)).toEqual(readyAs("octo-reader"));
+  });
+
+  it("blocks the app when no usable gh is found, saying why each one found is unusable", async () => {
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine: {
+        host: {
+          platform: "linux",
+          env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+          homedir: "/home/octo",
+        },
+        executables: new Map<string, CommandResult>([
+          ["/usr/local/bin/gh", ghVersion("2.40.0")],
+          [
+            "/usr/bin/gh",
+            {
+              kind: "exited",
+              exitCode: 0,
+              stdout: "gh 0.4.2 - the Git Helper\n",
+              stderr: "",
+            },
+          ],
+          [
+            "/home/octo/.local/bin/gh",
+            { kind: "failed-to-start", message: "spawn EACCES" },
+          ],
+        ]),
+      },
+    });
+
+    expect(await checkedSetup(core)).toEqual({
+      status: "blocked",
+      problem: {
+        kind: "no-usable-gh",
+        notUsable: [
+          {
+            path: "/usr/local/bin/gh",
+            reason: "It is GitHub CLI 2.40.0; Verdandi needs 2.81.0 or later.",
+          },
+          {
+            path: "/usr/bin/gh",
+            reason: "It is not GitHub CLI: it did not report a gh version.",
+          },
+          {
+            path: "/home/octo/.local/bin/gh",
+            reason: "It cannot be run: spawn EACCES",
+          },
+        ],
+      },
+    });
+  });
+
+  it("asks GitHub nothing while blocked", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.failWith({ kind: "gh-not-found" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const machine = linuxWithGh();
+    machine.executables.clear();
+    const core = createTestCore(github, { machine });
+
+    await core.getSidebar();
+    await core.openList(acmeApi);
+    await checkedSetup(core);
+
+    expect(github.requestsReceived).toBe(0);
+    expect(github.authStatusChecks).toBe(0);
+  });
+});
+
+describe("setup: credentials", () => {
+  it("asks gh about its credentials once at startup", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const core = createTestCore(github);
 
-    expect(await core.getAccount()).toEqual({
-      status: "failed",
-      message: "GitHub CLI (gh) was not found on PATH.",
+    await readUntilCounted(core);
+    await openUntilLoaded(core, acmeApi);
+
+    expect(github.authStatusChecks).toBe(1);
+  });
+
+  it("blocks the app while gh is not signed in to github.com", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.signOut();
+    const core = createTestCore(github);
+
+    expect(await checkedSetup(core)).toEqual({
+      status: "blocked",
+      problem: {
+        kind: "signed-out",
+        gh: { path: "/usr/bin/gh", version: "2.101.0" },
+      },
     });
   });
 
-  it("reports why gh failed", async () => {
+  it("blocks the app while GitHub rejects gh's credentials", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.failWith({
-      kind: "gh-failed",
+    github.rejectCredentials();
+    const core = createTestCore(github);
+
+    expect(await checkedSetup(core)).toEqual({
+      status: "blocked",
+      problem: {
+        kind: "credentials-rejected",
+        gh: { path: "/usr/bin/gh", version: "2.101.0" },
+        login: "octo-reader",
+        tokenSource: "stored",
+      },
+    });
+  });
+
+  it("names the environment variable whose rejected token overrides gh's stored credentials", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.signInAs("octo-bot", "GH_TOKEN");
+    github.rejectCredentials();
+    const core = createTestCore(github);
+
+    expect(await checkedSetup(core)).toMatchObject({
+      status: "blocked",
+      problem: {
+        kind: "credentials-rejected",
+        login: undefined,
+        tokenSource: "GH_TOKEN",
+      },
+    });
+  });
+
+  it("blocks the app when gh answers the check by asking to log in", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.failAuthStatusWith({
+      kind: "gh-signed-out",
       message: "To get started with GitHub CLI, please run:  gh auth login",
     });
     const core = createTestCore(github);
 
-    expect(await core.getAccount()).toEqual({
-      status: "failed",
-      message:
-        "GitHub CLI (gh) failed: To get started with GitHub CLI, please run:  gh auth login",
+    expect(await checkedSetup(core)).toMatchObject({
+      status: "blocked",
+      problem: { kind: "signed-out" },
     });
   });
 
-  it("pushes an account change when GitHub answers as another account", async () => {
+  it.each(["GH_TOKEN", "GITHUB_TOKEN"] as const)(
+    "names %s when its token overrides gh's stored credentials",
+    async (variable) => {
+      const github = createFakeGitHub({ login: "octo-reader" });
+      github.signInAs("octo-bot", variable);
+      const core = createTestCore(github);
+
+      expect(await checkedSetup(core)).toMatchObject({
+        status: "ready",
+        account: {
+          status: "known",
+          account: { login: "octo-bot", host: "github.com" },
+          tokenSource: variable,
+        },
+      });
+    },
+  );
+
+  it("does not block when gh cannot confirm its credentials, e.g. without a connection", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const offline = {
+      kind: "gh-failed",
+      message:
+        'Get "https://api.github.com/": dial tcp: lookup api.github.com: no such host',
+    } as const;
+    github.failAuthStatusWith(offline);
+    github.failWith(offline);
+    const core = createTestCore(github);
+
+    expect(await checkedSetup(core)).toEqual({
+      status: "ready",
+      gh: { path: "/usr/bin/gh", version: "2.101.0" },
+      account: {
+        status: "unconfirmed",
+        message: `GitHub CLI (gh) failed: ${offline.message}`,
+      },
+    });
+    // What fails fails locally.
+    expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api –"]);
+  });
+
+  it("pushes an account change when gh signs in as another account", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     const core = createTestCore(github);
     const changes: Account[] = [];
     core.on("accountChanged", (account) => changes.push(account));
+    await checkedSetup(core);
 
-    await core.getAccount();
     github.signInAs("octo-writer");
-    await core.getAccount();
+    await core.checkSetupAgain();
 
     expect(changes).toEqual([{ login: "octo-writer", host: "github.com" }]);
   });
 });
 
+describe("setup: during a session", () => {
+  /** A core that has loaded acme/api's list, the screen shown. */
+  async function loadedSession() {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const machine = linuxWithGh();
+    const core = createTestCore(github, { machine });
+    await readUntilCounted(core);
+    await openUntilLoaded(core, acmeApi);
+    return { core, github, machine };
+  }
+
+  it("blocks the app once gh auth status confirms that GitHub rejected gh's credentials with a 401", async () => {
+    const { core, github } = await loadedSession();
+
+    github.rejectCredentials();
+    const blocked = await nextSetup(core, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      problem: { kind: "credentials-rejected" },
+    });
+    expect(github.authStatusChecks).toBe(2);
+  });
+
+  it("blocks the app once gh auth status confirms that gh was signed out", async () => {
+    const { core, github } = await loadedSession();
+
+    github.signOut();
+    const blocked = await nextSetup(core, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      problem: { kind: "signed-out" },
+    });
+  });
+
+  it("stays usable when gh auth status accepts the credentials after a 401", async () => {
+    const { core, github } = await loadedSession();
+
+    const setups: Setup[] = [];
+    core.on("setupChanged", (setup) => setups.push(setup));
+
+    github.failWith({ kind: "http", status: 401, message: "Bad credentials" });
+    await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+    await vi.waitFor(() => {
+      expect(github.authStatusChecks).toBeGreaterThan(1);
+    });
+
+    expect(await core.getSetup()).toEqual(readyAs("octo-reader"));
+    expect(setups).toEqual([]);
+  });
+
+  it("blocks the app once gh is found missing", async () => {
+    const { core, github, machine } = await loadedSession();
+
+    machine.executables.clear();
+    github.failWith({ kind: "gh-not-found" });
+    const blocked = await nextSetup(core, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(blocked).toEqual({
+      status: "blocked",
+      problem: { kind: "no-usable-gh", notUsable: [] },
+    });
+  });
+
+  it.each<[string, GitHubError]>([
+    [
+      "HTTP 403 for SSO",
+      {
+        kind: "http",
+        status: 403,
+        message:
+          "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.",
+      },
+    ],
+    ["HTTP 404", { kind: "http", status: 404, message: "Not Found" }],
+    [
+      "HTTP 410",
+      {
+        kind: "http",
+        status: 410,
+        message: "Issues are disabled for this repo",
+      },
+    ],
+    [
+      "a primary rate limit",
+      {
+        kind: "graphql",
+        messages: ["API rate limit already exceeded for user ID 1234567."],
+      },
+    ],
+    [
+      "a secondary rate limit",
+      {
+        kind: "http",
+        status: 403,
+        message: "You have exceeded a secondary rate limit.",
+      },
+    ],
+    [
+      "a network failure",
+      {
+        kind: "gh-failed",
+        message:
+          'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
+      },
+    ],
+    ["HTTP 502", { kind: "http", status: 502, message: "Server Error" }],
+    [
+      "a GraphQL timeout",
+      {
+        kind: "graphql",
+        messages: [
+          "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.",
+        ],
+      },
+    ],
+  ])("never blocks the app for %s", async (_, error) => {
+    const { core, github } = await loadedSession();
+    const setups: Setup[] = [];
+    core.on("setupChanged", (setup) => setups.push(setup));
+
+    github.failWith(error);
+    const list = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(list.loading.status).toBe("failed");
+    expect(setups).toEqual([]);
+    expect(github.authStatusChecks).toBe(1);
+  });
+
+  it("holds GitHub requests while blocked, and returns to the screen shown once Check again succeeds, reading what failed again at once with what it has meanwhile", async () => {
+    const { core, github } = await loadedSession();
+    github.rejectCredentials();
+    await nextSetup(core, () => core.refresh({ kind: "list", scope: acmeApi }));
+    const lists: IssueList[] = [];
+    core.on("listChanged", (list) => lists.push(list));
+
+    // Nothing is asked of GitHub while the blocker is up.
+    const received = github.requestsReceived;
+    await core.revalidate({ kind: "list", scope: acmeApi });
+    expect(github.requestsReceived).toBe(received);
+
+    github.signInAs("octo-reader");
+    const reread = untilSettled(core, acmeApi, () => Promise.resolve());
+    expect(await core.checkSetupAgain()).toEqual(readyAs("octo-reader"));
+
+    expect((await reread).loading.status).toBe("current");
+    expect(github.requestsReceived).toBeGreaterThan(received);
+    // The list kept its issues while it was read again.
+    expect(lists.map((list) => outline(list))).not.toContainEqual([]);
+  });
+
+  it("reads what waited while blocked once, not again as the blocker clears", async () => {
+    const { core, github } = await loadedSession();
+    github.rejectCredentials();
+    await nextSetup(core, () => core.refresh({ kind: "list", scope: acmeApi }));
+    // Opened again while blocked, the list's page waits.
+    await core.openList(acmeApi);
+    const asked = github.requestsFor("acme/api");
+
+    github.signInAs("octo-reader");
+    const reread = untilSettled(core, acmeApi, () => Promise.resolve());
+    await core.checkSetupAgain();
+
+    expect((await reread).loading.status).toBe("current");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(0);
+    });
+    expect(github.requestsFor("acme/api")).toBe(asked + 1);
+  });
+
+  it("reads the issue page shown again once the blocker clears, as it failed", async () => {
+    const { core, github } = await loadedSession();
+    const page = await openPageUntilLoaded(core, "I_acme/api#1");
+    github.rejectCredentials();
+    await nextSetup(core, () =>
+      core.refresh({ kind: "issue", issueId: page.issueId }),
+    );
+
+    github.signInAs("octo-reader");
+    const reread = pageUntilSettled(core, page.issueId, async () => {
+      await core.checkSetupAgain();
+    });
+
+    expect((await reread).loading.status).toBe("current");
+  });
+
+  it("stays blocked when Check again finds the same problem", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.signOut();
+    const core = createTestCore(github);
+    await checkedSetup(core);
+
+    expect(await core.checkSetupAgain()).toMatchObject({
+      status: "blocked",
+      problem: { kind: "signed-out" },
+    });
+  });
+
+  it("finds gh installed since with Check again", async () => {
+    const machine = linuxWithGh();
+    machine.executables.clear();
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine,
+    });
+    await checkedSetup(core);
+
+    machine.executables.set("/usr/bin/gh", ghVersion());
+
+    expect(await core.checkSetupAgain()).toEqual(readyAs("octo-reader"));
+  });
+});
+
+describe("setup: choosing gh", () => {
+  /** A machine without gh anywhere Verdandi looks, but with one elsewhere. */
+  function machineWithHiddenGh(): TestMachine {
+    return {
+      host: {
+        platform: "linux",
+        env: { PATH: "/usr/bin:/bin" },
+        homedir: "/home/octo",
+      },
+      executables: new Map([["/opt/tools/gh", ghVersion()]]),
+    };
+  }
+
+  it("uses a chosen gh and remembers it on this machine, below VERDANDI_HOME", async () => {
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine: machineWithHiddenGh(),
+    });
+    await checkedSetup(core);
+
+    expect(await core.chooseGhExecutable("/opt/tools/gh")).toEqual({
+      status: "chosen",
+      setup: readyAs("octo-reader", "/opt/tools/gh"),
+    });
+    expect(await readLocalState()).toEqual({ ghExecutable: "/opt/tools/gh" });
+  });
+
+  it("looks for the chosen gh first after a restart, while it is usable", async () => {
+    const machine = machineWithHiddenGh();
+    machine.executables.set("/usr/bin/gh", ghVersion());
+    const github = createFakeGitHub({ login: "octo-reader" });
+    await createTestCore(github, { machine }).chooseGhExecutable(
+      "/opt/tools/gh",
+    );
+
+    const restarted = createTestCore(github, { machine });
+
+    expect(await checkedSetup(restarted)).toMatchObject({
+      gh: { path: "/opt/tools/gh" },
+    });
+  });
+
+  it.each([
+    [
+      "is no gh",
+      "/home/octo/notes.txt",
+      { kind: "failed-to-start", message: "spawn EACCES" },
+      "It cannot be run: spawn EACCES",
+    ],
+    [
+      "is another program",
+      "/usr/bin/git",
+      {
+        kind: "exited",
+        exitCode: 0,
+        stdout: "git version 2.51.0\n",
+        stderr: "",
+      },
+      "It is not GitHub CLI: it did not report a gh version.",
+    ],
+    [
+      "is too old",
+      "/opt/old/gh",
+      ghVersion("2.80.1"),
+      "It is GitHub CLI 2.80.1; Verdandi needs 2.81.0 or later.",
+    ],
+    [
+      "no longer exists",
+      "/opt/gone/gh",
+      { kind: "not-found" },
+      "There is no file there.",
+    ],
+    [
+      "never finishes",
+      "/opt/hangs/gh",
+      { kind: "timed-out" },
+      "It did not answer `--version` within 10 seconds.",
+    ],
+  ] as const)(
+    "explains a chosen file that %s, remembering nothing",
+    async (_, path, answer, reason) => {
+      const machine = machineWithHiddenGh();
+      machine.executables.set(path, answer);
+      const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+        machine,
+      });
+      await checkedSetup(core);
+
+      expect(await core.chooseGhExecutable(path)).toEqual({
+        status: "invalid",
+        path,
+        reason,
+      });
+      expect(await readLocalState()).toBeUndefined();
+      expect(await core.getSetup()).toMatchObject({ status: "blocked" });
+    },
+  );
+
+  it("explains that it cannot run a .cmd file on Windows", async () => {
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine: {
+        host: {
+          platform: "win32",
+          env: { PATH: "C:\\Windows" },
+          homedir: "C:\\Users\\octo",
+        },
+        executables: new Map([["C:\\tools\\gh.cmd", ghVersion()]]),
+      },
+    });
+
+    expect(await core.chooseGhExecutable("C:\\tools\\gh.cmd")).toEqual({
+      status: "invalid",
+      path: "C:\\tools\\gh.cmd",
+      reason: "Verdandi cannot run .cmd or .bat files. Choose gh.exe.",
+    });
+  });
+
+  it("stays blocked with a chosen gh that is not signed in", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.signOut();
+    const core = createTestCore(github, { machine: machineWithHiddenGh() });
+
+    expect(await core.chooseGhExecutable("/opt/tools/gh")).toMatchObject({
+      status: "chosen",
+      setup: { status: "blocked", problem: { kind: "signed-out" } },
+    });
+  });
+
+  it("forgets a chosen gh that is gone once another is found, and says so", async () => {
+    await mkdir(join(home, "desktop"), { recursive: true });
+    await writeFile(
+      join(home, "desktop", "state.json"),
+      JSON.stringify({ ghExecutable: "/opt/tools/gh" }),
+    );
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }));
+    const notices = collectNotices(core);
+
+    expect(await checkedSetup(core)).toEqual(readyAs("octo-reader"));
+    expect(notices).toEqual([
+      {
+        kind: "gh-replaced",
+        previous: "/opt/tools/gh",
+        gh: { path: "/usr/bin/gh", version: "2.101.0" },
+      },
+    ]);
+    expect(await readLocalState()).toEqual({});
+  });
+
+  it("keeps a chosen gh that is gone while no other is found", async () => {
+    await mkdir(join(home, "desktop"), { recursive: true });
+    await writeFile(
+      join(home, "desktop", "state.json"),
+      JSON.stringify({ ghExecutable: "/opt/tools/gh" }),
+    );
+    const machine = linuxWithGh();
+    machine.executables.clear();
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine,
+    });
+
+    expect(await checkedSetup(core)).toEqual({
+      status: "blocked",
+      problem: {
+        kind: "no-usable-gh",
+        notUsable: [
+          { path: "/opt/tools/gh", reason: "There is no file there." },
+        ],
+      },
+    });
+    expect(await readLocalState()).toEqual({ ghExecutable: "/opt/tools/gh" });
+  });
+
+  it("discards machine-local state it cannot read, silently", async () => {
+    await mkdir(join(home, "desktop"), { recursive: true });
+    await writeFile(join(home, "desktop", "state.json"), "{ not json");
+    const core = createTestCore(createFakeGitHub({ login: "octo-reader" }), {
+      machine: machineWithHiddenGh(),
+    });
+    const notices = collectNotices(core);
+    await checkedSetup(core);
+
+    await core.chooseGhExecutable("/opt/tools/gh");
+
+    expect(notices).toEqual([]);
+    expect(await readLocalState()).toEqual({ ghExecutable: "/opt/tools/gh" });
+  });
+});
+
 describe("GitHub requests", () => {
   it("are sent at most four at a time", async () => {
+    const names = Array.from(
+      { length: 10 },
+      (_, n) => `acme/repo-${String(n)}`,
+    );
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
     const github = createFakeGitHub({ login: "octo-reader" });
+    for (const name of names) github.addRepository(name, []);
     const core = createTestCore(github);
+    await checkedSetup(core);
     github.pause();
 
-    const answers = Array.from({ length: 10 }, () => core.getAccount());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const loaded = openUntilLoaded(core, all);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(4);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(github.requestsInFlight).toBe(4);
 
     github.resume();
-    expect(await Promise.all(answers)).toHaveLength(10);
+    expect((await loaded).loading.status).toBe("current");
   });
 });
 
@@ -376,14 +1157,19 @@ describe("sidebar", () => {
       join(userData, "settings.json"),
       JSON.stringify({ version: 1, repositories: [{ name: "acme/api" }] }),
     );
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const machine = linuxWithGh();
     const core = createCore({
-      github: createFakeGitHub({ login: "octo-reader" }),
+      github: () => github,
+      runCommand: runnerOn(machine),
+      host: machine.host,
       // Without VERDANDI_HOME, APPDATA or XDG_DATA_HOME, the default applies.
       settings: createSettingsFile({
         platform: process.platform,
         env: {},
         homedir,
       }),
+      localState: createLocalStateFile(verdandiHome()),
     });
 
     expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api –"]);
@@ -561,7 +1347,10 @@ describe("sidebar counts", () => {
       repositories: [{ name: "acme/api" }, { name: "acme/web" }],
     });
     const github = createFakeGitHub({ login: "octo-reader" });
-    github.failWith({ kind: "gh-not-found" });
+    github.failWith({
+      kind: "gh-failed",
+      message: "error connecting to api.github.com",
+    });
     const core = createTestCore(github);
 
     const sidebar = await readUntilCounted(core);
@@ -572,11 +1361,11 @@ describe("sidebar counts", () => {
     ).toEqual([
       {
         status: "failed",
-        message: "GitHub CLI (gh) was not found on PATH.",
+        message: "GitHub CLI (gh) failed: error connecting to api.github.com",
       },
       {
         status: "failed",
-        message: "GitHub CLI (gh) was not found on PATH.",
+        message: "GitHub CLI (gh) failed: error connecting to api.github.com",
       },
     ]);
   });
@@ -800,7 +1589,7 @@ describe("sidebar counts", () => {
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await readUntilCounted(core);
     const pushed: SidebarEntries[] = [];
     core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
@@ -828,7 +1617,7 @@ describe("sidebar counts", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await readUntilCounted(core);
 
     github.addRepository("acme/api", [
@@ -2041,7 +2830,7 @@ describe("freshness", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, acmeApi);
     await openUntilLoaded(core, acmeWeb);
 
@@ -2075,7 +2864,7 @@ describe("freshness", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, acmeApi);
     const requestsBefore = github.requestsReceived;
 
@@ -2093,7 +2882,7 @@ describe("freshness", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, acmeApi);
     const requestsBefore = github.requestsReceived;
 
@@ -2121,7 +2910,7 @@ describe("loading states", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, all);
 
     github.addRepository("acme/api", [{ number: 1, title: "Crash at start" }]);
@@ -2176,7 +2965,7 @@ describe("loading states", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await readUntilCounted(core);
     await openUntilLoaded(core, acmeApi);
     await openPageUntilLoaded(core, "I_acme/api#1");
@@ -2202,7 +2991,7 @@ describe("loading states", () => {
     github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
     github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, acmeApi);
     clock.advance(minute);
     github.pause("fetchOpenIssues");
@@ -2506,7 +3295,7 @@ describe("issue pages", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     workIssues(github);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openPageUntilLoaded(core, "I_other/work#2");
 
     workIssues(github, " v2");
@@ -2545,7 +3334,7 @@ describe("issue pages", () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     workIssues(github);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openPageUntilLoaded(core, "I_other/work#2");
 
     workIssues(github, " v2");
@@ -2590,7 +3379,7 @@ describe("issue pages", () => {
       { number: 2, title: "Meter requests", state: "closed" },
     ]);
     const clock = createClock();
-    const core = createTestCore(github, clock);
+    const core = createTestCore(github, { clock });
     await openUntilLoaded(core, acmeApi);
 
     github.addRepository("acme/api", [

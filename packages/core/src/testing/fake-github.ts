@@ -1,5 +1,11 @@
-import type { IssueMetadata, Label, RelationshipCount } from "../contract.ts";
 import type {
+  IssueMetadata,
+  Label,
+  RelationshipCount,
+  TokenSource,
+} from "../contract.ts";
+import type {
+  AuthStatus,
   GitHubAccess,
   GitHubError,
   GitHubResult,
@@ -30,28 +36,53 @@ export interface FakeIssue {
   blocking?: RelationshipCount;
 }
 
-/** An in-memory GitHub behind the GitHub-access port, for tests. */
+/**
+ * An in-memory GitHub behind the GitHub-access port, for tests, together with
+ * gh's credentials for it. Reads are what the core asks GitHub about issues
+ * and repositories; checks of gh's credentials, as `gh auth status` makes
+ * them, count apart.
+ */
 export interface FakeGitHub extends GitHubAccess {
-  /** GitHub answers as this account from now on. */
-  signInAs(login: string): void;
+  /**
+   * gh signs in as this account from now on, with its stored credentials or
+   * a token from an environment variable.
+   */
+  signInAs(login: string, source?: TokenSource): void;
+  /**
+   * gh has no credentials from now on: reads fail as gh does, asking to log
+   * in, without asking GitHub.
+   */
+  signOut(): void;
+  /**
+   * GitHub rejects gh's credentials from now on, e.g. once the token has
+   * expired: reads fail with HTTP 401.
+   */
+  rejectCredentials(): void;
+  /**
+   * Checks of gh's credentials fail with this error from now on, confirming
+   * nothing, or answer again.
+   */
+  failAuthStatusWith(error: GitHubError | undefined): void;
+  /** How many times gh's credentials have been checked so far. */
+  readonly authStatusChecks: number;
   /**
    * Adds a repository, `owner/name`, with its issues, open and closed,
    * newest first. Adding it again replaces its issues.
    */
   addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
-  /** Every request fails with this error from now on, or succeeds again. */
+  /** Every read fails with this error from now on, or succeeds again. */
   failWith(error: GitHubError | undefined): void;
   /**
-   * Answers stay undelivered until `resume`: those of every request, or only
-   * of requests to one method. GitHub still answers from what it holds when
-   * a request arrives.
+   * Answers stay undelivered until `resume`: those of every read, or only of
+   * requests to one method, which may be `fetchAuthStatus`. GitHub still
+   * answers from what it holds when a request arrives.
    */
   pause(method?: keyof GitHubAccess): void;
   /** Delivers every paused answer, and later ones at once. */
   resume(): void;
-  /** How many requests GitHub has received but not yet answered. */
+  /** How many reads GitHub has received but not yet answered. */
   readonly requestsInFlight: number;
-  /** How many requests GitHub has received so far, of any kind. */
+  /** How many reads GitHub has received so far, of any kind. */
   readonly requestsReceived: number;
   /**
    * How many requests so far asked about a repository, `owner/name`: for its
@@ -72,6 +103,10 @@ export function createFakeGitHub({
   issuesPerPage?: number;
 }): FakeGitHub {
   let viewer = login;
+  let credentials: "signed-in" | "signed-out" | "rejected" = "signed-in";
+  let tokenSource: TokenSource = "stored";
+  let authStatusFailure: GitHubError | undefined;
+  let authStatusChecks = 0;
   /** Each repository's issues, newest first, by `owner/name`. */
   const repositories = new Map<string, FakeIssue[]>();
   let failure: GitHubError | undefined;
@@ -85,7 +120,7 @@ export function createFakeGitHub({
   const repositoryRequests = new Map<string, number>();
 
   /**
-   * Receives one request to a method and answers it as of now, delivering the
+   * Receives one read by a method and answers it as of now, delivering the
    * answer once that method is not paused.
    */
   async function answer<T>(
@@ -94,12 +129,51 @@ export function createFakeGitHub({
   ): Promise<GitHubResult<T>> {
     requestsReceived++;
     requestsInFlight++;
-    const answered: GitHubResult<T> = failure
-      ? { ok: false, error: failure }
-      : respond();
+    const error = credentialsError() ?? failure;
+    const answered: GitHubResult<T> = error ? { ok: false, error } : respond();
     if ((pausedMethod ?? method) === method) await paused?.promise;
     requestsInFlight--;
     return answered;
+  }
+
+  /** How a read fails, as gh reports it, while its credentials do not work. */
+  function credentialsError(): GitHubError | undefined {
+    switch (credentials) {
+      case "signed-in":
+        return undefined;
+      case "signed-out":
+        return {
+          kind: "gh-signed-out",
+          message: "To get started with GitHub CLI, please run:  gh auth login",
+        };
+      case "rejected":
+        return { kind: "http", status: 401, message: "Bad credentials" };
+    }
+  }
+
+  /** gh's credentials, as `gh auth status` reports them. */
+  function authStatus(): GitHubResult<AuthStatus> {
+    if (authStatusFailure) return { ok: false, error: authStatusFailure };
+    switch (credentials) {
+      case "signed-in":
+        return {
+          ok: true,
+          value: { state: "signed-in", login: viewer, tokenSource },
+        };
+      case "signed-out":
+        return { ok: true, value: { state: "signed-out" } };
+      case "rejected":
+        return {
+          ok: true,
+          value: {
+            state: "rejected",
+            // gh knows the login only of stored credentials.
+            login: tokenSource === "stored" ? viewer : undefined,
+            tokenSource,
+            message: "HTTP 401: Bad credentials (https://api.github.com/)",
+          },
+        };
+    }
   }
 
   function countRequestFor(nameWithOwner: string) {
@@ -168,8 +242,28 @@ export function createFakeGitHub({
   }
 
   return {
-    signInAs(login) {
+    signInAs(login, source = "stored") {
       viewer = login;
+      tokenSource = source;
+      credentials = "signed-in";
+    },
+    signOut() {
+      credentials = "signed-out";
+    },
+    rejectCredentials() {
+      credentials = "rejected";
+    },
+    failAuthStatusWith(error) {
+      authStatusFailure = error;
+    },
+    get authStatusChecks() {
+      return authStatusChecks;
+    },
+    async fetchAuthStatus() {
+      authStatusChecks++;
+      const answered = authStatus();
+      if (pausedMethod === "fetchAuthStatus") await paused?.promise;
+      return answered;
     },
     addRepository(nameWithOwner, issues) {
       repositories.set(nameWithOwner, issues);
@@ -187,6 +281,7 @@ export function createFakeGitHub({
     resume() {
       paused?.resolve();
       paused = undefined;
+      pausedMethod = undefined;
     },
     get requestsInFlight() {
       return requestsInFlight;
@@ -220,12 +315,6 @@ export function createFakeGitHub({
           },
         };
       });
-    },
-    fetchViewer() {
-      return answer("fetchViewer", () => ({
-        ok: true,
-        value: { login: viewer },
-      }));
     },
     fetchOpenIssues({ owner, name }, after) {
       const nameWithOwner = `${owner}/${name}`;

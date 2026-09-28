@@ -4,10 +4,9 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
 
 export default defineConfig({
-  main: {
-    // The core ships as TypeScript source, so it is bundled, not required.
-    build: { externalizeDeps: { exclude: ["@verdandi/core"] } },
-  },
+  // Every package is a devDependency, so electron-vite bundles it, the core's
+  // TypeScript source included: the packaged app needs no node_modules.
+  main: {},
   preload: {
     // A sandboxed preload cannot require anything but `electron`.
     build: { externalizeDeps: false },

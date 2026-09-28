@@ -1,10 +1,9 @@
-import type { Contract } from "@verdandi/core/contract";
-import type { DesktopApi } from "../../shared/ipc";
+import type { DesktopApi, RendererContract } from "../../shared/ipc";
 
 declare global {
   interface Window {
-    /** The core contract, exposed by preload. */
-    verdandi: Contract;
+    /** The core contract, as far as the renderer may use it, exposed by preload. */
+    verdandi: RendererContract;
     /** What the desktop app offers besides the contract, exposed by preload. */
     desktop: DesktopApi;
   }

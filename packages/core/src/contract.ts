@@ -11,8 +11,85 @@ export interface Account {
   host: "github.com";
 }
 
+/**
+ * Where gh's token for github.com comes from: its stored credentials, or an
+ * environment variable Verdandi inherited, which overrides them. Only the
+ * source is ever named, never the token.
+ */
+export type TokenSource = "stored" | "GH_TOKEN" | "GITHUB_TOKEN";
+
+/** The account gh reads github.com as, or why that is not confirmed. */
 export type AccountStatus =
-  { status: "known"; account: Account } | { status: "failed"; message: string };
+  | { status: "known"; account: Account; tokenSource: TokenSource }
+  /**
+   * gh could not check its credentials, e.g. without a connection. That is
+   * no reason to block Verdandi: GitHub's answers will tell.
+   */
+  | { status: "unconfirmed"; message: string };
+
+/** A usable gh executable. */
+export interface GhExecutable {
+  /** Where it is, as found or chosen. */
+  path: string;
+  /** Its version, e.g. `2.101.0`. */
+  version: string;
+}
+
+/** A gh executable that was found or chosen but cannot be used, and why. */
+export interface UnusableGh {
+  path: string;
+  reason: string;
+}
+
+/**
+ * Whether Verdandi can read GitHub. It needs a usable gh, signed in to
+ * github.com; until it has one, the setup blocker covers the whole app, and
+ * nothing is asked of GitHub. Installing gh and signing in happen outside
+ * Verdandi.
+ *
+ * - `checking`: the first check at startup has not finished.
+ * - `ready`: gh is usable and its credentials are not known to fail.
+ * - `blocked`: gh is missing or unusable, or `gh auth status` confirmed that
+ *   its credentials for github.com are missing or rejected.
+ */
+export type Setup =
+  | { status: "checking" }
+  | { status: "ready"; gh: GhExecutable; account: AccountStatus }
+  | { status: "blocked"; problem: SetupProblem };
+
+/** Why the setup blocker covers the app. */
+export type SetupProblem =
+  /**
+   * No usable gh was found: neither where the user chose it, nor on PATH,
+   * nor in a well-known install location. Those found there but unusable are
+   * named, with why.
+   */
+  | { kind: "no-usable-gh"; notUsable: UnusableGh[] }
+  /** gh has no credentials for github.com. */
+  | { kind: "signed-out"; gh: GhExecutable }
+  /** GitHub rejected gh's credentials for github.com, e.g. an expired token. */
+  | {
+      kind: "credentials-rejected";
+      gh: GhExecutable;
+      /** The account they belong to, when gh knows it. */
+      login: string | undefined;
+      tokenSource: TokenSource;
+    };
+
+/** What became of choosing a gh executable. */
+export type GhChoice =
+  /** It is no usable gh; nothing changed. */
+  | ({ status: "invalid" } & UnusableGh)
+  /** It is used and remembered on this machine; the setup as checked with it. */
+  | { status: "chosen"; setup: Setup };
+
+/** Something the user is told briefly, as it happens. */
+export type Notice =
+  /**
+   * The gh the user chose is gone or no longer usable, so Verdandi forgot it
+   * and uses one it found on its own.
+   */
+  { kind: "gh-replaced"; previous: string; gh: GhExecutable };
 
 /**
  * A repository's current address on GitHub, `owner/name`. It changes when
@@ -283,8 +360,30 @@ export interface CoreRequests {
    * keeps each visit's cursor, expansion and scroll position.
    */
   openIssuePage: (issueId: string) => Promise<void>;
-  /** Which account Verdandi reads GitHub as. */
-  getAccount: () => Promise<AccountStatus>;
+  /**
+   * Whether Verdandi can read GitHub, and as which account, as far as it has
+   * checked; changes are pushed as `setupChanged`. The first call, or the
+   * first GitHub request, starts the check at startup: gh is looked for where
+   * the user chose it, then on PATH, then in well-known install locations,
+   * and `gh auth status` asked about github.com. It is checked again after a
+   * request fails in a way that suggests gh or its credentials stopped
+   * working, such as HTTP 401, and only a confirmed failure blocks. When the
+   * blocker clears, the screen shown last and the sidebar's counts are shown
+   * again at once as if opened now, keeping what was loaded: what failed, or
+   * is older than five minutes, is read again.
+   */
+  getSetup: () => Promise<Setup>;
+  /**
+   * Checks the setup again now (**Check again**): looks for gh and asks it
+   * about its credentials, after any check under way.
+   */
+  checkSetupAgain: () => Promise<Setup>;
+  /**
+   * Uses a gh executable the user chose, if it is a usable gh, remembering
+   * it on this machine, then checks the setup with it. It is looked for there
+   * first from then on, while it stays usable.
+   */
+  chooseGhExecutable: (path: string) => Promise<GhChoice>;
   /**
    * What the sidebar lists, read from the settings file. Open-issue counts
    * the core does not know yet are asked for in one request for all of them,
@@ -337,8 +436,12 @@ export interface CoreRequests {
 
 /** Events the core pushes, by name, with their payloads. */
 export interface CoreEvents {
-  /** GitHub now answers as a different account than it did before. */
+  /** gh now reads GitHub as a different account than it did before. */
   accountChanged: Account;
+  /** The setup, whenever it changes. */
+  setupChanged: Setup;
+  /** Something to tell the user briefly, as it happens. */
+  notice: Notice;
   /** A list's state, when it is opened and whenever it changes. */
   listChanged: IssueList;
   /** An issue page's state, when it is opened and whenever it changes. */
@@ -363,7 +466,9 @@ export interface Contract extends CoreRequests {
 
 const requests: Record<keyof CoreRequests, true> = {
   openIssuePage: true,
-  getAccount: true,
+  getSetup: true,
+  checkSetupAgain: true,
+  chooseGhExecutable: true,
   getSidebar: true,
   openList: true,
   setExpanded: true,
@@ -373,6 +478,8 @@ const requests: Record<keyof CoreRequests, true> = {
 };
 const events: Record<CoreEventName, true> = {
   accountChanged: true,
+  setupChanged: true,
+  notice: true,
   listChanged: true,
   issuePageChanged: true,
   sidebarChanged: true,

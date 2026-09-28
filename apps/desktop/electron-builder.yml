@@ -1,0 +1,17 @@
+# `pnpm package` builds an unpacked, unsigned app for this computer's OS in
+# `dist/`. Release delivery (installers, signing, notarization, updates) is
+# out of scope for now.
+appId: io.github.chris-metz.verdandi
+productName: Verdandi
+directories:
+  output: dist
+# electron-vite bundles everything the app runs into `out/`, so no
+# `node_modules` are packaged.
+files:
+  - out/**
+  - package.json
+mac:
+  # Unsigned: runs on the computer that built it.
+  identity: null
+linux:
+  executableName: verdandi
