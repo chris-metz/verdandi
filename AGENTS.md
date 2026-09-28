@@ -15,3 +15,7 @@ Uses the five default label strings: `needs-triage`, `needs-info`, `ready-for-ag
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Running the app
+
+After changing the renderer, drive the app with the `run-desktop` skill (`.agents/skills/run-desktop/SKILL.md`) before committing, and look at its screenshots.
