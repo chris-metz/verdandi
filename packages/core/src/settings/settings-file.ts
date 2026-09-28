@@ -145,7 +145,7 @@ export function createSettingsFile(
       await watching;
       return serial(async () => {
         try {
-          const { document } = await readDocument();
+          const { document, text } = await readDocument();
           lastValid = {
             repositories: document.repositories.flatMap(({ name, id }) => {
               const address = parseRepositoryAddress(name);
@@ -162,6 +162,7 @@ export function createSettingsFile(
               document.version > 1
                 ? { status: "newer-version", message: newerVersion }
                 : { status: "writable" },
+            exists: text !== undefined,
           };
         } catch (error) {
           return { ok: false, message: message(error), value: lastValid };
@@ -223,41 +224,87 @@ export function createSettingsFile(
       });
     },
     reorder(entry, destination) {
+      return change((document) => {
+        // Before ordering, the higher duplicate without a GitHub ID wins.
+        const names = new Set<string>();
+        document.repositories = document.repositories.filter((repository) => {
+          if (repository.id !== undefined) return true;
+          const name = repository.name.toLowerCase();
+          if (names.has(name)) return false;
+          names.add(name);
+          return true;
+        });
+        move(document, entry, destination);
+      });
+    },
+    addRepositories(repositories) {
+      return change((document) => {
+        for (const repository of repositories) {
+          const name = nameWithOwner(repository);
+          const entry =
+            document.repositories.find(({ id }) => id === repository.id) ??
+            document.repositories.find(
+              (other) =>
+                other.id === undefined &&
+                other.name.toLowerCase() === name.toLowerCase(),
+            );
+          if (entry) {
+            entry.name = name;
+            entry.id = repository.id;
+          } else document.repositories.push({ name, id: repository.id });
+        }
+      });
+    },
+    createIfMissing() {
       return serial(async () => {
+        const empty: Document = { version: 1, repositories: [], views: [] };
         try {
-          const { document, text } = await readDocument();
-          if (document.version > 1) throw new Error(newerVersion);
-          // Before ordering, the higher duplicate without a GitHub ID wins.
-          const names = new Set<string>();
-          document.repositories = document.repositories.filter((repository) => {
-            if (repository.id !== undefined) return true;
-            const name = repository.name.toLowerCase();
-            if (names.has(name)) return false;
-            names.add(name);
-            return true;
+          await mkdir(folder, { recursive: true });
+          // Created only if missing, even when another writer races it.
+          await writeFile(file, `${JSON.stringify(empty, null, 2)}\n`, {
+            flag: "wx",
+            mode: 0o600,
           });
-          move(document, entry, destination);
-          if (document.version < 1 && text !== undefined) {
-            try {
-              await writeFile(
-                `${file}.backup-v${String(document.version)}`,
-                text,
-                { flag: "wx", mode: 0o600 },
-              );
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "EEXIST")
-                throw error;
-            }
-          }
-          document.version = 1;
-          await writeDocument(document);
           return { ok: true as const };
         } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST")
+            return { ok: true as const };
           return { ok: false as const, message: message(error) };
         }
       });
     },
   };
+
+  /**
+   * Applies one change to the file as it is now and writes it, migrating an
+   * older version with a one-time backup. A missing file starts empty; a
+   * newer version is never written.
+   */
+  function change(apply: (document: Document) => void) {
+    return serial(async () => {
+      try {
+        const { document, text } = await readDocument();
+        if (document.version > 1) throw new Error(newerVersion);
+        apply(document);
+        if (document.version < 1 && text !== undefined) {
+          try {
+            await writeFile(
+              `${file}.backup-v${String(document.version)}`,
+              text,
+              { flag: "wx", mode: 0o600 },
+            );
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          }
+        }
+        document.version = 1;
+        await writeDocument(document);
+        return { ok: true as const };
+      } catch (error) {
+        return { ok: false as const, message: message(error) };
+      }
+    });
+  }
 }
 
 function move(

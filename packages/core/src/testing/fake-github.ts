@@ -20,7 +20,9 @@ import {
   type IssueReference,
   type NumberedItem,
   type RateLimitBudget,
+  type RepositoryAccess,
   type RepositorySummary,
+  type SuggestionPage,
 } from "../github/port.ts";
 
 /**
@@ -50,6 +52,26 @@ export interface FakeIssue {
    * each is at `…/issues/number#issuecomment-1` and so on.
    */
   comments?: FakeComment[];
+}
+
+/** How GitHub shows a synthetic repository, as a test declares it. */
+export interface FakeRepositoryOptions {
+  /**
+   * Whether GitHub suggests it to the account: one it owns, collaborates on
+   * or reaches as an organization member. Suggestions list repositories in
+   * the order they were added.
+   */
+  suggested?: boolean;
+  /** Whether an organization owns it, rather than a user. */
+  organization?: boolean;
+  /** Whether its Issues are turned on; they are unless said otherwise. */
+  hasIssuesEnabled?: boolean;
+  isArchived?: boolean;
+  /**
+   * Whether GitHub shows the repository but refuses the account its issues,
+   * as it does a token without Issues access.
+   */
+  issuesDenied?: boolean;
 }
 
 /** A synthetic comment as a test declares it. */
@@ -98,7 +120,21 @@ export interface FakeGitHub extends GitHubAccess {
    * Adds a repository, `owner/name`, with its issues, open and closed,
    * newest first. Adding it again replaces its issues.
    */
-  addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
+  addRepository(
+    nameWithOwner: string,
+    issues: FakeIssue[],
+    options?: FakeRepositoryOptions,
+  ): void;
+  /**
+   * Renames or transfers a repository, `owner/name`: it keeps its ID and
+   * issues, and GitHub follows its old address to the new one, as for a
+   * redirect.
+   */
+  renameRepository(from: string, to: string): void;
+  /** The organizations GitHub lists the account as a member of, from now on. */
+  setOrganizations(logins: string[]): void;
+  /** A repository's numeric ID, by `owner/name`. */
+  repositoryId(nameWithOwner: string): number;
   /**
    * Adds a pull request to a repository, `owner/name`, which numbers it with
    * its issues.
@@ -135,8 +171,10 @@ export interface FakeGitHub extends GitHubAccess {
    * what it asks about: `fetchOpenIssues acme/api`, `fetchIssues acme/api#2
    * other/lib#5`, `fetchIssueDetails acme/api#1`, `fetchIssueComments
    * acme/api#1 after 100`, `fetchBodyHtml acme/api#1 acme/api#1/2` (the
-   * issue's body and its second comment's) or `fetchRepositorySummaries
-   * acme/api acme/web`.
+   * issue's body and its second comment's), `fetchRepositorySummaries
+   * acme/api acme/web`, `fetchRepositoryAccess acme/api` or
+   * `fetchRepositorySuggestions after 100` (the first page's without a
+   * cursor).
    */
   readonly received: readonly string[];
   /**
@@ -169,11 +207,14 @@ const budgetWindow = 60 * 60 * 1000;
 export function createFakeGitHub({
   login,
   issuesPerPage = 100,
+  suggestionsPerPage = 100,
   now = Date.now,
 }: {
   login: string;
   /** Page size for issue lists; GitHub's largest is 100. */
   issuesPerPage?: number;
+  /** Page size for repository suggestions; GitHub's largest is 100. */
+  suggestionsPerPage?: number;
   /** GitHub's time, which resets its rate-limit pools. */
   now?: () => number;
 }): FakeGitHub {
@@ -201,6 +242,59 @@ export function createFakeGitHub({
   /** Each repository's numeric ID, by `owner/name`. */
   const repositoryIds = new Map<string, number>();
   const repositoryRequests = new Map<string, number>();
+  /** How GitHub shows each repository, by `owner/name`. */
+  const repositoryOptions = new Map<string, FakeRepositoryOptions>();
+  /** The addresses GitHub follows to where a repository is now. */
+  const redirects = new Map<string, string>();
+  let organizations: string[] = [];
+
+  /** Where a repository is now, following renames and transfers. */
+  function resolve(nameWithOwner: string): string {
+    const seen = new Set<string>();
+    let current = nameWithOwner;
+    while (!repositories.has(current) && redirects.has(current)) {
+      if (seen.has(current)) break;
+      seen.add(current);
+      current = redirects.get(current) ?? current;
+    }
+    return current;
+  }
+
+  /**
+   * A repository as the picker checks it, or why GitHub will not show it to
+   * the account.
+   */
+  function accessOf(asked: string): GitHubResult<RepositoryAccess> {
+    const nameWithOwner = resolve(asked);
+    const message = `Could not resolve to a Repository with the name '${asked}'.`;
+    const hides = unavailable(nameWithOwner, message);
+    if (hides) return { ok: false, error: hides };
+    const id = repositoryIds.get(nameWithOwner);
+    if (!repositories.has(nameWithOwner) || id === undefined) {
+      return {
+        ok: false,
+        error: { kind: "unavailable", message, access: undefined },
+      };
+    }
+    const options = repositoryOptions.get(nameWithOwner) ?? {};
+    return {
+      ok: true,
+      value: {
+        id,
+        repository: addressOf(nameWithOwner),
+        ownedByOrganization: options.organization ?? false,
+        hasIssuesEnabled: options.hasIssuesEnabled ?? true,
+        isArchived: options.isArchived ?? false,
+        issuesDenied: options.issuesDenied
+          ? {
+              kind: "unavailable",
+              message: "Resource not accessible by personal access token",
+              access: undefined,
+            }
+          : undefined,
+      },
+    };
+  }
 
   /**
    * Receives one read by a method, about `what`, and answers it as of now,
@@ -487,11 +581,44 @@ export function createFakeGitHub({
       if (pausedMethod === "fetchAuthStatus") await paused?.promise;
       return answered;
     },
-    addRepository(nameWithOwner, issues) {
+    addRepository(nameWithOwner, issues, options = {}) {
       repositories.set(nameWithOwner, issues);
+      repositoryOptions.set(nameWithOwner, options);
+      redirects.delete(nameWithOwner);
       if (!repositoryIds.has(nameWithOwner)) {
         repositoryIds.set(nameWithOwner, 1000001 + repositoryIds.size);
       }
+    },
+    renameRepository(from, to) {
+      const issues = repositories.get(from);
+      const id = repositoryIds.get(from);
+      if (!issues || id === undefined) {
+        throw new Error(`The fake GitHub has no repository ${from}.`);
+      }
+      // A map keeps its order when an entry's value changes, not its key.
+      const renamed = new Map(
+        [...repositories].map(([key, value]) => [
+          key === from ? to : key,
+          value,
+        ]),
+      );
+      repositories.clear();
+      for (const [key, value] of renamed) repositories.set(key, value);
+      repositoryIds.delete(from);
+      repositoryIds.set(to, id);
+      repositoryOptions.set(to, repositoryOptions.get(from) ?? {});
+      repositoryOptions.delete(from);
+      redirects.set(from, to);
+    },
+    setOrganizations(logins) {
+      organizations = [...logins];
+    },
+    repositoryId(nameWithOwner) {
+      const id = repositoryIds.get(nameWithOwner);
+      if (id === undefined) {
+        throw new Error(`The fake GitHub has no repository ${nameWithOwner}.`);
+      }
+      return id;
     },
     addPullRequest(nameWithOwner, number) {
       const numbers = pullRequests.get(nameWithOwner) ?? new Set();
@@ -789,10 +916,10 @@ export function createFakeGitHub({
           ok: true,
           value: addresses.map(
             ({ owner, name }): GitHubResult<RepositorySummary> => {
-              const nameWithOwner = `${owner}/${name}`;
+              const nameWithOwner = resolve(`${owner}/${name}`);
               const issues = repositories.get(nameWithOwner);
               const id = repositoryIds.get(nameWithOwner);
-              const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
+              const message = `Could not resolve to a Repository with the name '${owner}/${name}'.`;
               const hides = unavailable(nameWithOwner, message);
               if (hides) return { ok: false, error: hides };
               if (!issues || id === undefined) {
@@ -805,18 +932,69 @@ export function createFakeGitHub({
                 ok: true,
                 value: {
                   id,
-                  repository: { owner, name },
+                  repository: addressOf(nameWithOwner),
                   openIssueCount: issues.filter(
                     (issue) => issue.state !== "closed",
                   ).length,
-                  hasIssuesEnabled: true,
-                  isArchived: false,
+                  hasIssuesEnabled:
+                    repositoryOptions.get(nameWithOwner)?.hasIssuesEnabled ??
+                    true,
+                  isArchived:
+                    repositoryOptions.get(nameWithOwner)?.isArchived ?? false,
                 },
               };
             },
           ),
         };
       });
+    },
+    fetchRepositoryAccess(addresses) {
+      const names = addresses.map(({ owner, name }) => `${owner}/${name}`);
+      return answer("fetchRepositoryAccess", names.join(" "), () => {
+        if (addresses.length > 100) {
+          return {
+            ok: false,
+            error: {
+              kind: "graphql",
+              messages: ["The fake GitHub reads at most 100 repositories."],
+            },
+          };
+        }
+        return { ok: true, value: names.map(accessOf) };
+      });
+    },
+    fetchRepositorySuggestions(after) {
+      return answer(
+        "fetchRepositorySuggestions",
+        after === undefined ? "" : `after ${after}`,
+        (): GitHubResult<SuggestionPage> => {
+          const suggested = [...repositories.keys()].filter(
+            (nameWithOwner) => repositoryOptions.get(nameWithOwner)?.suggested,
+          );
+          // The cursor is simply where the next page starts.
+          const start = after === undefined ? 0 : Number(after);
+          const end = start + suggestionsPerPage;
+          const incomplete: GitHubError[] = [];
+          const shown = suggested.slice(start, end).flatMap((nameWithOwner) => {
+            const access = accessOf(nameWithOwner);
+            if (access.ok) return [access.value];
+            // GitHub leaves out what it hides, with an error about it.
+            incomplete.push(access.error);
+            return [];
+          });
+          return {
+            ok: true,
+            value: {
+              account: viewer,
+              organizations:
+                after === undefined ? [...organizations] : undefined,
+              repositories: shown,
+              nextPage: end < suggested.length ? String(end) : undefined,
+              incomplete,
+            },
+          };
+        },
+      );
     },
   };
 }

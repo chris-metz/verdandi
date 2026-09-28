@@ -83,6 +83,24 @@ export interface GitHubAccess {
   fetchRepositorySummaries(
     repositories: readonly RepositoryAddress[],
   ): Promise<GitHubResponse<GitHubResult<RepositorySummary>[]>>;
+  /**
+   * Reads whether this account can read the issues of up to 100
+   * repositories, following renames and transfers. A repository GitHub
+   * cannot resolve or read gets its own error, in its place among the
+   * others, which are still read.
+   */
+  fetchRepositoryAccess(
+    repositories: readonly RepositoryAddress[],
+  ): Promise<GitHubResponse<GitHubResult<RepositoryAccess>[]>>;
+  /**
+   * Reads one page of the repositories this account owns, collaborates on or
+   * reaches as an organization member, up to 100, most recently pushed
+   * first: the first page, with the account's organizations, or the one
+   * after the `after` cursor of the previous page.
+   */
+  fetchRepositorySuggestions(
+    after?: string,
+  ): Promise<GitHubResponse<SuggestionPage>>;
 }
 
 /** Every rate-limit pool, in the order they are listed. */
@@ -105,6 +123,8 @@ export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchOpenIssues: "graphql",
   fetchIssues: "graphql",
   fetchRepositorySummaries: "graphql",
+  fetchRepositoryAccess: "graphql",
+  fetchRepositorySuggestions: "graphql",
 };
 
 /** What a read answers with when it succeeds. */
@@ -209,6 +229,44 @@ export interface RepositorySummary {
   openIssueCount: number;
   hasIssuesEnabled: boolean;
   isArchived: boolean;
+}
+
+/** A repository as the picker checks it: whether its issues can be read. */
+export interface RepositoryAccess {
+  /** GitHub's numeric ID (`databaseId`), which survives renames. */
+  id: number;
+  /** Its current address. */
+  repository: RepositoryAddress;
+  /** Whether an organization owns it, rather than a user. */
+  ownedByOrganization: boolean;
+  hasIssuesEnabled: boolean;
+  isArchived: boolean;
+  /**
+   * Why GitHub refused this account the repository's issues while showing
+   * the repository, e.g. to a token without Issues access.
+   */
+  issuesDenied: GitHubError | undefined;
+}
+
+/** A page of the repositories the picker suggests. */
+export interface SuggestionPage {
+  /** The login of the account GitHub lists them for. */
+  account: string;
+  /**
+   * The logins of the organizations GitHub lists this account as a member
+   * of, on the first page only. GitHub may list none, e.g. to a
+   * fine-grained token, however many there are.
+   */
+  organizations: string[] | undefined;
+  repositories: RepositoryAccess[];
+  /** The cursor to read the next page after, or none on the last page. */
+  nextPage: string | undefined;
+  /**
+   * What GitHub reported about repositories or organizations it left out,
+   * e.g. those of an organization whose SSO gh's token is not authorized
+   * for.
+   */
+  incomplete: GitHubError[];
 }
 
 export interface IssuePage {

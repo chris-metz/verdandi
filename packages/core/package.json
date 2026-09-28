@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./contract": "./src/contract.ts",
-    "./signed-links": "./src/signed-links.ts"
+    "./signed-links": "./src/signed-links.ts",
+    "./repository-address": "./src/repository-address.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

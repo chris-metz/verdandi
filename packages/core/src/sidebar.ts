@@ -114,6 +114,7 @@ export function createSidebar({
   let tracked: RepositoryAddress[] | undefined;
   let views: SavedView[] = [];
   let settingsStatus: SettingsStatus = { status: "writable" };
+  let firstLaunch = false;
 
   function countOf(repository: RepositoryAddress): OpenIssueCount {
     return (
@@ -126,6 +127,7 @@ export function createSidebar({
       status: "read",
       views,
       settings: settingsStatus,
+      firstLaunch,
       all: { openIssues: allCount(repositories, countOf) },
       repositories: repositories.map((repository) => ({
         repository,
@@ -235,6 +237,7 @@ export function createSidebar({
     settingsStatus = result.ok
       ? result.status
       : { status: "invalid", message: result.message };
+    firstLaunch = result.ok && !result.exists;
     ask(tracked.filter(unknownOrDue));
     const listed = entries(tracked);
     if (announce) push(listed);

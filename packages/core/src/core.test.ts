@@ -1942,6 +1942,7 @@ describe("sidebar", () => {
     expect(await core.getSidebar()).toEqual({
       status: "read",
       settings: { status: "writable" },
+      firstLaunch: true,
       views: [],
       all: { openIssues: { status: "known", count: 0 } },
       repositories: [],
@@ -2081,6 +2082,7 @@ describe("sidebar counts", () => {
     expect(read).toEqual({
       status: "read",
       settings: { status: "writable" },
+      firstLaunch: false,
       views: [],
       all: { openIssues: { status: "loading" } },
       repositories: [
@@ -2154,6 +2156,7 @@ describe("sidebar counts", () => {
     expect(await readUntilCounted(core)).toEqual({
       status: "read",
       settings: { status: "writable" },
+      firstLaunch: false,
       views: [],
       all: {
         openIssues: {

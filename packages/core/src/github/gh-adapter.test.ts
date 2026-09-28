@@ -2285,3 +2285,343 @@ describe("blocking relationship pages", () => {
     );
   });
 });
+
+describe("gh adapter: the repository picker", () => {
+  /** A repository node as GitHub returns it for the picker's check. */
+  function accessNode({
+    databaseId,
+    nameWithOwner,
+    owner = "User",
+    hasIssuesEnabled = true,
+    isArchived = false,
+  }: {
+    databaseId: number;
+    nameWithOwner: string;
+    owner?: "User" | "Organization";
+    hasIssuesEnabled?: boolean;
+    isArchived?: boolean;
+  }) {
+    return {
+      databaseId,
+      nameWithOwner,
+      owner: { __typename: owner },
+      hasIssuesEnabled,
+      isArchived,
+      issues: { totalCount: 3 },
+    };
+  }
+
+  /** gh answering a GraphQL query at HTTP 200 with a body. */
+  function answering(body: unknown, requests?: GraphqlRequest[]) {
+    return createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript("200 OK", graphqlHeaders, JSON.stringify(body)),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+  }
+
+  it("checks several repositories in one request, following renames", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = answering(
+      {
+        data: {
+          viewer: { login: "octo-reader" },
+          r0: accessNode({
+            databaseId: 1234567,
+            nameWithOwner: "acme/api",
+            owner: "Organization",
+          }),
+          r1: accessNode({
+            databaseId: 7654321,
+            nameWithOwner: "newco/web",
+            hasIssuesEnabled: false,
+            isArchived: true,
+          }),
+        },
+      },
+      requests,
+    );
+
+    expect(
+      await github.fetchRepositoryAccess([
+        { owner: "acme", name: "api" },
+        { owner: "acme", name: "web" },
+      ]),
+    ).toEqual({
+      budget: graphqlBudget,
+      viewerLogin: "octo-reader",
+      ok: true,
+      value: [
+        {
+          ok: true,
+          value: {
+            id: 1234567,
+            repository: { owner: "acme", name: "api" },
+            ownedByOrganization: true,
+            hasIssuesEnabled: true,
+            isArchived: false,
+            issuesDenied: undefined,
+          },
+        },
+        {
+          ok: true,
+          value: {
+            id: 7654321,
+            repository: { owner: "newco", name: "web" },
+            ownedByOrganization: false,
+            hasIssuesEnabled: false,
+            isArchived: true,
+            issuesDenied: undefined,
+          },
+        },
+      ],
+    });
+    expect(requests.map((request) => request.variables)).toEqual([
+      { owner0: "acme", name0: "api", owner1: "acme", name1: "web" },
+    ]);
+    expect(requests[0]?.query).toContain("hasIssuesEnabled");
+  });
+
+  it("tells a repository whose issues GitHub refuses from one it will not show", async () => {
+    const denied = "Resource not accessible by personal access token";
+    const missing =
+      "Could not resolve to a Repository with the name 'acme/gone'.";
+    const github = answering({
+      data: {
+        viewer: { login: "octo-reader" },
+        r0: {
+          ...accessNode({ databaseId: 1234567, nameWithOwner: "acme/secret" }),
+          issues: null,
+        },
+        r1: null,
+      },
+      errors: [
+        { type: "FORBIDDEN", path: ["r0", "issues"], message: denied },
+        { type: "NOT_FOUND", path: ["r1"], message: missing },
+      ],
+    });
+
+    const read = await github.fetchRepositoryAccess([
+      { owner: "acme", name: "secret" },
+      { owner: "acme", name: "gone" },
+    ]);
+
+    expect(read.ok && read.value).toEqual([
+      {
+        ok: true,
+        value: {
+          id: 1234567,
+          repository: { owner: "acme", name: "secret" },
+          ownedByOrganization: false,
+          hasIssuesEnabled: true,
+          isArchived: false,
+          issuesDenied: {
+            kind: "unavailable",
+            message: denied,
+            access: undefined,
+          },
+        },
+      },
+      {
+        ok: false,
+        error: { kind: "unavailable", message: missing, access: undefined },
+      },
+    ]);
+  });
+
+  it("fails a check whose issues GitHub failed to count, rather than calling them refused", async () => {
+    const timeout =
+      "Something went wrong while executing your query. This may be the result of a timeout.";
+    const github = answering({
+      data: {
+        viewer: { login: "octo-reader" },
+        r0: {
+          ...accessNode({ databaseId: 1234567, nameWithOwner: "acme/api" }),
+          issues: null,
+        },
+      },
+      errors: [{ path: ["r0", "issues"], message: timeout }],
+    });
+
+    const read = await github.fetchRepositoryAccess([
+      { owner: "acme", name: "api" },
+    ]);
+
+    expect(read.ok && read.value).toEqual([
+      { ok: false, error: { kind: "server-error", message: timeout } },
+    ]);
+  });
+
+  it("reads the first page of suggestions with the account's organizations", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = answering(
+      {
+        data: {
+          viewer: { login: "octo-reader" },
+          me: {
+            organizations: { nodes: [{ login: "acme" }, { login: "beta" }] },
+            repositories: {
+              pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjEwMA==" },
+              nodes: [
+                accessNode({
+                  databaseId: 1,
+                  nameWithOwner: "octo-reader/dotfiles",
+                }),
+                accessNode({
+                  databaseId: 2,
+                  nameWithOwner: "acme/api",
+                  owner: "Organization",
+                }),
+              ],
+            },
+          },
+        },
+      },
+      requests,
+    );
+
+    expect(await github.fetchRepositorySuggestions()).toEqual({
+      budget: graphqlBudget,
+      viewerLogin: "octo-reader",
+      ok: true,
+      value: {
+        account: "octo-reader",
+        organizations: ["acme", "beta"],
+        repositories: [
+          {
+            id: 1,
+            repository: { owner: "octo-reader", name: "dotfiles" },
+            ownedByOrganization: false,
+            hasIssuesEnabled: true,
+            isArchived: false,
+            issuesDenied: undefined,
+          },
+          {
+            id: 2,
+            repository: { owner: "acme", name: "api" },
+            ownedByOrganization: true,
+            hasIssuesEnabled: true,
+            isArchived: false,
+            issuesDenied: undefined,
+          },
+        ],
+        nextPage: "Y3Vyc29yOjEwMA==",
+        incomplete: [],
+      },
+    });
+    const query = requests[0]?.query ?? "";
+    expect(query).toContain("organizations(first: 100)");
+    expect(query).toContain(
+      "affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]",
+    );
+    expect(query).toContain(
+      "ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]",
+    );
+    expect(query).toContain("orderBy: {field: PUSHED_AT, direction: DESC}");
+    expect(requests[0]?.variables).toEqual({ after: null });
+  });
+
+  it("reads a later page of suggestions without the organizations", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = answering(
+      {
+        data: {
+          viewer: { login: "octo-reader" },
+          me: {
+            repositories: {
+              pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjEwMQ==" },
+              nodes: [accessNode({ databaseId: 3, nameWithOwner: "acme/web" })],
+            },
+          },
+        },
+      },
+      requests,
+    );
+
+    const read = await github.fetchRepositorySuggestions("Y3Vyc29yOjEwMA==");
+
+    expect(read).toMatchObject({
+      ok: true,
+      value: { organizations: undefined, nextPage: undefined },
+    });
+    expect(requests[0]?.query).not.toContain("organizations");
+    expect(requests[0]?.variables).toEqual({ after: "Y3Vyc29yOjEwMA==" });
+  });
+
+  it("leaves out the suggestions GitHub reported errors about, keeping what it said", async () => {
+    const saml =
+      "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.";
+    const denied = "Resource not accessible by personal access token";
+    const github = answering({
+      data: {
+        viewer: { login: "octo-reader" },
+        me: {
+          organizations: { nodes: [] },
+          repositories: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              accessNode({ databaseId: 1, nameWithOwner: "octo-reader/a" }),
+              null,
+              {
+                ...accessNode({
+                  databaseId: 3,
+                  nameWithOwner: "octo-reader/b",
+                }),
+                issues: null,
+              },
+            ],
+          },
+        },
+      },
+      errors: [
+        {
+          type: "FORBIDDEN",
+          path: ["me", "repositories", "nodes", 1],
+          extensions: { saml_failure: true },
+          message: saml,
+        },
+        {
+          type: "FORBIDDEN",
+          path: ["me", "repositories", "nodes", 2, "issues"],
+          message: denied,
+        },
+      ],
+    });
+
+    const read = await github.fetchRepositorySuggestions();
+
+    expect(read.ok && read.value.repositories.map(({ id }) => id)).toEqual([
+      1, 3,
+    ]);
+    expect(read.ok && read.value.repositories[1]?.issuesDenied).toEqual({
+      kind: "unavailable",
+      message: denied,
+      access: undefined,
+    });
+    expect(read.ok && read.value.incomplete).toEqual([
+      {
+        kind: "unavailable",
+        message: saml,
+        access: { kind: "sso", message: saml, url: undefined },
+      },
+    ]);
+  });
+
+  it("does not mistake a missing repository connection for no suggestions", async () => {
+    const github = answering({
+      data: { viewer: { login: "octo-reader" }, me: { repositories: null } },
+    });
+
+    expect(await github.fetchRepositorySuggestions()).toMatchObject({
+      ok: false,
+      error: { kind: "unexpected-response" },
+    });
+  });
+});

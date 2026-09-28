@@ -27,10 +27,12 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | Command                               | Does                                                                                                   |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `launch [owner/name …]`               | Builds and launches the app tracking these repositories (default `cli/cli`), and waits for the sidebar |
+| `launch --fresh`                      | Launches without a settings file, as on first launch, and waits for the repository picker              |
 | `entry <owner/name \| All>`           | Selects a sidebar entry                                                                                |
 | `issue <number \| owner/name#number>` | Opens an issue from the list shown, and waits until its page has read the issue                        |
 | `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                             |
 | `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                 |
+| `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                              |
 | `loaded`                              | Waits until the screen shown has loaded or failed, and prints its header's status                      |
 | `wait <css>` / `wait-text <text>`     | Waits up to a minute for the first match                                                               |
 | `scroll <css>`                        | Scrolls the first match to the top                                                                     |
@@ -39,6 +41,7 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | `theme <light \| dark>`               | Switches the colour scheme                                                                             |
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
 | `opened`                              | The links the app opened in the browser                                                                |
+| `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                       |
 | `quit`                                | Closes the app and deletes its scratch home                                                            |
 
 A failed command prints `ERROR <command>: …`, the rest still runs, and the exit code is 1. Lines starting with `//` are comments. Run it from a terminal without stdin redirected for a `driver>` prompt.
@@ -57,3 +60,4 @@ A failed command prints `ERROR <command>: …`, the rest still runs, and the exi
   - comments: `[data-scroll-anchor^="comment:"]`
   - rendered HTML: `.markdown-body`
   - the page's scroller: `main [data-pane-focus]`
+  - the repository picker: `[role="dialog"]`, its rows `[aria-label="Suggested repositories"] [role="option"]`

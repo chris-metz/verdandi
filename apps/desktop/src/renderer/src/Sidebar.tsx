@@ -29,6 +29,7 @@ export function Sidebar({
   selected,
   onSelect,
   onReorder,
+  onAddRepository,
   settingsError,
   focused,
   shortcutsShown,
@@ -45,6 +46,8 @@ export function Sidebar({
     entry: SidebarEntryKey,
     destination: SidebarDestination,
   ) => Promise<void>;
+  /** Opens the repository picker. */
+  onAddRepository: () => void;
   settingsError: string | undefined;
   /** Whether the sidebar has the keyboard. */
   focused: boolean;
@@ -155,7 +158,23 @@ export function Sidebar({
             {settingsError}
           </p>
         )}
-        <SectionHeading>Repositories</SectionHeading>
+        <SectionHeading
+          action={
+            sidebar?.status === "read" && (
+              <button
+                type="button"
+                aria-label="Add repository"
+                title="Add repository (a)"
+                onClick={onAddRepository}
+                className="-my-1 rounded px-1 text-sm leading-none text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              >
+                +
+              </button>
+            )
+          }
+        >
+          Repositories
+        </SectionHeading>
         {sidebar === undefined ? null : sidebar.status === "failed" ? (
           <p
             role="alert"
@@ -164,9 +183,13 @@ export function Sidebar({
             {sidebar.message}
           </p>
         ) : repositories.length === 0 ? (
-          <p className="px-2 py-1 text-muted-foreground">
-            No tracked repositories
-          </p>
+          <button
+            type="button"
+            onClick={onAddRepository}
+            className="w-full rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          >
+            Add repository…
+          </button>
         ) : (
           <ul
             role="listbox"
@@ -186,11 +209,21 @@ export function Sidebar({
   );
 }
 
-function SectionHeading({ children }: { children: string }) {
+function SectionHeading({
+  children,
+  action,
+}: {
+  children: string;
+  /** A button beside the heading, such as **+**. */
+  action?: React.ReactNode;
+}) {
   return (
-    <h2 className="px-2 pt-3 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase first:pt-1">
-      {children}
-    </h2>
+    <div className="flex items-center justify-between px-2 pt-3 pb-1 first:pt-1">
+      <h2 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {children}
+      </h2>
+      {action}
+    </div>
   );
 }
 

@@ -21,6 +21,10 @@ import { createClock } from "./moments.ts";
 import { isTransient, problemOf } from "./problems.ts";
 import { qualifiedReference } from "./repository-address.ts";
 import {
+  createRepositoryPicker,
+  type RepositoryPicker,
+} from "./repository-picker.ts";
+import {
   createRequestQueue,
   interrupted,
   type SendRequest,
@@ -75,6 +79,8 @@ interface Session {
   lists: IssueLists;
   /** The issue pages. */
   pages: IssuePages;
+  /** The repository picker's suggestions, checks and additions. */
+  picker: RepositoryPicker;
   /** Sends a request for the session, as long as it lasts. */
   request: SendRequest;
   /** Ends the session: it asks GitHub nothing more, and pushes nothing. */
@@ -105,6 +111,8 @@ export function createCore({
   });
   /** The screen the main area shows, as last opened, refreshed or shown. */
   let shown: Screen | undefined;
+  /** Whether the repository picker is open, over the screen shown. */
+  let pickerOpen = false;
 
   /**
    * Takes the screen the main area shows now. The requests of a screen left
@@ -153,6 +161,7 @@ export function createCore({
       session = createSession();
       events.emit("notice", { kind: "account-changed", previous, account });
       openShown();
+      if (pickerOpen) session.picker.open();
       void session.sidebar.reload();
     },
   });
@@ -250,10 +259,20 @@ export function createCore({
         sidebar.openIssuesLoaded(repository, openIssues, readAt);
       },
     });
+    const picker = createRepositoryPicker({
+      settings,
+      request: sessionRequest,
+      clock,
+      isOpen: () => pickerOpen,
+      push: (suggestions) => {
+        emit("repositorySuggestionsChanged", suggestions);
+      },
+    });
     return {
       sidebar,
       lists,
       pages,
+      picker,
       request: sessionRequest,
       end() {
         live = false;
@@ -266,6 +285,7 @@ export function createCore({
   const stopWatchingSettings = settings.watch(() => {
     void session.sidebar.reload();
     session.lists.settingsChanged();
+    session.picker.settingsChanged();
   });
 
   return {
@@ -288,6 +308,32 @@ export function createCore({
     async resetSettings() {
       const result = await settings.reset();
       session.lists.settingsChanged();
+      await session.sidebar.reload();
+      return result;
+    },
+    openRepositoryPicker() {
+      pickerOpen = true;
+      session.picker.open();
+      return Promise.resolve();
+    },
+    closeRepositoryPicker() {
+      pickerOpen = false;
+      queue.sweep();
+      return Promise.resolve();
+    },
+    checkRepository(repository) {
+      return session.picker.check(repository);
+    },
+    async addRepositories(repositories) {
+      const additions = await session.picker.add(repositories);
+      if (additions.some(({ status }) => status === "added")) {
+        session.lists.settingsChanged();
+        await session.sidebar.reload();
+      }
+      return additions;
+    },
+    async skipRepositoryPicker() {
+      const result = await settings.createIfMissing();
       await session.sidebar.reload();
       return result;
     },

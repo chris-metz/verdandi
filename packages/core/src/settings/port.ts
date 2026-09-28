@@ -22,6 +22,17 @@ export interface SettingsStorage {
     entry: SidebarEntryKey,
     destination: SidebarDestination,
   ): Promise<SettingsChangeResult>;
+  /**
+   * Tracks repositories, in order, with their GitHub IDs: an entry with the
+   * same ID, or else the same name without an ID, takes the current name and
+   * ID where it is; any other goes to the end of the section. Creates the
+   * file if there is none.
+   */
+  addRepositories(
+    repositories: readonly (RepositoryAddress & { id: number })[],
+  ): Promise<SettingsChangeResult>;
+  /** Creates the file empty if there is none; an existing one stays as it is. */
+  createIfMissing(): Promise<SettingsChangeResult>;
 }
 
 /** Portable user data as the core and sidebar use it. */
@@ -32,7 +43,13 @@ export interface Settings {
 }
 
 export type SettingsResult =
-  | { ok: true; value: Settings; status: SettingsStatus }
+  | {
+      ok: true;
+      value: Settings;
+      status: SettingsStatus;
+      /** Whether the file exists; if not, nothing is tracked yet. */
+      exists: boolean;
+    }
   /** The file cannot be used; value keeps the last valid data (empty at startup). */
   | { ok: false; message: string; value: Settings };
 

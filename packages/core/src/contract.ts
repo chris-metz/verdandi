@@ -183,6 +183,12 @@ export type SidebarEntries =
       repositories: RepositoryEntry[];
       views: SavedView[];
       settings: SettingsStatus;
+      /**
+       * Whether the settings file does not exist yet: Verdandi is launched
+       * for the first time, and the repository picker opens once the setup is
+       * ready. Adding a repository creates the file, and so does **Skip**.
+       */
+      firstLaunch: boolean;
     }
   | { status: "failed"; message: string };
 
@@ -620,6 +626,125 @@ export type IssueLookup =
   | { status: "pull-request"; url: string }
   | { status: "failed"; problem: Problem };
 
+/**
+ * An owner the repository picker filters its suggestions by: the account
+ * Verdandi reads GitHub as, or one of its known organizations.
+ */
+export interface PickerOwner {
+  login: string;
+  kind: "account" | "organization";
+}
+
+/**
+ * A repository as the repository picker offers it, as far as GitHub said.
+ * It can be selected unless its issues cannot be read.
+ */
+export interface PickerRepository {
+  /** GitHub's numeric ID, which survives renames and transfers. */
+  id: number;
+  /** Its current address. */
+  repository: RepositoryAddress;
+  archived: boolean;
+  /**
+   * Whether it is a tracked repository already, under this name or, by its
+   * ID, an earlier one.
+   */
+  tracked: boolean;
+  /** Why it cannot be added, when its issues cannot be read. */
+  unavailable: RepositoryUnavailable | undefined;
+}
+
+/** Why a repository's issues cannot be read, so that it cannot be added. */
+export type RepositoryUnavailable =
+  /** Its Issues are turned off (`hasIssuesEnabled: false`). */
+  | { kind: "issues-disabled" }
+  /**
+   * GitHub shows the repository but refuses this account its issues, e.g.
+   * to a token without Issues access, saying why when it does.
+   */
+  | { kind: "no-issue-access"; access: AccessEvidence | undefined };
+
+/**
+ * How far the picker's suggestions have loaded. They are never loaded
+ * beyond `suggestionLimit` repositories.
+ *
+ * - `loading`: pages are still arriving; those that did are listed.
+ * - `loaded`: every page arrived, or the first `suggestionLimit`
+ *   repositories when `capped`.
+ * - `failed`: a page could not be read; those that arrived before stay
+ *   listed. This is never an empty result.
+ */
+export type SuggestionsLoading =
+  | { status: "loading" }
+  | { status: "loaded"; capped: boolean }
+  | { status: "failed"; problem: Problem };
+
+/** The most repositories the picker suggests. */
+export const suggestionLimit = 1000;
+
+/**
+ * What the repository picker suggests: the repositories the account owns,
+ * collaborates on or reaches as an organization member, most recently pushed
+ * first. They are not every repository it can read; any other is checked by
+ * its exact `owner/name` or URL.
+ */
+export interface RepositorySuggestions {
+  /**
+   * The account first, once GitHub has named it, then its known
+   * organizations, alphabetically: those GitHub lists as its memberships,
+   * and those owning a suggested repository, which it may list even when it
+   * lists no memberships.
+   */
+  owners: PickerOwner[];
+  repositories: PickerRepository[];
+  loading: SuggestionsLoading;
+  /**
+   * Why GitHub left out repositories or organizations, where its answers
+   * said so, e.g. an organization's SSO or OAuth App restrictions.
+   */
+  restrictions: AccessEvidence[];
+  /**
+   * Whether GitHub left out repositories or organizations it reported errors
+   * about, whether or not `restrictions` names why: the suggestions are not
+   * all there are, even once loaded.
+   */
+  incomplete: boolean;
+}
+
+/**
+ * What became of checking a repository for the picker by its address: it
+ * was found, and can be added unless `unavailable` says why not; or it could
+ * not be checked, or GitHub would not show it to this account.
+ */
+export type RepositoryCheck =
+  | { status: "found"; repository: PickerRepository }
+  | { status: "failed"; problem: Problem };
+
+/**
+ * What became of adding one repository. Each is checked and added on its
+ * own, and one that was added stays so whatever becomes of the others.
+ */
+export type RepositoryAddition = {
+  /** The repository as it was asked for. */
+  asked: RepositoryAddress;
+} & (
+  | {
+      /**
+       * It is tracked now, at the end of the Repositories section, or
+       * where it was when it was tracked already under an earlier name.
+       */
+      status: "added";
+      repository: PickerRepository;
+    }
+  /** It was found, but `repository.unavailable` says why it was not added. */
+  | { status: "unavailable"; repository: PickerRepository }
+  /**
+   * It could not be checked or GitHub would not show it to this account, or
+   * the settings file could not be changed.
+   */
+  | { status: "failed"; problem: Problem }
+);
+
 /** Normal window bounds, even while maximised; interpreted by the desktop. */
 export interface WindowState {
   x: number;
@@ -736,6 +861,38 @@ export interface CoreRequests {
     destination: SidebarDestination,
   ) => Promise<SettingsChangeResult>;
   /**
+   * Opens the repository picker: its suggestions are pushed as
+   * `repositorySuggestionsChanged` at once, and again as each page of them
+   * arrives, and whenever the tracked repositories change while it is open.
+   * Suggestions read in the last five minutes are shown again; others, or
+   * those that failed, are read anew. While it is open, the picker's
+   * requests go before the screen's.
+   */
+  openRepositoryPicker: () => Promise<void>;
+  /** Closes the picker: suggestion pages not yet asked for are dropped. */
+  closeRepositoryPicker: () => Promise<void>;
+  /**
+   * Checks a repository by its exact address, whether the picker suggests
+   * it or not, following renames: whether its issues can be read.
+   */
+  checkRepository: (repository: RepositoryAddress) => Promise<RepositoryCheck>;
+  /**
+   * Checks each repository afresh and adds those whose issues can be read,
+   * archived or without issues included, to the end of the Repositories
+   * section, storing their IDs. One tracked already under an earlier name,
+   * by its ID, takes its new name where it is. The rest are reported each
+   * with why; nothing added is taken back.
+   */
+  addRepositories: (
+    repositories: RepositoryAddress[],
+  ) => Promise<RepositoryAddition[]>;
+  /**
+   * **Skip** on first launch: creates the settings file empty, so that the
+   * picker does not open on its own again. An existing file is left as it
+   * is.
+   */
+  skipRepositoryPicker: () => Promise<SettingsChangeResult>;
+  /**
    * Opens a scope's list. Its current state is pushed as `listChanged` at
    * once, then again as each page of open issues and each batch of the other
    * issues it shows arrives. Only the opened scope is loaded: opening it again
@@ -816,6 +973,8 @@ export interface CoreEvents {
    * GitHub resets it.
    */
   rateLimitsChanged: RateLimitState[];
+  /** The repository picker's suggestions, while it is open, as they change. */
+  repositorySuggestionsChanged: RepositorySuggestions;
 }
 
 export type CoreEventName = keyof CoreEvents;
@@ -853,6 +1012,11 @@ const requests: Record<keyof CoreRequests, true> = {
   revalidate: true,
   retry: true,
   getRateLimits: true,
+  openRepositoryPicker: true,
+  closeRepositoryPicker: true,
+  checkRepository: true,
+  addRepositories: true,
+  skipRepositoryPicker: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,
@@ -861,6 +1025,7 @@ const events: Record<CoreEventName, true> = {
   issuePageChanged: true,
   sidebarChanged: true,
   rateLimitsChanged: true,
+  repositorySuggestionsChanged: true,
 };
 
 /** Every request name, for wiring the contract to a transport. */

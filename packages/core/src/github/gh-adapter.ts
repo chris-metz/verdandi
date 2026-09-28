@@ -22,7 +22,9 @@ import {
   type IssueReference,
   type NumberedItem,
   type RateLimitBudget,
+  type RepositoryAccess,
   type RepositorySummary,
+  type SuggestionPage,
 } from "./port.ts";
 
 export interface GhAdapterOptions {
@@ -82,6 +84,31 @@ const repositorySummaryFields = `
   databaseId nameWithOwner hasIssuesEnabled isArchived
   issues(states: OPEN) { totalCount }
 `;
+
+/**
+ * What the picker reads of a repository: whether an organization owns it,
+ * and whether its issues can be read. Their count is read only to learn
+ * whether GitHub refuses them, as it does a token without Issues access.
+ */
+const repositoryAccessFields = `
+  databaseId nameWithOwner owner { __typename } hasIssuesEnabled isArchived
+  issues(states: OPEN) { totalCount }
+`;
+
+/** The most repositories or organizations GitHub returns in one page. */
+const suggestionsPerPage = 100;
+
+/**
+ * The repositories the picker suggests: owned, collaborated on, or reached
+ * as an organization member (GitHub's `ownerAffiliations` leaves out the
+ * last by default), most recently pushed first.
+ */
+const suggestionsConnection = `repositories(
+  first: ${String(suggestionsPerPage)}, after: $after,
+  affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+  ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+  orderBy: {field: PUSHED_AT, direction: DESC}
+)`;
 
 /**
  * The budget left in GraphQL's pool, which GitHub answers with every query
@@ -482,6 +509,186 @@ export function createGhAdapter({
         }),
       );
     },
+    fetchRepositoryAccess(repositories) {
+      // One aliased `repository` per repository, as for summaries.
+      const variables: Variables = {};
+      const selections = repositories.map(({ owner, name }, index) => {
+        const n = String(index);
+        variables[`owner${n}`] = { type: "String!", value: owner };
+        variables[`name${n}`] = { type: "String!", value: name };
+        return `r${n}: repository(owner: $owner${n}, name: $name${n}) {
+          ${repositoryAccessFields}
+        }`;
+      });
+      return graphql(
+        selections.join("\n"),
+        variables,
+        ({ data, errors, headers }) => ({
+          ok: true,
+          value: repositories.map((_, index) => {
+            const alias = `r${String(index)}`;
+            const node = isObject(data) ? data[alias] : undefined;
+            return (
+              readRepositoryAccess(node, errors, [alias], headers) ?? {
+                ok: false,
+                error: errorAbout(errors, [alias], headers),
+              }
+            );
+          }),
+        }),
+      );
+    },
+    fetchRepositorySuggestions(after) {
+      const organizations =
+        after === undefined
+          ? `organizations(first: ${String(suggestionsPerPage)}) { nodes { login } }`
+          : "";
+      return graphql(
+        `me: viewer {
+          ${organizations}
+          ${suggestionsConnection} {
+            pageInfo { hasNextPage endCursor }
+            nodes { ${repositoryAccessFields} }
+          }
+        }`,
+        { after: { type: "String", value: after ?? null } },
+        ({ data, errors, headers }) => {
+          const page = readSuggestionPage(data, errors, headers, {
+            withOrganizations: after === undefined,
+          });
+          return page
+            ? { ok: true, value: page }
+            : { ok: false, error: errorAbout(errors, ["me"], headers) };
+        },
+      );
+    },
+  };
+}
+
+/**
+ * The domain error GitHub reported about a part of a GraphQL answer it left
+ * out, or an unexpected response when it reported none.
+ */
+function errorAbout(
+  errors: readonly GraphqlError[],
+  path: readonly (string | number)[],
+  headers: ResponseHeaders,
+): GitHubError {
+  const aboutIt = errorsAbout(errors, path);
+  return aboutIt.length > 0
+    ? graphqlError(aboutIt, headers)
+    : { kind: "unexpected-response" };
+}
+
+/**
+ * Reads a repository as the picker checks it, at `path` in the answer, or
+ * `undefined` if it is not one. GitHub refusing its issues while showing the
+ * repository is kept as why; any other error about them fails it.
+ */
+function readRepositoryAccess(
+  node: unknown,
+  errors: readonly GraphqlError[],
+  path: readonly (string | number)[],
+  headers: ResponseHeaders,
+): GitHubResult<RepositoryAccess> | undefined {
+  if (!isObject(node)) return undefined;
+  const {
+    databaseId,
+    nameWithOwner,
+    owner,
+    hasIssuesEnabled,
+    isArchived,
+    issues,
+  } = node;
+  const repository =
+    typeof nameWithOwner === "string"
+      ? parseRepositoryAddress(nameWithOwner)
+      : undefined;
+  const ownerType = isObject(owner) ? owner.__typename : undefined;
+  const issuesRead = isObject(issues) && typeof issues.totalCount === "number";
+  const aboutIssues = errorsAbout(errors, [...path, "issues"]);
+  if (
+    typeof databaseId !== "number" ||
+    !repository ||
+    typeof ownerType !== "string" ||
+    typeof hasIssuesEnabled !== "boolean" ||
+    typeof isArchived !== "boolean" ||
+    (!issuesRead && aboutIssues.length === 0)
+  ) {
+    return undefined;
+  }
+  const issuesError = issuesRead
+    ? undefined
+    : graphqlError(aboutIssues, headers);
+  // Only a refusal says the issues cannot be read; anything else, such as a
+  // timeout, says nothing of them, and fails the check.
+  if (issuesError && issuesError.kind !== "unavailable") {
+    return { ok: false, error: issuesError };
+  }
+  return {
+    ok: true,
+    value: {
+      id: databaseId,
+      repository,
+      ownedByOrganization: ownerType === "Organization",
+      hasIssuesEnabled,
+      isArchived,
+      issuesDenied: issuesError,
+    },
+  };
+}
+
+/**
+ * Reads a page of the picker's suggestions, or `undefined` if it is not
+ * one. Repositories GitHub reported errors about instead of answering are
+ * left out, with the errors.
+ */
+function readSuggestionPage(
+  data: unknown,
+  errors: readonly GraphqlError[],
+  headers: ResponseHeaders,
+  { withOrganizations }: { withOrganizations: boolean },
+): SuggestionPage | undefined {
+  if (!isObject(data) || !isObject(data.me) || !isObject(data.viewer)) {
+    return undefined;
+  }
+  const { login } = data.viewer;
+  const { repositories, organizations } = data.me;
+  if (typeof login !== "string" || !isObject(repositories)) return undefined;
+  const { pageInfo, nodes } = repositories;
+  if (!isObject(pageInfo) || !Array.isArray(nodes)) return undefined;
+  const { hasNextPage, endCursor } = pageInfo;
+  if (typeof hasNextPage !== "boolean") return undefined;
+  if (hasNextPage && typeof endCursor !== "string") return undefined;
+  const incomplete: GitHubError[] = [];
+  const read: RepositoryAccess[] = [];
+  for (const [index, node] of nodes.entries()) {
+    const path = ["me", "repositories", "nodes", index];
+    const access = readRepositoryAccess(node, errors, path, headers);
+    if (access?.ok) read.push(access.value);
+    else incomplete.push(errorAbout(errors, path, headers));
+  }
+  let logins: string[] | undefined;
+  if (withOrganizations) {
+    const members =
+      isObject(organizations) && Array.isArray(organizations.nodes)
+        ? organizations.nodes
+        : [];
+    logins = members.flatMap((member) =>
+      isObject(member) && typeof member.login === "string"
+        ? [member.login]
+        : [],
+    );
+    if (!isObject(organizations)) {
+      incomplete.push(errorAbout(errors, ["me", "organizations"], headers));
+    }
+  }
+  return {
+    account: login,
+    organizations: logins,
+    repositories: read,
+    nextPage: hasNextPage ? (endCursor as string) : undefined,
+    incomplete,
   };
 }
 

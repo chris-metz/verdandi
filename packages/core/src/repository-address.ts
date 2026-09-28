@@ -9,6 +9,34 @@ export function parseRepositoryAddress(
   return { owner, name };
 }
 
+/** A GitHub login: letters, digits and single inner hyphens. */
+const owner = String.raw`[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`;
+
+/** A repository name: letters, digits, `.`, `-` and `_`. */
+const name = String.raw`[A-Za-z0-9._-]+`;
+
+const exactAddress = new RegExp(String.raw`^(${owner})/(${name})$`);
+
+const repositoryUrl = new RegExp(
+  String.raw`^(?:https?://)?(?:www\.)?github\.com/(${owner})/(${name})(?:[/?#].*)?$`,
+  "i",
+);
+
+/**
+ * The repository a user typed or pasted, if it names one exactly: `owner/name`,
+ * or a github.com URL of it or of a page within it.
+ */
+export function parseRepositoryInput(
+  text: string,
+): RepositoryAddress | undefined {
+  const trimmed = text.trim();
+  const match = exactAddress.exec(trimmed) ?? repositoryUrl.exec(trimmed);
+  if (!match?.[1] || !match[2]) return undefined;
+  const repository = match[2].replace(/\.git$/, "");
+  if (repository === "" || /^\.+$/.test(repository)) return undefined;
+  return { owner: match[1], name: repository };
+}
+
 /** How Verdandi names a repository: `owner/name`. */
 export function nameWithOwner({ owner, name }: RepositoryAddress): string {
   return `${owner}/${name}`;

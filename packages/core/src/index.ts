@@ -10,7 +10,9 @@ export type {
   Issue,
   IssuePage,
   IssueReference,
+  RepositoryAccess,
   RepositorySummary,
+  SuggestionPage,
 } from "./github/port.ts";
 export { runCommand } from "./github/run-command.ts";
 export { createLocalStateFile } from "./settings/local-state-file.ts";

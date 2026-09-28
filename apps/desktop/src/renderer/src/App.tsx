@@ -13,6 +13,7 @@ import {
   shortcutModifier,
   type Pane,
 } from "./pane-navigation";
+import { RepositoryPicker } from "./RepositoryPicker";
 import { sameScope, scopeLabel, type SidebarScope as Scope } from "./scope";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
@@ -57,6 +58,11 @@ export function App() {
   const [settingsError, setSettingsError] = useState<string>();
   const sidebarPane = useRef<HTMLElement>(null);
   const mainPane = useRef<HTMLElement>(null);
+  const [picking, setPicking] = useState(false);
+  const login =
+    setup?.status === "ready" && setup.account.status === "known"
+      ? setup.account.account.login
+      : undefined;
 
   async function reorder(
     entry: SidebarEntryKey,
@@ -70,6 +76,17 @@ export function App() {
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /** Opens the repository picker, unless the setup blocker is up. */
+  function openPicker() {
+    if (!blocked) setPicking(true);
+  }
+
+  /** Closes the picker, giving the pane that had the keyboard it again. */
+  function closePicker() {
+    setPicking(false);
+    focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
   }
 
   /** Selects an entry, whose list starts without issue pages on top. */
@@ -105,6 +122,18 @@ export function App() {
       )
       .catch(() => undefined);
   }, [selected]);
+
+  // On first launch, without a settings file, the picker opens once the
+  // setup is ready; with a file, even an empty one, it never opens on its own.
+  const [firstLaunchChecked, setFirstLaunchChecked] = useState(false);
+  if (
+    !firstLaunchChecked &&
+    setup?.status === "ready" &&
+    sidebar?.status === "read"
+  ) {
+    setFirstLaunchChecked(true);
+    if (sidebar.firstLaunch) setPicking(true);
+  }
 
   // The sidebar has the keyboard at launch.
   useEffect(() => {
@@ -163,8 +192,8 @@ export function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       // A key the focused pane has handled is not the window's, and none is
-      // while the setup blocker is up.
-      if (event.defaultPrevented || blocked) return;
+      // while the setup blocker or the picker is up.
+      if (event.defaultPrevented || blocked || picking) return;
       if (
         event.target instanceof Element &&
         event.target.closest(
@@ -195,6 +224,9 @@ export function App() {
         case "refresh":
           void window.verdandi.refresh(screen);
           break;
+        case "add-repository":
+          openPicker();
+          break;
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -224,6 +256,7 @@ export function App() {
             selected={selected}
             onSelect={select}
             onReorder={reorder}
+            onAddRepository={openPicker}
             settingsError={settingsError}
             focused={focused === "sidebar"}
             shortcutsShown={shortcutsShown}
@@ -258,11 +291,7 @@ export function App() {
               key={scopeLabel(selected)}
               scope={selected}
               stack={stack}
-              login={
-                setup?.status === "ready" && setup.account.status === "known"
-                  ? setup.account.account.login
-                  : undefined
-              }
+              login={login}
               onNavigate={navigate}
               hasKeyboard={focused === "main"}
             />
@@ -273,6 +302,21 @@ export function App() {
           )}
         </main>
       </div>
+      {picking && (
+        <RepositoryPicker
+          firstLaunch={sidebar?.status === "read" && sidebar.firstLaunch}
+          settingsProblem={
+            sidebar?.status === "failed"
+              ? sidebar.message
+              : sidebar?.status === "read" &&
+                  sidebar.settings.status !== "writable"
+                ? sidebar.settings.message
+                : undefined
+          }
+          login={login}
+          onClose={closePicker}
+        />
+      )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices />
     </>

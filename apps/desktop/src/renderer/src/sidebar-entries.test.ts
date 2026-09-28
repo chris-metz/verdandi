@@ -16,6 +16,7 @@ describe("entry order", () => {
         status: "read",
         views: [],
         settings: { status: "writable" },
+        firstLaunch: false,
         all: { openIssues: { status: "known", count: 3 } },
         repositories: [
           entry("acme", "web"),

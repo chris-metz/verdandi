@@ -2,7 +2,14 @@
 // Playwright against a scratch VERDANDI_HOME, and runs commands read one per
 // line from stdin (a prompt when stdin is a terminal). See SKILL.md.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -37,23 +44,29 @@ function visibleText(text) {
 
 /** Commands by name, each taking the rest of its line. */
 const commands = {
-  /** Builds the app, then launches it tracking these repositories. */
+  /**
+   * Builds the app, then launches it tracking these repositories, or with no
+   * settings file at all for `--fresh`, as on first launch.
+   */
   async launch(args) {
     if (app) return "already launched";
     execFileSync("pnpm", ["--filter", "@verdandi/desktop", "build"], {
       cwd: repo,
       stdio: "pipe",
     });
-    const tracked = args ? args.split(/\s+/) : ["cli/cli"];
+    const fresh = args === "--fresh";
+    const tracked = fresh ? [] : args ? args.split(/\s+/) : ["cli/cli"];
     home = mkdtempSync(join(tmpdir(), "verdandi-run-"));
-    writeFileSync(
-      join(home, "settings.json"),
-      JSON.stringify({
-        version: 1,
-        repositories: tracked.map((name) => ({ name })),
-        views: [],
-      }),
-    );
+    if (!fresh) {
+      writeFileSync(
+        join(home, "settings.json"),
+        JSON.stringify({
+          version: 1,
+          repositories: tracked.map((name) => ({ name })),
+          views: [],
+        }),
+      );
+    }
     app = await electron.launch({
       executablePath: electronBin,
       args: [appDir],
@@ -72,15 +85,17 @@ const commands = {
     await page.setViewportSize({ width: 1200, height: 800 });
     try {
       await page.waitForSelector(
-        '[aria-label="Repositories"] [role="option"]',
-        {
-          timeout,
-        },
+        fresh
+          ? '[role="dialog"]'
+          : '[aria-label="Repositories"] [role="option"]',
+        { timeout },
       );
     } catch {
-      return `launched, but no tracked repository shows:\n${await page.innerText("body")}`;
+      return `launched, but ${fresh ? "no dialog" : "no tracked repository"} shows:\n${await page.innerText("body")}`;
     }
-    return `launched, tracking ${tracked.join(", ")} (VERDANDI_HOME=${home})`;
+    return fresh
+      ? `launched without settings.json (VERDANDI_HOME=${home})`
+      : `launched, tracking ${tracked.join(", ")} (VERDANDI_HOME=${home})`;
   },
 
   /** Selects a sidebar entry: All, or a tracked repository by owner/name. */
@@ -126,6 +141,21 @@ const commands = {
   async press(key) {
     await window().keyboard.press(key);
     return `pressed ${key}`;
+  },
+
+  /** Types text where the keyboard is, as a user would. */
+  async type(text) {
+    await window().keyboard.type(text);
+    return `typed ${text}`;
+  },
+
+  /** Prints the scratch home's settings.json, or says there is none. */
+  settings() {
+    if (!home) throw new Error("launch first");
+    const file = join(home, "settings.json");
+    return existsSync(file)
+      ? readFileSync(file, "utf8").trim()
+      : "no settings.json";
   },
 
   /**

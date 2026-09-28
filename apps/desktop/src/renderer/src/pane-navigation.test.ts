@@ -98,6 +98,24 @@ describe("r", () => {
   });
 });
 
+describe("a", () => {
+  it("opens the repository picker, whichever pane has the keyboard", () => {
+    expect(press(key("a"), { focused: "sidebar" })).toEqual({
+      kind: "add-repository",
+    });
+    expect(press(key("a"), { focused: "main" })).toEqual({
+      kind: "add-repository",
+    });
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt, and as A", () => {
+    expect(press(key("a", { metaKey: true }))).toBeUndefined();
+    expect(press(key("a", { ctrlKey: true }))).toBeUndefined();
+    expect(press(key("a", { altKey: true }))).toBeUndefined();
+    expect(press(key("A", { shiftKey: true }))).toBeUndefined();
+  });
+});
+
 describe("sidebar keys", () => {
   it("select the entry below with j and ↓, stopping at the last", () => {
     expect(press(key("j"), { selected: "api" })).toEqual(select("web"));
