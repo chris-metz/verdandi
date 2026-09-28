@@ -1455,6 +1455,7 @@ it("reads issue page metadata, including nullable authors and milestones", async
     },
     milestone: null,
     comments: { totalCount: 12 },
+    bodyHTML: "",
   };
   const github = createGhAdapter({
     gh: ghPath,
@@ -1824,6 +1825,309 @@ describe("gh adapter: auth status", () => {
     expect(await github.fetchAuthStatus()).toEqual({
       ok: false,
       error: { kind: "unexpected-response" },
+    });
+  });
+});
+
+describe("gh adapter: bodies and comments", () => {
+  /** An issue node as the issue page reads it, with its body's HTML. */
+  function detailsNode(bodyHTML: string) {
+    return {
+      ...issueNode({ number: 7 }),
+      stateReason: null,
+      createdAt: "2026-08-01T12:00:00Z",
+      author: null,
+      assignees: { nodes: [] },
+      milestone: null,
+      comments: { totalCount: 0 },
+      bodyHTML,
+    };
+  }
+
+  it("reads an issue's body as GitHub renders it to HTML, never its Markdown", async () => {
+    const requests: GraphqlRequest[] = [];
+    const node = detailsNode('<p dir="auto">It crashes.</p>');
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stderr: "",
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: { viewer: { login: "octo-reader" }, node },
+            }),
+          ),
+        },
+        requests,
+      ),
+    });
+
+    expect(await github.fetchIssueDetails(node.id)).toMatchObject({
+      ok: true,
+      value: { bodyHTML: '<p dir="auto">It crashes.</p>' },
+    });
+    expect(requests[0]?.query).toMatch(/\bbodyHTML\b/);
+    expect(requests[0]?.query).not.toMatch(/\bbody\b/);
+  });
+
+  /** GitHub's answer to a page of an issue's comments. */
+  function commentsAnswer(
+    nodes: unknown[],
+    pageInfo: { hasNextPage: boolean; endCursor: string | null },
+  ): CommandResult {
+    return {
+      kind: "exited",
+      exitCode: 0,
+      stderr: "",
+      stdout: transcript(
+        "200 OK",
+        graphqlHeaders,
+        JSON.stringify({
+          data: {
+            viewer: { login: "octo-reader" },
+            node: { comments: { pageInfo, nodes } },
+          },
+        }),
+      ),
+    };
+  }
+
+  it("reads a page of an issue's comments, with the cursor to the next", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        commentsAnswer(
+          [
+            {
+              id: "IC_kwDOAbCdEs4AAAAB",
+              url: "https://github.com/acme/api/issues/7#issuecomment-1",
+              createdAt: "2026-08-02T12:00:00Z",
+              author: {
+                login: "octo-dev",
+                avatarUrl: "https://avatars.githubusercontent.com/u/2",
+              },
+              bodyHTML: '<p dir="auto">Seen it too.</p>',
+            },
+            {
+              id: "IC_kwDOAbCdEs4AAAAC",
+              url: "https://github.com/acme/api/issues/7#issuecomment-2",
+              createdAt: "2026-08-03T12:00:00Z",
+              author: null,
+              bodyHTML: "",
+            },
+          ],
+          { hasNextPage: true, endCursor: "Y3Vyc29yOjI=" },
+        ),
+        requests,
+      ),
+    });
+
+    expect(
+      await github.fetchIssueComments("I_kwDOAbCdEs4AAAAZ", "Y3Vyc29yOjE="),
+    ).toEqual({
+      budget: graphqlBudget,
+      viewerLogin: "octo-reader",
+      ok: true,
+      value: {
+        comments: [
+          {
+            id: "IC_kwDOAbCdEs4AAAAB",
+            url: "https://github.com/acme/api/issues/7#issuecomment-1",
+            createdAt: "2026-08-02T12:00:00Z",
+            author: {
+              login: "octo-dev",
+              avatarUrl: "https://avatars.githubusercontent.com/u/2",
+            },
+            bodyHTML: '<p dir="auto">Seen it too.</p>',
+          },
+          {
+            id: "IC_kwDOAbCdEs4AAAAC",
+            url: "https://github.com/acme/api/issues/7#issuecomment-2",
+            createdAt: "2026-08-03T12:00:00Z",
+            author: undefined,
+            bodyHTML: "",
+          },
+        ],
+        nextPage: "Y3Vyc29yOjI=",
+      },
+    });
+    expect(requests[0]?.query).toMatch(
+      /comments\(first: 100, after: \$after\)/,
+    );
+    expect(requests[0]?.query).not.toMatch(/\bbody\b/);
+    expect(requests[0]?.variables).toEqual({
+      id: "I_kwDOAbCdEs4AAAAZ",
+      after: "Y3Vyc29yOjE=",
+    });
+  });
+
+  it("reads the last page of an issue's comments", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        commentsAnswer([], { hasNextPage: false, endCursor: null }),
+      ),
+    });
+
+    expect(await github.fetchIssueComments("I_kwDOAbCdEs4AAAAZ")).toMatchObject(
+      { ok: true, value: { comments: [], nextPage: undefined } },
+    );
+  });
+
+  it("reports the comments of an issue GitHub will not show as unavailable", async () => {
+    const message =
+      "Could not resolve to a node with the global id of 'I_kwDOAbCdEs4AAAAZ'";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-reader" }, node: null },
+        [{ type: "NOT_FOUND", path: ["node"], message }],
+      ),
+    });
+
+    expect(await github.fetchIssueComments("I_kwDOAbCdEs4AAAAZ")).toEqual({
+      budget: graphqlBudget,
+      viewerLogin: "octo-reader",
+      ok: false,
+      error: { kind: "unavailable", message, access: undefined },
+    });
+  });
+
+  it("reports a page of comments it cannot read", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        commentsAnswer([{ id: "IC_kwDOAbCdEs4AAAAB", bodyHTML: 7 }], {
+          hasNextPage: false,
+          endCursor: null,
+        }),
+      ),
+    });
+
+    expect(await github.fetchIssueComments("I_kwDOAbCdEs4AAAAZ")).toMatchObject(
+      { ok: false, error: { kind: "unexpected-response" } },
+    );
+  });
+});
+
+describe("gh adapter: issues by number", () => {
+  it("reads the issue a repository numbers so", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stderr: "",
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                repository: {
+                  issueOrPullRequest: {
+                    __typename: "Issue",
+                    id: "I_kwDOAbCdEs4AAAAE",
+                    number: 5,
+                    title: "Leaks memory",
+                    state: "OPEN",
+                    url: "https://github.com/other/lib/issues/5",
+                    repository: { nameWithOwner: "other/lib" },
+                  },
+                },
+              },
+            }),
+          ),
+        },
+        requests,
+      ),
+    });
+
+    expect(
+      await github.fetchIssueByNumber({ owner: "other", name: "lib" }, 5),
+    ).toEqual({
+      budget: graphqlBudget,
+      viewerLogin: "octo-reader",
+      ok: true,
+      value: {
+        kind: "issue",
+        issue: {
+          id: "I_kwDOAbCdEs4AAAAE",
+          repository: { owner: "other", name: "lib" },
+          number: 5,
+          title: "Leaks memory",
+          state: "open",
+        },
+        url: "https://github.com/other/lib/issues/5",
+      },
+    });
+    expect(requests[0]?.variables).toEqual({
+      owner: "other",
+      name: "lib",
+      number: 5,
+    });
+  });
+
+  it("reads a pull request's page when the number is one", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        {
+          viewer: { login: "octo-reader" },
+          repository: {
+            issueOrPullRequest: {
+              __typename: "PullRequest",
+              url: "https://github.com/acme/api/pull/2",
+            },
+          },
+        },
+        [],
+      ),
+    });
+
+    expect(
+      await github.fetchIssueByNumber({ owner: "acme", name: "api" }, 2),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        kind: "pull-request",
+        url: "https://github.com/acme/api/pull/2",
+      },
+    });
+  });
+
+  it("reports a number GitHub cannot resolve as unavailable", async () => {
+    const message =
+      "Could not resolve to an issue or pull request with the number of 404.";
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        {
+          viewer: { login: "octo-reader" },
+          repository: { issueOrPullRequest: null },
+        },
+        [
+          {
+            type: "NOT_FOUND",
+            path: ["repository", "issueOrPullRequest"],
+            message,
+          },
+        ],
+      ),
+    });
+
+    expect(
+      await github.fetchIssueByNumber({ owner: "acme", name: "api" }, 404),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "unavailable", message, access: undefined },
     });
   });
 });

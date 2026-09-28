@@ -1,4 +1,5 @@
 import type {
+  IssueComments,
   IssueList,
   IssuePage,
   ListLoading,
@@ -6,6 +7,7 @@ import type {
 } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
+  commentsStatus,
   listFreshness,
   loadingFreshness,
   pageFreshness,
@@ -233,6 +235,7 @@ describe("an issue page's header", () => {
           unread: failed,
         },
       ],
+      comments: undefined,
       loading: { status: "current", updatedAt: now },
     };
 
@@ -241,6 +244,118 @@ describe("an issue page's header", () => {
       busy: false,
       retry: true,
     });
+  });
+
+  it.each<[IssueComments["loading"], string]>([
+    [
+      { status: "partial", updatedAt: now, problem: cannotReachGitHub },
+      "Updated just now · comments shown in part",
+    ],
+    [
+      { status: "failed", problem: cannotReachGitHub },
+      "Updated just now · comments could not be loaded",
+    ],
+    [
+      { status: "failed", problem: { kind: "unavailable", access: undefined } },
+      "Updated just now · comments unavailable",
+    ],
+  ])("sums up comments that could not all be read: %j", (loading, text) => {
+    const page: IssuePage = {
+      issueId: "I_2",
+      issue: undefined,
+      ancestry: [],
+      subIssues: [],
+      comments: { comments: [], loading },
+      loading: { status: "current", updatedAt: now },
+    };
+
+    expect(pageFreshness(page, now)).toEqual({
+      text,
+      busy: false,
+      retry: true,
+    });
+  });
+});
+
+describe("the comments' status", () => {
+  const comment = {
+    id: "IC_1",
+    author: undefined,
+    createdAt: "2026-09-01T12:00:00Z",
+    url: "https://github.com/acme/api/issues/1#issuecomment-1",
+    bodyHTML: "",
+  };
+  const some = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...comment,
+      id: `IC_${String(index)}`,
+    }));
+
+  it.each<[string, IssueComments, number, ReturnType<typeof commentsStatus>]>([
+    [
+      "counts them as they arrive",
+      { comments: some(100), loading: { status: "loading" } },
+      250,
+      { text: "Loading… 100 of 250 comments", retry: false },
+    ],
+    [
+      "says they are loading before any has arrived",
+      { comments: [], loading: { status: "loading" } },
+      3,
+      { text: "Loading comments…", retry: false },
+    ],
+    [
+      "says there are none only once they have been read",
+      { comments: [], loading: { status: "current", updatedAt: now } },
+      0,
+      { text: "No comments", retry: false },
+    ],
+    [
+      "says nothing more while they are current",
+      { comments: some(2), loading: { status: "current", updatedAt: now } },
+      2,
+      undefined,
+    ],
+    [
+      "says nothing more while they are read again",
+      { comments: some(2), loading: { status: "refreshing", updatedAt: now } },
+      2,
+      undefined,
+    ],
+    [
+      "says when those shown were read, and why they could not be read again",
+      {
+        comments: some(2),
+        loading: {
+          status: "stale",
+          updatedAt: now - 30 * minute,
+          problem: cannotReachGitHub,
+        },
+      },
+      2,
+      {
+        text: "Showing data from 14:02 · Cannot reach GitHub",
+        retry: true,
+      },
+    ],
+    [
+      "says how many of them show, and why the rest could not be read",
+      {
+        comments: some(100),
+        loading: {
+          status: "partial",
+          updatedAt: now,
+          problem: cannotReachGitHub,
+        },
+      },
+      250,
+      {
+        text: "Showing 100 of 250 comments · Cannot reach GitHub",
+        retry: true,
+      },
+    ],
+  ])("%s", (_, comments, commentCount, status) => {
+    expect(commentsStatus(comments, commentCount, now)).toEqual(status);
   });
 });
 

@@ -9,6 +9,14 @@ import type {
   UnreadIssue,
 } from "./contract.ts";
 import { inBatches } from "./batches.ts";
+import { keepUnlessChanged } from "./body-html.ts";
+import {
+  commentsOutdated,
+  noComments,
+  readComments,
+  showComments,
+  type CommentsState,
+} from "./issue-comments.ts";
 import type { Issue } from "./github/port.ts";
 import { keepAnswer, type IssueStore } from "./issue-store.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
@@ -21,7 +29,7 @@ import {
 } from "./moments.ts";
 import { problemOf } from "./problems.ts";
 import {
-  nameWithOwner,
+  qualifiedReference,
   repositoryKey,
   sameRepository,
 } from "./repository-address.ts";
@@ -114,6 +122,8 @@ interface PageState {
    * because it was asked for: from then until it is refreshed or retried.
    */
   background: boolean;
+  /** Its issue's comments, as far as they have been read. */
+  comments: CommentsState;
 }
 
 /** At most this many issues are read by ID in one request. */
@@ -164,6 +174,7 @@ export function createIssuePages({
       issue: undefined,
       ancestry: [],
       subIssues: [],
+      comments: undefined,
       loading: { status: "loading" },
     };
     const issue = store.get(issueId);
@@ -190,7 +201,7 @@ export function createIssuePages({
     const referenceTo = (other: Pick<Issue, "repository" | "number">) =>
       sameRepository(issue.repository, other.repository)
         ? `#${String(other.number)}`
-        : `${nameWithOwner(other.repository)}#${String(other.number)}`;
+        : qualifiedReference(other.repository, other.number);
     page.issue = {
       ...summarizeIssue(issue, {
         reference: referenceTo(issue),
@@ -207,7 +218,7 @@ export function createIssuePages({
       visited.add(reference.id);
       const parent = store.get(reference.id);
       const presentation = {
-        reference: `${nameWithOwner(reference.repository)}#${String(reference.number)}`,
+        reference: qualifiedReference(reference.repository, reference.number),
         external: external(reference),
       };
       if (!parent) {
@@ -265,6 +276,15 @@ export function createIssuePages({
       });
     }
     page.subIssues = nest(issue);
+
+    const comments = state.comments.read;
+    if (comments) {
+      updatedAt = Math.min(updatedAt, comments.readAt.time);
+      if (!atOrAfter(comments.readAt, state.validFrom)) {
+        stale ??= state.comments.problem;
+      }
+    }
+    page.comments = showComments(state.comments);
     page.loading = loadingOf(state, updatedAt, stale);
     return page;
   }
@@ -301,14 +321,18 @@ export function createIssuePages({
   async function load(state: PageState, retrying = false) {
     state.reading = true;
     state.readStartedAt = clock();
+    // Comments to be read show as being read from the start.
+    state.comments.reading = commentsOutdated(state.comments, state.validFrom);
     push(build(state));
     for (;;) {
       state.problem = undefined;
       await read(state, retrying);
       if (!state.readAgain) break;
       state.readAgain = false;
+      state.comments.reading = true;
     }
     state.reading = false;
+    state.comments.reading = false;
     if (state.metadata) state.loaded = true;
     push(build(state));
   }
@@ -335,8 +359,14 @@ export function createIssuePages({
     if (!details.ok) {
       state.problem = problemOf(details.error);
       store.fail([issueId], state.problem, askedAt);
-      // What GitHub no longer shows this account shows no more.
-      if (state.problem.kind === "unavailable") state.metadata = undefined;
+      // What GitHub no longer shows this account shows no more; what could
+      // not be read again, comments included, shows from before.
+      if (state.problem.kind === "unavailable") {
+        state.metadata = undefined;
+        state.comments = noComments();
+      } else if (commentsOutdated(state.comments, state.validFrom)) {
+        state.comments.problem = state.problem;
+      }
       return;
     }
     const {
@@ -346,6 +376,7 @@ export function createIssuePages({
       assignees,
       milestone,
       commentCount,
+      bodyHTML,
       ...issue
     } = details.value;
     store.put([issue], askedAt);
@@ -357,6 +388,7 @@ export function createIssuePages({
         assignees,
         milestone,
         commentCount,
+        bodyHTML: keepUnlessChanged(state.metadata?.value.bodyHTML, bodyHTML),
       },
       readAt: askedAt,
     };
@@ -413,7 +445,19 @@ export function createIssuePages({
         part = "rest";
       }
     }
-    await Promise.all([ancestry(), subIssues()]);
+    async function comments() {
+      if (!commentsOutdated(state.comments, state.validFrom)) return;
+      await readComments(state.comments, {
+        issueId,
+        request,
+        clock,
+        urgency: (part) => urgencyOf(state, part),
+        pageArrived: () => {
+          push(build(state));
+        },
+      });
+    }
+    await Promise.all([ancestry(), subIssues(), comments()]);
   }
 
   /**
@@ -465,6 +509,7 @@ export function createIssuePages({
       loaded: false,
       problem: undefined,
       background: false,
+      comments: noComments(),
     };
     pages.set(issueId, state);
     void load(state);
@@ -504,9 +549,13 @@ function hasFailedParts(page: IssuePage): boolean {
     node.unread
       ? node.unread.status === "failed"
       : node.issue.incomplete !== undefined || node.subIssues.some(failedNode);
+  const comments = page.comments?.loading.status;
   return (
     page.loading.status === "failed" ||
     page.loading.status === "stale" ||
+    comments === "failed" ||
+    comments === "partial" ||
+    comments === "stale" ||
     page.issue?.incomplete !== undefined ||
     page.ancestry.some(({ unread }) => unread?.status === "failed") ||
     page.subIssues.some(failedNode)

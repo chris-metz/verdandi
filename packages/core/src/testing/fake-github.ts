@@ -9,6 +9,7 @@ import type {
 import {
   readPools,
   type AuthStatus,
+  type CommentPage,
   type GitHubAccess,
   type GitHubError,
   type GitHubRead,
@@ -16,6 +17,7 @@ import {
   type GitHubResult,
   type Issue,
   type IssueReference,
+  type NumberedItem,
   type RateLimitBudget,
   type RepositorySummary,
 } from "../github/port.ts";
@@ -40,6 +42,20 @@ export interface FakeIssue {
   subIssues?: string[];
   blockedBy?: RelationshipCount;
   blocking?: RelationshipCount;
+  /**
+   * Its comments, oldest first. The first is `IC_owner/name#number/1`, and
+   * each is at `…/issues/number#issuecomment-1` and so on.
+   */
+  comments?: FakeComment[];
+}
+
+/** A synthetic comment as a test declares it. */
+export interface FakeComment {
+  /** Its author's login, or none for a deleted account. */
+  author?: string;
+  bodyHTML: string;
+  /** An ISO 8601 timestamp; the same for every comment unless said otherwise. */
+  createdAt?: string;
 }
 
 /**
@@ -80,6 +96,11 @@ export interface FakeGitHub extends GitHubAccess {
    * newest first. Adding it again replaces its issues.
    */
   addRepository(nameWithOwner: string, issues: FakeIssue[]): void;
+  /**
+   * Adds a pull request to a repository, `owner/name`, which numbers it with
+   * its issues.
+   */
+  addPullRequest(nameWithOwner: string, number: number): void;
   /** Every read fails with this error from now on, or succeeds again. */
   failWith(error: GitHubError | undefined): void;
   /** The next reads fail with this error, then reads succeed again. */
@@ -109,8 +130,8 @@ export interface FakeGitHub extends GitHubAccess {
   /**
    * The reads GitHub has received so far, in order, each as its method and
    * what it asks about: `fetchOpenIssues acme/api`, `fetchIssues acme/api#2
-   * other/lib#5`, `fetchIssueDetails acme/api#1` or
-   * `fetchRepositorySummaries acme/api acme/web`.
+   * other/lib#5`, `fetchIssueDetails acme/api#1`, `fetchIssueComments
+   * acme/api#1 after 100` or `fetchRepositorySummaries acme/api acme/web`.
    */
   readonly received: readonly string[];
   /**
@@ -130,6 +151,9 @@ export interface FakeGitHub extends GitHubAccess {
 
 /** When every issue was updated, unless a test says otherwise. */
 const defaultUpdatedAt = "2026-09-01T12:00:00Z";
+
+/** The most comments GitHub returns in one page. */
+const commentsPerPage = 100;
 
 /** How many points a pool holds, unless a test says otherwise. */
 const defaultLimit = 5000;
@@ -167,6 +191,8 @@ export function createFakeGitHub({
   const received: string[] = [];
   /** Each pool's budget, once drawn on or set. */
   const budgets = new Map<RateLimitPool, Omit<RateLimitBudget, "pool">>();
+  /** Each repository's pull requests' numbers, by `owner/name`. */
+  const pullRequests = new Map<string, Set<number>>();
   /** Each repository's numeric ID, by `owner/name`. */
   const repositoryIds = new Map<string, number>();
   const repositoryRequests = new Map<string, number>();
@@ -419,6 +445,10 @@ export function createFakeGitHub({
         repositoryIds.set(nameWithOwner, 1000001 + repositoryIds.size);
       }
     },
+    addPullRequest(nameWithOwner, number) {
+      const numbers = pullRequests.get(nameWithOwner) ?? new Set();
+      pullRequests.set(nameWithOwner, numbers.add(number));
+    },
     failWith(error) {
       failure = error;
     },
@@ -481,10 +511,94 @@ export function createFakeGitHub({
             assignees: [],
             milestone: undefined,
             commentCount: 0,
+            bodyHTML: "",
             ...issue.metadata,
           },
         };
       });
+    },
+    fetchIssueComments(id, after) {
+      const ref = id.replace(/^I_/, "");
+      const what = after === undefined ? ref : `${ref} after ${after}`;
+      return answer(
+        "fetchIssueComments",
+        what,
+        (): GitHubResult<CommentPage> => {
+          const issue = find(ref);
+          const message = `Could not resolve to a node with the global id of '${id}'.`;
+          const hides = unavailable(ref, message);
+          if (hides) return { ok: false, error: hides };
+          if (!issue) {
+            return {
+              ok: false,
+              error: { kind: "unavailable", message, access: undefined },
+            };
+          }
+          const all = issue.comments ?? [];
+          // The cursor is simply where the next page starts.
+          const start = after === undefined ? 0 : Number(after);
+          const end = start + commentsPerPage;
+          const [nameWithOwner = ""] = ref.split("#");
+          return {
+            ok: true,
+            value: {
+              comments: all.slice(start, end).map((comment, index) => {
+                const n = String(start + index + 1);
+                return {
+                  id: `IC_${ref}/${n}`,
+                  author:
+                    comment.author === undefined
+                      ? undefined
+                      : {
+                          login: comment.author,
+                          avatarUrl: `https://avatars.githubusercontent.com/${comment.author}`,
+                        },
+                  createdAt: comment.createdAt ?? defaultUpdatedAt,
+                  url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}#issuecomment-${n}`,
+                  bodyHTML: comment.bodyHTML,
+                };
+              }),
+              nextPage: end < all.length ? String(end) : undefined,
+            },
+          };
+        },
+      );
+    },
+    fetchIssueByNumber({ owner, name }, number) {
+      const nameWithOwner = `${owner}/${name}`;
+      const ref = `${nameWithOwner}#${String(number)}`;
+      return answer(
+        "fetchIssueByNumber",
+        ref,
+        (): GitHubResult<NumberedItem> => {
+          const message = `Could not resolve to an issue or pull request with the number of ${String(number)}.`;
+          const hides = unavailable(ref, message);
+          if (hides) return { ok: false, error: hides };
+          if (pullRequests.get(nameWithOwner)?.has(number)) {
+            return {
+              ok: true,
+              value: {
+                kind: "pull-request",
+                url: `https://github.com/${ref.replace("#", "/pull/")}`,
+              },
+            };
+          }
+          if (!find(ref)) {
+            return {
+              ok: false,
+              error: { kind: "unavailable", message, access: undefined },
+            };
+          }
+          return {
+            ok: true,
+            value: {
+              kind: "issue",
+              issue: referenceTo(ref),
+              url: `https://github.com/${ref.replace("#", "/issues/")}`,
+            },
+          };
+        },
+      );
     },
     fetchOpenIssues({ owner, name }, after) {
       const nameWithOwner = `${owner}/${name}`;

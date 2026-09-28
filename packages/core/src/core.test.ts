@@ -4394,13 +4394,17 @@ describe("stale content", () => {
       core.refresh({ kind: "issue", issueId: "I_other/work#2" }),
     );
 
+    const problem = {
+      kind: "unreachable",
+      message: cannotReachGitHub.message,
+    } as const;
     expect(stale).toEqual({
       ...loaded,
-      loading: {
-        status: "stale",
-        updatedAt: startTime,
-        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      comments: {
+        comments: [],
+        loading: { status: "stale", updatedAt: startTime, problem },
       },
+      loading: { status: "stale", updatedAt: startTime, problem },
     });
   });
 });
@@ -5044,5 +5048,374 @@ describe("transient failures", () => {
     }
 
     expect(github.requestsFor("acme/api")).toBe(1);
+  });
+});
+
+describe("issue bodies and comments", () => {
+  it("shows the body as GitHub renders it to HTML", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 1,
+        title: "Crash on start",
+        metadata: {
+          bodyHTML: '<p dir="auto">It crashes <del>often</del>.</p>',
+        },
+      },
+    ]);
+    const core = createTestCore(github);
+
+    const page = await openPageUntilLoaded(core, "I_acme/api#1");
+
+    expect(page.issue?.bodyHTML).toBe(
+      '<p dir="auto">It crashes <del>often</del>.</p>',
+    );
+  });
+
+  /** Comments by one author, each saying which it is. */
+  function comments(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      author: "octo-dev",
+      bodyHTML: `<p dir="auto">Comment ${String(index + 1)}</p>`,
+    }));
+  }
+
+  it("shows every comment, oldest first, read 100 at a time", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(250) },
+    ]);
+    const core = createTestCore(github);
+
+    const page = await openPageUntilLoaded(core, "I_acme/api#1");
+
+    const shown = page.comments?.comments ?? [];
+    expect(shown).toHaveLength(250);
+    expect(shown[0]).toEqual({
+      id: "IC_acme/api#1/1",
+      author: {
+        login: "octo-dev",
+        avatarUrl: "https://avatars.githubusercontent.com/octo-dev",
+      },
+      createdAt: "2026-09-01T12:00:00Z",
+      url: "https://github.com/acme/api/issues/1#issuecomment-1",
+      bodyHTML: '<p dir="auto">Comment 1</p>',
+    });
+    expect(shown.at(-1)?.bodyHTML).toBe('<p dir="auto">Comment 250</p>');
+    expect(page.comments?.loading).toEqual({
+      status: "current",
+      updatedAt: startTime,
+    });
+    expect(
+      github.received.filter((request) =>
+        request.startsWith("fetchIssueComments"),
+      ),
+    ).toEqual([
+      "fetchIssueComments acme/api#1",
+      "fetchIssueComments acme/api#1 after 100",
+      "fetchIssueComments acme/api#1 after 200",
+    ]);
+  });
+
+  /**
+   * A paragraph with an uploaded image, as GitHub renders it: its link is
+   * signed anew in every answer.
+   */
+  function withImage(text: string, signature: string) {
+    const src = `https://private-user-images.githubusercontent.com/1/2-3f2a.png?jwt=${signature}`;
+    return `<p dir="auto">${text} <a href="${src}"><img src="${src}" alt="Screenshot"></a></p>`;
+  }
+
+  function issueWithImages(text: string, signature: string) {
+    return {
+      number: 1,
+      title: "Crash on start",
+      metadata: { bodyHTML: withImage(text, signature) },
+      comments: [{ author: "octo-dev", bodyHTML: withImage(text, signature) }],
+    };
+  }
+
+  it("reads the body and every comment again on a refresh", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [issueWithImages("Before", "a")]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.addRepository("acme/api", [
+      {
+        ...issueWithImages("After", "b"),
+        comments: comments(101),
+      },
+    ]);
+    const refreshed = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+
+    expect(refreshed.issue?.bodyHTML).toBe(withImage("After", "b"));
+    expect(refreshed.comments?.comments.map((c) => c.bodyHTML)).toEqual(
+      comments(101).map((c) => c.bodyHTML),
+    );
+  });
+
+  it("keeps a body and comments whose media links GitHub only signed anew, so they do not show again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [issueWithImages("Crashes", "a")]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.addRepository("acme/api", [issueWithImages("Crashes", "b")]);
+    const refreshed = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+
+    expect(refreshed.issue?.bodyHTML).toBe(withImage("Crashes", "a"));
+    expect(refreshed.comments?.comments[0]?.bodyHTML).toBe(
+      withImage("Crashes", "a"),
+    );
+  });
+
+  it("shows the comments that could be read when the rest could not, and reads them all on Retry", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(250) },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchIssueComments");
+    const loaded = openPageUntilLoaded(core, "I_acme/api#1");
+    await vi.waitFor(() => {
+      expect(github.received).toContain("fetchIssueComments acme/api#1");
+    });
+    github.failWith(cannotReachGitHub);
+    github.resume();
+    const partial = await loaded;
+
+    expect(partial.comments?.comments).toHaveLength(100);
+    expect(partial.comments?.loading).toEqual({
+      status: "partial",
+      updatedAt: startTime,
+      problem: { kind: "unreachable", message: cannotReachGitHub.message },
+    });
+
+    github.failWith(undefined);
+    const retried = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.retry({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    expect(retried.comments?.comments).toHaveLength(250);
+    expect(retried.comments?.loading.status).toBe("current");
+  });
+
+  it("shows the comments as they arrive the first time", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(150) },
+    ]);
+    const core = createTestCore(github);
+    const pushed: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pushed.push(page));
+
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    expect(
+      pushed.map((page) => [
+        page.comments?.comments.length,
+        page.comments?.loading.status,
+      ]),
+    ).toEqual([
+      [undefined, undefined],
+      [0, "loading"],
+      [100, "loading"],
+      [150, "current"],
+    ]);
+  });
+
+  it("shows the comments as they were while all of them are read again", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(150) },
+    ]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(250) },
+    ]);
+    const pushed: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pushed.push(page));
+    await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+
+    expect(
+      pushed.map((page) => [
+        page.comments?.comments.length,
+        page.comments?.loading.status,
+      ]),
+    ).toEqual([
+      [150, "refreshing"],
+      [150, "refreshing"],
+      [250, "current"],
+    ]);
+  });
+
+  it("keeps the comments read before when reading them again fails, marked stale", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(3) },
+    ]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    clock.advance(minute);
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash at start", comments: comments(3) },
+    ]);
+    // The issue is read again, and then its comments cannot be.
+    github.pause("fetchIssueDetails");
+    const refreshed = pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    github.failWith(cannotReachGitHub);
+    github.resume();
+    const page = await refreshed;
+
+    const problem = {
+      kind: "unreachable",
+      message: cannotReachGitHub.message,
+    } as const;
+    expect(page.issue?.title).toBe("Crash at start");
+    expect(page.comments?.comments).toHaveLength(3);
+    expect(page.comments?.loading).toEqual({
+      status: "stale",
+      updatedAt: startTime,
+      problem,
+    });
+    expect(page.loading).toEqual({
+      status: "stale",
+      updatedAt: startTime,
+      problem,
+    });
+  });
+
+  it("says why the comments could not be read when none were, and reads them on Retry", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(3) },
+    ]);
+    const core = createTestCore(github);
+    github.pause("fetchIssueDetails");
+    const loaded = openPageUntilLoaded(core, "I_acme/api#1");
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    github.failWith(cannotReachGitHub);
+    github.resume();
+    const page = await loaded;
+
+    expect(page.comments).toEqual({
+      comments: [],
+      loading: {
+        status: "failed",
+        problem: { kind: "unreachable", message: cannotReachGitHub.message },
+      },
+    });
+
+    github.failWith(undefined);
+    const retried = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.retry({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    expect(retried.comments?.comments).toHaveLength(3);
+  });
+
+  it("shows no comments once GitHub no longer shows the issue", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(3) },
+    ]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.hide("acme/api#1");
+    const page = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+
+    expect(page.comments).toBeUndefined();
+  });
+
+  it("shows no comments read before once GitHub no longer shows them", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start", comments: comments(3) },
+    ]);
+    const core = createTestCore(github);
+    await openPageUntilLoaded(core, "I_acme/api#1");
+
+    github.pause("fetchIssueDetails");
+    const refreshed = pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+    github.hide("acme/api#1");
+    github.resume();
+    const page = await refreshed;
+
+    expect(page.comments).toEqual({
+      comments: [],
+      loading: {
+        status: "failed",
+        problem: { kind: "unavailable", access: undefined },
+      },
+    });
+  });
+});
+
+describe("looking up issues by number", () => {
+  it("finds an issue in any repository, without tracking it", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addRepository("other/lib", [{ number: 5, title: "Leaks memory" }]);
+    const core = createTestCore(github);
+
+    expect(await core.lookUpIssue({ owner: "other", name: "lib" }, 5)).toEqual({
+      status: "found",
+      issue: {
+        id: "I_other/lib#5",
+        reference: "other/lib#5",
+        title: "Leaks memory",
+        url: "https://github.com/other/lib/issues/5",
+      },
+    });
+    expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api 1"]);
+  });
+
+  it("says a number that belongs to a pull request is one, with its page", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.addPullRequest("acme/api", 2);
+    const core = createTestCore(github);
+
+    expect(await core.lookUpIssue({ owner: "acme", name: "api" }, 2)).toEqual({
+      status: "pull-request",
+      url: "https://github.com/acme/api/pull/2",
+    });
+  });
+
+  it("says why an issue could not be found", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    github.hide("acme/api#1");
+    const core = createTestCore(github);
+
+    expect(await core.lookUpIssue({ owner: "acme", name: "api" }, 1)).toEqual({
+      status: "failed",
+      problem: { kind: "unavailable", access: undefined },
+    });
   });
 });

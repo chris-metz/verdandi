@@ -456,11 +456,53 @@ export interface IssueMetadata {
   assignees: IssueActor[];
   milestone: string | undefined;
   commentCount: number;
+  /**
+   * Its body as GitHub renders it to HTML, empty when it has none. It is
+   * untrusted: an interface sanitizes it before showing it. Read again, it
+   * stays as it was when only the signatures of its media links changed.
+   */
+  bodyHTML: string;
 }
 
 export interface IssueActor {
   login: string;
   avatarUrl: string;
+}
+
+/** A comment on an issue. Timeline events, such as label changes, are none. */
+export interface IssueComment {
+  /** GitHub's node ID. */
+  id: string;
+  /** Who wrote it, unless their account has been deleted. */
+  author: IssueActor | undefined;
+  /** When it was written, as an ISO 8601 timestamp. */
+  createdAt: string;
+  /** Where it is on github.com. */
+  url: string;
+  /**
+   * Its body as GitHub renders it to HTML, as an issue's: untrusted, and
+   * unchanged when read again with only its media links signed anew.
+   */
+  bodyHTML: string;
+}
+
+/**
+ * How far an issue's comments have loaded, and how current they are, as a
+ * page's `loading` says; and `partial`: only some of them could be read, e.g.
+ * the first 100, and the rest could not, so they show those.
+ */
+export type CommentsLoading =
+  LoadingState | { status: "partial"; updatedAt: number; problem: Problem };
+
+/**
+ * An issue's comments, all of them, read 100 at a time without being asked
+ * for more. The first time, they show as they arrive; read again, they show
+ * as they were until all have been read again.
+ */
+export interface IssueComments {
+  /** The comments, oldest first. */
+  comments: IssueComment[];
+  loading: CommentsLoading;
 }
 
 /** An issue page, including relationships outside tracked repositories. */
@@ -478,13 +520,32 @@ export interface IssuePage {
   ancestry: (ParentIssue & { url: string })[];
   /** The list's outline rows, in GitHub order, initially collapsed. */
   subIssues: IssueTree[];
+  /** The issue's comments, once the issue has been read. */
+  comments: IssueComments | undefined;
   /**
-   * How far the page has loaded, and how current it is. What loaded before a
-   * failure stays usable; parts that could not be read show where they
-   * belong.
+   * How far the page has loaded, and how current it is, comments included.
+   * What loaded before a failure stays usable; parts that could not be read
+   * show where they belong.
    */
   loading: LoadingState;
 }
+
+/** What became of looking up an issue by its repository and number. */
+export type IssueLookup =
+  /**
+   * It is an issue, which a page can show: named `owner/name#12`, with its
+   * page on github.com.
+   */
+  | {
+      status: "found";
+      issue: Pick<ParentIssue, "id" | "reference" | "title"> & { url: string };
+    }
+  /**
+   * The number belongs to a pull request, which shares their numbers with
+   * issues and which Verdandi does not show: its page on github.com.
+   */
+  | { status: "pull-request"; url: string }
+  | { status: "failed"; problem: Problem };
 
 /** Request/response calls. */
 export interface CoreRequests {
@@ -498,6 +559,15 @@ export interface CoreRequests {
    * keeps each visit's cursor, expansion and scroll position.
    */
   openIssuePage: (issueId: string) => Promise<void>;
+  /**
+   * Looks up an issue by its repository and number, e.g. one a link in an
+   * issue's body names, so that its page can be opened, without tracking
+   * its repository.
+   */
+  lookUpIssue: (
+    repository: RepositoryAddress,
+    number: number,
+  ) => Promise<IssueLookup>;
   /**
    * Whether Verdandi can read GitHub, and as which account, as far as it has
    * checked; changes are pushed as `setupChanged`. The first call, or the
@@ -632,6 +702,7 @@ export interface Contract extends CoreRequests {
 
 const requests: Record<keyof CoreRequests, true> = {
   openIssuePage: true,
+  lookUpIssue: true,
   getSetup: true,
   checkSetupAgain: true,
   chooseGhExecutable: true,

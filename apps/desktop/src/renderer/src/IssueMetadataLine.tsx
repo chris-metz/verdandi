@@ -1,5 +1,7 @@
 import type { IssueMetadata, IssueSummary } from "@verdandi/core/contract";
 import { cn } from "@/lib/utils";
+import { Avatar } from "./Avatar";
+import { ageOf } from "./freshness";
 import { colorStyle, labelColors, relationshipCell } from "./row-cells";
 
 /** The page's complete metadata, including labels hidden by list overflow. */
@@ -62,24 +64,12 @@ export function IssueMetadataLine({
       {issue.assignees.length > 0 && (
         <span className="flex -space-x-1" aria-label="Assignees">
           {issue.assignees.map((assignee) => (
-            <span
+            <Avatar
               key={assignee.login}
+              actor={assignee}
               title={`Assigned to @${assignee.login}`}
-              className="relative flex size-6 items-center justify-center overflow-hidden rounded-full border-2 border-background bg-muted text-[10px]"
-            >
-              <span aria-hidden>
-                {assignee.login.slice(0, 1).toUpperCase()}
-              </span>
-              <img
-                src={assignee.avatarUrl}
-                alt={`@${assignee.login}`}
-                referrerPolicy="no-referrer"
-                className="absolute inset-0 size-full object-cover"
-                onError={(event) => {
-                  event.currentTarget.hidden = true;
-                }}
-              />
-            </span>
+              className="size-6 border-2 border-background"
+            />
           ))}
         </span>
       )}
@@ -90,7 +80,7 @@ export function IssueMetadataLine({
           dateTime={issue.createdAt}
           title={new Date(issue.createdAt).toLocaleString()}
         >
-          {issueAge(issue.createdAt)}
+          {ageOf(issue.createdAt)}
         </time>
       </span>
       <span>
@@ -98,24 +88,4 @@ export function IssueMetadataLine({
       </span>
     </div>
   );
-}
-
-function issueAge(createdAt: string): string {
-  const seconds = Math.max(0, (Date.now() - Date.parse(createdAt)) / 1000);
-  if (seconds < 60) return "just now";
-  const units = [
-    [31536000, "year"],
-    [2592000, "month"],
-    [86400, "day"],
-    [3600, "hour"],
-    [60, "minute"],
-  ] as const;
-  for (const [size, unit] of units) {
-    if (seconds >= size)
-      return new Intl.RelativeTimeFormat("en", { numeric: "always" }).format(
-        -Math.floor(seconds / size),
-        unit,
-      );
-  }
-  return createdAt;
 }

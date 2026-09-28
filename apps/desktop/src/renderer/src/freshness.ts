@@ -1,4 +1,5 @@
 import type {
+  IssueComments,
   IssueList,
   IssueNode,
   IssuePage,
@@ -56,15 +57,71 @@ export function listFreshness(list: IssueList, now: number): Freshness {
 
 /**
  * An issue page's freshness: the age of what it shows, and what of it could
- * not be read.
+ * not be read, comments included.
  */
 export function pageFreshness(page: IssuePage, now: number): Freshness {
-  const missing = missingIssues(
-    page.subIssues,
-    page.ancestry.flatMap(({ unread }) => unread ?? []),
-    page.issue?.incomplete === undefined ? 0 : 1,
-  );
+  const missing = [
+    ...missingIssues(
+      page.subIssues,
+      page.ancestry.flatMap(({ unread }) => unread ?? []),
+      page.issue?.incomplete === undefined ? 0 : 1,
+    ),
+    ...missingComments(page.comments),
+  ];
   return withMissing(loadingFreshness(page.loading, now), missing);
+}
+
+/** Whether the comments could not all be read, and why. */
+function missingComments(comments: IssueComments | undefined): string[] {
+  const loading = comments?.loading;
+  if (loading?.status === "partial") return ["comments shown in part"];
+  if (loading?.status !== "failed") return [];
+  return [
+    loading.problem.kind === "unavailable"
+      ? "comments unavailable"
+      : "comments could not be loaded",
+  ];
+}
+
+/**
+ * What the comments say of how far they have loaded, besides showing them,
+ * and whether they offer to read again what could not be read; nothing
+ * while they are current or being read again, since the page's header says
+ * so. `commentCount` is how many GitHub counts. Comments that could not be
+ * read at all say why where they would show.
+ */
+export function commentsStatus(
+  comments: IssueComments,
+  commentCount: number,
+  now: number,
+): { text: string; retry: boolean } | undefined {
+  const { loading } = comments;
+  const shown = comments.comments.length;
+  switch (loading.status) {
+    case "loading":
+      return {
+        text:
+          shown > 0
+            ? `Loading… ${String(shown)} of ${String(Math.max(shown, commentCount))} comments`
+            : "Loading comments…",
+        retry: false,
+      };
+    case "current":
+      return shown === 0 ? { text: "No comments", retry: false } : undefined;
+    case "refreshing":
+    case "failed":
+      return undefined;
+    case "stale":
+      return {
+        text: `Showing data from ${timeOf(loading.updatedAt, now)} · ${problemText(loading.problem).text}`,
+        retry: true,
+      };
+    case "partial":
+      return {
+        text: `Showing ${String(shown)} of ${String(Math.max(shown, commentCount))} comments · ${problemText(loading.problem).text}`,
+        retry: true,
+      };
+  }
 }
 
 /** The freshness of a screen, or of a part of one. */
@@ -201,4 +258,25 @@ export function updatedAgo(updatedAt: number, now: number): string {
   if (minutes < 1) return "Updated just now";
   if (minutes < 60) return `Updated ${String(minutes)} min ago`;
   return `Updated ${String(Math.floor(minutes / 60))} h ago`;
+}
+
+/** How long ago something happened on GitHub, e.g. "3 days ago". */
+export function ageOf(timestamp: string): string {
+  const seconds = Math.max(0, (Date.now() - Date.parse(timestamp)) / 1000);
+  if (seconds < 60) return "just now";
+  const units = [
+    [31536000, "year"],
+    [2592000, "month"],
+    [86400, "day"],
+    [3600, "hour"],
+    [60, "minute"],
+  ] as const;
+  for (const [size, unit] of units) {
+    if (seconds >= size)
+      return new Intl.RelativeTimeFormat("en", { numeric: "always" }).format(
+        -Math.floor(seconds / size),
+        unit,
+      );
+  }
+  return timestamp;
 }

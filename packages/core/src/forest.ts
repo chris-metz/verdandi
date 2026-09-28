@@ -8,7 +8,7 @@ import type {
 } from "./contract.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
 import type { Issue, IssueReference } from "./github/port.ts";
-import { nameWithOwner, sameRepository } from "./repository-address.ts";
+import { qualifiedReference, sameRepository } from "./repository-address.ts";
 
 /** A scope's list, arranged into its sub-issue forest. */
 export interface Forest {
@@ -104,7 +104,7 @@ export function buildForest({
     const repositoryShown = all ? place === "row" : isOwn(address);
     return repositoryShown
       ? `#${String(number)}`
-      : `${nameWithOwner(address)}#${String(number)}`;
+      : qualifiedReference(address, number);
   }
 
   function nameParent(parent: IssueReference): ParentIssue {

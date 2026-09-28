@@ -71,6 +71,42 @@ describe("scroll anchoring", () => {
     expect(shownAt(scroller, "d")).toBe(2 * rowHeight);
   });
 
+  it("keeps what is read in place when the selection is out of view and content above it changes", () => {
+    const scroller = scrollerWith(["a", "b", "c", "d", "e"], "a");
+    scroller.getBoundingClientRect = () =>
+      new DOMRect(0, 0, 800, 2 * rowHeight);
+    scroller.scrollTop = 3 * rowHeight + 10;
+    const anchor = noteAnchor(scroller, selectedRow, "[data-issue-id]");
+
+    fill(scroller, ["a", "x", "b", "c", "d", "e"], "a");
+    keepAnchored(scroller, anchor, selectedRow);
+
+    expect(shownAt(scroller, "d")).toBe(-10);
+  });
+
+  it("leaves the scroller alone when what was read is gone, rather than jumping to the selection out of view", () => {
+    const scroller = scrollerWith(["a", "b", "c", "d", "e"], "a");
+    scroller.getBoundingClientRect = () =>
+      new DOMRect(0, 0, 800, 2 * rowHeight);
+    scroller.scrollTop = 3 * rowHeight + 10;
+    const anchor = noteAnchor(scroller, selectedRow, "[data-issue-id]");
+
+    fill(scroller, ["a", "b", "c", "e"], "a");
+    keepAnchored(scroller, anchor, selectedRow);
+
+    expect(scroller.scrollTop).toBe(3 * rowHeight + 10);
+  });
+
+  it("keeps the selection in place while it is in view, whatever else shows", () => {
+    const scroller = scrollerWith(["a", "b", "c"], "b");
+    const anchor = noteAnchor(scroller, selectedRow, "[data-issue-id]");
+
+    fill(scroller, ["x", "a", "b", "c"], "b");
+    keepAnchored(scroller, anchor, selectedRow);
+
+    expect(shownAt(scroller, "b")).toBe(rowHeight);
+  });
+
   it("leaves the scroller alone when nothing was selected", () => {
     const scroller = scrollerWith(["a", "b"], "none");
     const anchor = noteAnchor(scroller, selectedRow);

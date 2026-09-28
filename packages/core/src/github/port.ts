@@ -1,5 +1,6 @@
 import type {
   AccessEvidence,
+  IssueComment,
   IssueMetadata,
   Label,
   RateLimitPool,
@@ -22,6 +23,22 @@ export interface GitHubAccess {
   fetchAuthStatus(): Promise<GitHubResult<AuthStatus>>;
   /** Reads a single issue with the metadata shown on its page. */
   fetchIssueDetails(id: string): Promise<GitHubResponse<Issue & IssueMetadata>>;
+  /**
+   * Reads one page of an issue's comments, oldest first: the first 100, or
+   * those after the `after` cursor of the previous page.
+   */
+  fetchIssueComments(
+    issueId: string,
+    after?: string,
+  ): Promise<GitHubResponse<CommentPage>>;
+  /**
+   * Reads what a repository numbers so, following renames: an issue, or a
+   * pull request, which shares their numbers.
+   */
+  fetchIssueByNumber(
+    repository: RepositoryAddress,
+    number: number,
+  ): Promise<GitHubResponse<NumberedItem>>;
   /**
    * Reads one page of a repository's open issues, newest first: the first
    * page, or the one after the `after` cursor of the previous page. Each page
@@ -64,6 +81,8 @@ export type GitHubRead = Exclude<keyof GitHubAccess, "fetchAuthStatus">;
 /** The rate-limit pool each read draws on. */
 export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchIssueDetails: "graphql",
+  fetchIssueComments: "graphql",
+  fetchIssueByNumber: "graphql",
   fetchOpenIssues: "graphql",
   fetchIssues: "graphql",
   fetchRepositorySummaries: "graphql",
@@ -184,6 +203,17 @@ export interface IssuePage {
    * them along with the rest.
    */
   incomplete: GitHubError | undefined;
+}
+
+/** What a repository numbers: an issue, or a pull request. */
+export type NumberedItem =
+  | { kind: "issue"; issue: IssueReference; url: string }
+  | { kind: "pull-request"; url: string };
+
+export interface CommentPage {
+  comments: IssueComment[];
+  /** The cursor to read the next page after, or none on the last page. */
+  nextPage: string | undefined;
 }
 
 export type GitHubResult<T> =

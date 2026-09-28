@@ -10,6 +10,8 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { loadingFreshness, pageFreshness } from "./freshness";
+import { openLinkToIssue } from "./follow-link";
+import { IssueConversation } from "./IssueConversation";
 import { IssueMetadataLine } from "./IssueMetadataLine";
 import { IssueColumnHeader, IssueRow, WarningIcon } from "./IssueRow";
 import type {
@@ -31,6 +33,7 @@ import { problemText } from "./problem-text";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { incompleteTitle, unreadCell } from "./row-cells";
+import type { LinkToIssue } from "./link-target";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
 const buttonClass =
@@ -40,9 +43,16 @@ const buttonClass =
 const cursorTarget = '[data-page-cursor="true"], [aria-selected="true"]';
 
 /**
+ * What marks the reading position while the cursor is out of view: an
+ * issue, the body, or a comment.
+ */
+const readingTargets = "[data-issue-id], [data-scroll-anchor]";
+
+/**
  * The issue page replaces the list; each visit has its own saved place. When
  * the page is read again, the cursor stays on its issue, or moves to a
- * neighbour if the issue disappeared, and stays where it is on screen.
+ * neighbour if the issue disappeared, and stays where it is on screen; while
+ * the cursor is out of view, what is being read stays where it is.
  */
 export function IssuePagePane({
   visit,
@@ -117,6 +127,36 @@ export function IssuePagePane({
     remember({ cursor: issue.id });
     onNavigate({ kind: "open", issue });
   }
+  // The latest `remember` and `onNavigate`, for following links in bodies,
+  // which show again only when they change.
+  const navigation = useRef({ remember, onNavigate });
+  useLayoutEffect(() => {
+    navigation.current = { remember, onNavigate };
+  });
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const openLink = useCallback(
+    (link: LinkToIssue) =>
+      openLinkToIssue(
+        link,
+        (repository, number) => window.verdandi.lookUpIssue(repository, number),
+        {
+          open: (issue) => {
+            // Only while this page still shows.
+            if (!mounted.current) return;
+            navigation.current.remember({});
+            navigation.current.onNavigate({ kind: "open", issue });
+          },
+          openExternal: window.desktop.openExternal,
+        },
+      ),
+    [],
+  );
   function select(issueId: string) {
     remember({ cursor: issueId });
     scroller.current?.focus({ preventScroll: true });
@@ -170,8 +210,12 @@ export function IssuePagePane({
   }
   function onKeyDown(event: KeyboardEvent) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    // Enter on a mouse-focused button activates that button.
-    if (event.key === "Enter" && event.target instanceof HTMLButtonElement)
+    // Enter on a mouse-focused button or link activates it.
+    if (
+      event.key === "Enter" &&
+      (event.target instanceof HTMLButtonElement ||
+        event.target instanceof HTMLAnchorElement)
+    )
       return;
     const command = commandForIssuePageKey(event, cursor, targets, trees);
     if (!command) return;
@@ -205,7 +249,7 @@ export function IssuePagePane({
   useLayoutEffect(noteScroll);
   function noteScroll() {
     anchor.current = scroller.current
-      ? noteAnchor(scroller.current, cursorTarget)
+      ? noteAnchor(scroller.current, cursorTarget, readingTargets)
       : undefined;
   }
 
@@ -430,6 +474,15 @@ export function IssuePagePane({
             )}
           </section>
         )}
+        {page?.issue && page.comments && (
+          <IssueConversation
+            issue={page.issue}
+            comments={page.comments}
+            login={login}
+            onRetry={retry}
+            onOpenIssue={openLink}
+          />
+        )}
       </div>
     </div>
   );
@@ -455,6 +508,7 @@ function useIssuePage(issueId: string): IssuePage | undefined {
           issue: undefined,
           ancestry: [],
           subIssues: [],
+          comments: undefined,
           loading: { status: "failed", problem: { kind: "error", message } },
         });
       }

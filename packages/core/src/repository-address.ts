@@ -15,6 +15,17 @@ export function nameWithOwner({ owner, name }: RepositoryAddress): string {
 }
 
 /**
+ * How Verdandi names an issue wherever it shows the repository too:
+ * `owner/name#12`.
+ */
+export function qualifiedReference(
+  repository: RepositoryAddress,
+  number: number,
+): string {
+  return `${nameWithOwner(repository)}#${String(number)}`;
+}
+
+/**
  * The same key for every spelling of one repository's address, since GitHub
  * ignores case in owner and name.
  */

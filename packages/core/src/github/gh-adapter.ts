@@ -1,6 +1,7 @@
 import type {
   AccessEvidence,
   IssueActor,
+  IssueComment,
   IssueMetadata,
   Label,
   RateLimitPool,
@@ -11,6 +12,7 @@ import type { CommandResult, CommandRunner } from "./command-runner.ts";
 import {
   rateLimitPools,
   type AuthStatus,
+  type CommentPage,
   type GitHubAccess,
   type GitHubError,
   type GitHubResponse,
@@ -18,6 +20,7 @@ import {
   type Issue,
   type IssuePage,
   type IssueReference,
+  type NumberedItem,
   type RateLimitBudget,
   type RepositorySummary,
 } from "./port.ts";
@@ -33,6 +36,19 @@ const authStatusTimeout = 30 * 1000;
 
 /** The most issues GitHub returns in one page. */
 const issuesPerPage = 100;
+
+/** The most comments GitHub returns in one page. */
+const commentsPerPage = 100;
+
+/**
+ * An issue GitHub left out of its answer without saying why, as it may for
+ * one this account cannot see.
+ */
+const issueUnavailable: GitHubError = {
+  kind: "unavailable",
+  message: "Issue unavailable or not accessible with this account.",
+  access: undefined,
+};
 
 /** Another issue as a relationship names it. */
 const referenceFields = "id number title state repository { nameWithOwner }";
@@ -169,6 +185,7 @@ export function createGhAdapter({
           assignees(first: 100) { nodes { login avatarUrl } }
           milestone { title }
           comments { totalCount }
+          bodyHTML
         } }`,
         { id: { type: "ID!", value: id } },
         ({ data, errors, headers }) => {
@@ -187,6 +204,72 @@ export function createGhAdapter({
             return { ok: false, error: { kind: "unexpected-response" } };
           }
           return { ok: true, value: { ...read.value, ...metadata } };
+        },
+      );
+    },
+    fetchIssueComments(issueId, after) {
+      return graphql(
+        // Only comments: GitHub's timeline events are left out.
+        `node(id: $id) { ... on Issue {
+          comments(first: ${String(commentsPerPage)}, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id url createdAt bodyHTML author { login avatarUrl } }
+          }
+        } }`,
+        {
+          id: { type: "ID!", value: issueId },
+          after: { type: "String", value: after },
+        },
+        ({ data, errors, headers }) => {
+          const node = isObject(data) ? data.node : undefined;
+          if (node === null || node === undefined) {
+            const aboutIt = errorsAbout(errors, ["node"]);
+            return {
+              ok: false,
+              error:
+                aboutIt.length > 0
+                  ? graphqlError(aboutIt, headers)
+                  : issueUnavailable,
+            };
+          }
+          const page = readCommentPage(node);
+          if (page) return { ok: true, value: page };
+          return {
+            ok: false,
+            error:
+              errors.length > 0
+                ? graphqlError(errors, headers)
+                : { kind: "unexpected-response" },
+          };
+        },
+      );
+    },
+    fetchIssueByNumber({ owner, name }, number) {
+      return graphql(
+        `repository(owner: $owner, name: $name) {
+          issueOrPullRequest(number: $number) {
+            __typename
+            ... on Issue { ${referenceFields} url }
+            ... on PullRequest { url }
+          }
+        }`,
+        {
+          owner: { type: "String!", value: owner },
+          name: { type: "String!", value: name },
+          number: { type: "Int!", value: number },
+        },
+        ({ data, errors, headers }) => {
+          const found = readNumberedItem(data);
+          if (found) return { ok: true, value: found };
+          // GitHub resolved neither the repository nor the number in it.
+          const aboutIt = errorsAbout(errors, ["repository"]);
+          return {
+            ok: false,
+            error:
+              aboutIt.length > 0
+                ? graphqlError(aboutIt, headers)
+                : issueUnavailable,
+          };
         },
       );
     },
@@ -493,13 +576,7 @@ function readIssueNode(
     return {
       ok: false,
       error:
-        errors.length > 0
-          ? graphqlError(errors, headers)
-          : {
-              kind: "unavailable",
-              message: "Issue unavailable or not accessible with this account.",
-              access: undefined,
-            },
+        errors.length > 0 ? graphqlError(errors, headers) : issueUnavailable,
     };
   }
   const incomplete =
@@ -896,6 +973,53 @@ function parseJson(body: string): unknown {
   }
 }
 
+/**
+ * Reads what a repository numbers, an issue or a pull request, or
+ * `undefined` if it is neither.
+ */
+function readNumberedItem(data: unknown): NumberedItem | undefined {
+  const repository = isObject(data) ? data.repository : undefined;
+  const item = isObject(repository) ? repository.issueOrPullRequest : undefined;
+  if (!isObject(item) || typeof item.url !== "string") return undefined;
+  if (item.__typename === "PullRequest") {
+    return { kind: "pull-request", url: item.url };
+  }
+  const issue = item.__typename === "Issue" ? readReference(item) : undefined;
+  return issue && { kind: "issue", issue, url: item.url };
+}
+
+/** Reads a page of an issue's comments, or `undefined` if it is not one. */
+function readCommentPage(node: unknown): CommentPage | undefined {
+  const connection = isObject(node) ? node.comments : undefined;
+  const pageInfo = isObject(connection) ? connection.pageInfo : undefined;
+  const { hasNextPage, endCursor } = isObject(pageInfo) ? pageInfo : {};
+  const comments = readNodes(connection, readComment);
+  if (!comments || typeof hasNextPage !== "boolean") return undefined;
+  let nextPage: string | undefined;
+  if (hasNextPage) {
+    if (typeof endCursor !== "string") return undefined;
+    nextPage = endCursor;
+  }
+  return { comments, nextPage };
+}
+
+/** Reads a comment, or `undefined` if it is not one. */
+function readComment(node: unknown): IssueComment | undefined {
+  if (!isObject(node)) return undefined;
+  const { id, url, createdAt, bodyHTML, author } = node;
+  const readAuthor = author === null ? null : readActor(author);
+  if (
+    typeof id !== "string" ||
+    typeof url !== "string" ||
+    typeof createdAt !== "string" ||
+    typeof bodyHTML !== "string" ||
+    readAuthor === undefined
+  ) {
+    return undefined;
+  }
+  return { id, author: readAuthor ?? undefined, createdAt, url, bodyHTML };
+}
+
 function readActor(node: unknown): IssueActor | undefined {
   if (
     !isObject(node) ||
@@ -915,7 +1039,8 @@ function readMetadata(
   partial: boolean,
 ): IssueMetadata | undefined {
   if (!isObject(node)) return undefined;
-  const { stateReason, createdAt, author, milestone, comments } = node;
+  const { stateReason, createdAt, author, milestone, comments, bodyHTML } =
+    node;
   const reasons = {
     COMPLETED: "completed",
     NOT_PLANNED: "not-planned",
@@ -941,7 +1066,8 @@ function readMetadata(
     readAuthor === undefined ||
     (milestoneTitle !== null && typeof milestoneTitle !== "string") ||
     !isObject(comments) ||
-    typeof comments.totalCount !== "number"
+    typeof comments.totalCount !== "number" ||
+    typeof bodyHTML !== "string"
   )
     return undefined;
   return {
@@ -954,5 +1080,6 @@ function readMetadata(
     assignees,
     milestone: milestoneTitle ?? undefined,
     commentCount: comments.totalCount,
+    bodyHTML,
   };
 }

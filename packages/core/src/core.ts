@@ -18,7 +18,8 @@ import { createIssueLists, type IssueLists } from "./issue-lists.ts";
 import { createIssuePages, type IssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
-import { isTransient } from "./problems.ts";
+import { isTransient, problemOf } from "./problems.ts";
+import { qualifiedReference } from "./repository-address.ts";
 import {
   createRequestQueue,
   interrupted,
@@ -73,6 +74,8 @@ interface Session {
   lists: IssueLists;
   /** The issue pages. */
   pages: IssuePages;
+  /** Sends a request for the session, as long as it lasts. */
+  request: SendRequest;
   /** Ends the session: it asks GitHub nothing more, and pushes nothing. */
   end(): void;
 }
@@ -235,6 +238,7 @@ export function createCore({
       sidebar,
       lists,
       pages,
+      request: sessionRequest,
       end() {
         live = false;
       },
@@ -249,6 +253,34 @@ export function createCore({
       session.pages.open(issueId);
       session.sidebar.revalidate();
       return Promise.resolve();
+    },
+    async lookUpIssue(repository, number) {
+      // Asked for, it is as urgent as what is on screen.
+      const answer = await session.request(
+        "fetchIssueByNumber",
+        [repository, number],
+        () => "visible",
+      );
+      if (!answer.ok) {
+        return { status: "failed", problem: problemOf(answer.error) };
+      }
+      const found = answer.value;
+      if (found.kind === "pull-request") {
+        return { status: "pull-request", url: found.url };
+      }
+      const { id, title } = found.issue;
+      return {
+        status: "found",
+        issue: {
+          id,
+          reference: qualifiedReference(
+            found.issue.repository,
+            found.issue.number,
+          ),
+          title,
+          url: found.url,
+        },
+      };
     },
     getSetup() {
       return Promise.resolve(setup.current());
