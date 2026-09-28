@@ -40,6 +40,12 @@ export interface Sidebar {
    */
   read(): Promise<SidebarEntries>;
   /**
+   * Reads the sidebar as `read` does, and pushes it at once, before any
+   * count it asks for arrives, e.g. in place of counts read as another
+   * account.
+   */
+  reload(): void;
+  /**
    * Asks GitHub again for the counts that failed, and the known ones that
    * are older than five minutes, of the sidebar as last read.
    */
@@ -207,16 +213,36 @@ export function createSidebar({
     if (changed) pushTracked();
   }
 
-  return {
-    async read() {
-      const result = await settings.read();
-      if (!result.ok) {
-        tracked = undefined;
-        return { status: "failed", message: result.message };
-      }
+  /**
+   * Reads the tracked repositories from the settings file, and asks GitHub
+   * for the counts it does not know or that are older than five minutes;
+   * when `announce` says so, pushes the sidebar before any of them arrives.
+   */
+  async function read({
+    announce,
+  }: {
+    announce: boolean;
+  }): Promise<SidebarEntries> {
+    const result = await settings.read();
+    let listed: SidebarEntries;
+    if (result.ok) {
       tracked = result.value.repositories;
       ask(tracked.filter(unknownOrDue));
-      return entries(tracked);
+      listed = entries(tracked);
+    } else {
+      tracked = undefined;
+      listed = { status: "failed", message: result.message };
+    }
+    if (announce) push(listed);
+    return listed;
+  }
+
+  return {
+    read() {
+      return read({ announce: false });
+    },
+    reload() {
+      void read({ announce: true });
     },
     revalidate() {
       if (tracked && ask(tracked.filter((one) => failed(one) || dueAgain(one))))

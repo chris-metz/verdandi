@@ -103,13 +103,9 @@ export function createGhAdapter({
       ],
       { input: JSON.stringify({ query, variables: values }) },
     );
-    if (result.kind !== "exited") {
-      return { ok: false, error: runFailure(result), budget: undefined };
-    }
+    if (result.kind !== "exited") return failed(runFailure(result));
     const response = parseTranscript(result.stdout);
-    if (!response) {
-      return { ok: false, error: exitFailure(result), budget: undefined };
-    }
+    if (!response) return failed(exitFailure(result));
     const { status, headers } = response;
     const body =
       status >= 400
@@ -120,20 +116,22 @@ export function createGhAdapter({
       budgetFromHeaders(headers, "graphql");
     if (status >= 400) {
       const message = readMessage(response.body) ?? `HTTP ${String(status)}`;
-      return { ok: false, error: httpError(status, message, headers), budget };
+      return failed(httpError(status, message, headers), budget);
     }
     const errors = body?.errors ?? [];
     const viewerLogin = body?.data?.viewer?.login;
     if (typeof viewerLogin !== "string") {
-      const error: GitHubError =
+      return failed(
         errors.length > 0
           ? graphqlError(errors, headers)
-          : { kind: "unexpected-response" };
-      return { ok: false, error, budget };
+          : { kind: "unexpected-response" },
+        budget,
+      );
     }
     return {
-      ...read({ viewerLogin, data: body?.data, errors, headers }),
+      ...read({ data: body?.data, errors, headers }),
       budget,
+      viewerLogin,
     };
   }
 
@@ -293,6 +291,17 @@ export function createGhAdapter({
       );
     },
   };
+}
+
+/**
+ * A read that failed without GitHub naming the account it answered as, with
+ * the budget left, if GitHub said.
+ */
+function failed(
+  error: GitHubError,
+  budget?: RateLimitBudget,
+): GitHubResponse<never> {
+  return { ok: false, error, budget, viewerLogin: undefined };
 }
 
 /** The domain error for gh that did not run to its end. */
@@ -634,7 +643,6 @@ interface GraphqlBody {
 
 /** A GraphQL answer with data, and the errors GitHub reported alongside. */
 interface GraphqlAnswer {
-  viewerLogin: string;
   data: unknown;
   errors: GraphqlError[];
   headers: ResponseHeaders;

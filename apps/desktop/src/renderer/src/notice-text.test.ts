@@ -12,3 +12,15 @@ it("says which gh replaced the one the user chose", () => {
     "The gh you chose at /opt/tools/gh is gone or no longer works. Verdandi now uses /opt/homebrew/bin/gh.",
   );
 });
+
+it("says which account GitHub is read as now, and that what shows is read again", () => {
+  expect(
+    noticeText({
+      kind: "account-changed",
+      previous: { login: "octo-reader", host: "github.com" },
+      account: { login: "octo-writer", host: "github.com" },
+    }),
+  ).toBe(
+    "gh switched from @octo-reader to @octo-writer. Verdandi now reads GitHub as @octo-writer and loads what it shows again.",
+  );
+});

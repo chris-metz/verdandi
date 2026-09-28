@@ -8,12 +8,16 @@ import type { GitHubAccess, GitHubError } from "./github/port.ts";
 import type { LocalStateStorage } from "./settings/port.ts";
 
 /**
- * Whether Verdandi can read GitHub, kept up to date: the gate every GitHub
- * request passes. It finds gh and asks it about its credentials at startup,
- * on **Check again**, when the user chooses gh, and after a request failed in
- * a way that suggests gh or its credentials stopped working. Only a confirmed
- * failure blocks: gh missing or unusable, or `gh auth status` confirming that
- * the credentials are missing or rejected. Checks run one after another.
+ * Whether Verdandi can read GitHub, and as which account, kept up to date:
+ * the gate every GitHub request passes. It finds gh and asks it about its
+ * credentials at startup, on **Check again**, when the user chooses gh, and
+ * after a request failed in a way that suggests gh or its credentials stopped
+ * working. Only a confirmed failure blocks: gh missing or unusable, or `gh
+ * auth status` confirming that the credentials are missing or rejected.
+ * Checks run one after another. The account changes when gh names another
+ * one than before, or GitHub answers a request as another one, e.g. after
+ * `gh auth switch`; to follow it, gh is also asked as the window regains
+ * focus, at most once a minute.
  */
 export interface GhSetup {
   /** The setup as far as it has been checked, starting the first check. */
@@ -35,6 +39,24 @@ export interface GhSetup {
    * suggests that gh or its credentials stopped working.
    */
   requestFailed(error: GitHubError): void;
+  /**
+   * Checks the setup again as what is on screen is shown again, e.g. as the
+   * window regains focus, while it is ready, unless a check was asked for in
+   * the last minute.
+   */
+  revalidate(): void;
+  /**
+   * Tells apart the accounts GitHub has been read as, one after another: it
+   * changes whenever the account does. Each request is tagged with it as it
+   * is sent.
+   */
+  accountTag(): number;
+  /**
+   * Takes the login of the account GitHub answered a request as, which was
+   * sent under an account tag. Once the account has changed since, the
+   * answer tells nothing.
+   */
+  answeredAs(login: string, tag: number): void;
 }
 
 export interface GhSetupOptions {
@@ -50,11 +72,22 @@ export interface GhSetupOptions {
   push: (setup: Setup) => void;
   /** Tells the user something briefly. */
   notify: (notice: Notice) => void;
+  /** The time, in milliseconds since the epoch. */
+  now: () => number;
   /** Takes the end of a blocker: the setup is ready again. */
   recovered: () => void;
-  /** Takes another account than gh signed in as before. */
-  accountChanged: (account: Account) => void;
+  /**
+   * Takes another account than GitHub was read as before, as the account
+   * tag has changed.
+   */
+  accountChanged: (account: Account, previous: Account) => void;
 }
+
+/**
+ * As the window regains focus, gh is asked again only once this long, in
+ * milliseconds, has passed since it was last asked.
+ */
+const minCheckInterval = 60 * 1000;
 
 export function createGhSetup({
   runCommand,
@@ -63,12 +96,15 @@ export function createGhSetup({
   github,
   push,
   notify,
+  now,
   recovered,
   accountChanged,
 }: GhSetupOptions): GhSetup {
   let setup: Setup = { status: "checking" };
   /** The checks under way and waiting, the last one last. */
   let checks: Promise<Setup> | undefined;
+  /** When the last check was asked for, in milliseconds since the epoch. */
+  let checkedAt = -Infinity;
   /** Settles with GitHub access as the setup becomes ready. */
   let ready = Promise.withResolvers<GitHubAccess>();
   /** GitHub access through each gh executable used, by path. */
@@ -79,7 +115,10 @@ export function createGhSetup({
    * across restarts.
    */
   let chosen: { path: string | undefined } | undefined;
+  /** The account GitHub is read as, once gh or GitHub has named it. */
   let knownLogin: string | undefined;
+  /** Counts up whenever the account changes. */
+  let accountTag = 0;
 
   function accessTo(gh: string): GitHubAccess {
     let access = accesses.get(gh);
@@ -99,9 +138,16 @@ export function createGhSetup({
 
   /** Runs a step, then a check, after every check under way. */
   function enqueue(before: () => Promise<void> = async () => {}) {
+    checkedAt = now();
     const check = (checks ?? Promise.resolve()).then(async () => {
       await before();
-      return apply(await checkNow());
+      for (;;) {
+        const tag = accountTag;
+        const next = await checkNow();
+        // GitHub answered as another account meanwhile, so gh may have named
+        // the one before: it is asked again.
+        if (tag === accountTag) return apply(next);
+      }
     });
     checks = check;
     void check.finally(() => {
@@ -190,15 +236,27 @@ export function createGhSetup({
       return next;
     }
     ready.resolve(accessTo(next.gh.path));
-    if (next.account.status === "known") {
-      const { account } = next.account;
-      if (knownLogin !== undefined && knownLogin !== account.login) {
-        accountChanged(account);
-      }
-      knownLogin = account.login;
-    }
-    if (previous.status === "blocked") recovered();
+    // Another account reloads everything anyway.
+    const changed =
+      next.account.status === "known" && follow(next.account.account.login);
+    if (!changed && previous.status === "blocked") recovered();
     return next;
+  }
+
+  /**
+   * Takes the login of the account gh or GitHub named, and says whether it
+   * is another one than before, which changes the account tag.
+   */
+  function follow(login: string): boolean {
+    const previous = knownLogin;
+    knownLogin = login;
+    if (previous === undefined || previous === login) return false;
+    accountTag++;
+    accountChanged(
+      { login, host: "github.com" },
+      { login: previous, host: "github.com" },
+    );
+    return true;
   }
 
   /** Starts the first check, unless one has started. */
@@ -235,6 +293,35 @@ export function createGhSetup({
       if (setup.status === "ready" && !checks && suspectsSetup(error)) {
         void enqueue();
       }
+    },
+    revalidate() {
+      if (
+        setup.status === "ready" &&
+        !checks &&
+        now() - checkedAt >= minCheckInterval
+      ) {
+        void enqueue();
+      }
+    },
+    accountTag() {
+      return accountTag;
+    },
+    answeredAs(login, tag) {
+      if (tag !== accountTag || login === knownLogin) return;
+      // The setup names the account GitHub answered as, its token from
+      // where it came: only gh's stored account can change while Verdandi
+      // runs, since the environment it inherited cannot.
+      if (setup.status === "ready" && setup.account.status === "known") {
+        setup = {
+          ...setup,
+          account: {
+            ...setup.account,
+            account: { login, host: "github.com" },
+          },
+        };
+        push(setup);
+      }
+      follow(login);
     },
   };
 }

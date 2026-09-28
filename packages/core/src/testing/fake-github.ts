@@ -54,7 +54,8 @@ export interface FakeIssue {
 export interface FakeGitHub extends GitHubAccess {
   /**
    * gh signs in as this account from now on, with its stored credentials or
-   * a token from an environment variable.
+   * a token from an environment variable: GitHub answers reads that arrive
+   * from now on as it, naming it.
    */
   signInAs(login: string, source?: TokenSource): void;
   /**
@@ -186,7 +187,12 @@ export function createFakeGitHub({
     const error = credentialsError() ?? failure ?? takeNextFailure();
     let answered: GitHubResponse<T>;
     if (error && !reachesGitHub(error)) {
-      answered = { ok: false, error, budget: undefined };
+      answered = {
+        ok: false,
+        error,
+        budget: undefined,
+        viewerLogin: undefined,
+      };
     } else {
       const pool = readPools[method];
       const budget = budgetOf(pool);
@@ -199,12 +205,17 @@ export function createFakeGitHub({
             message: "API rate limit already exceeded for user ID 1234567.",
           },
           budget: { pool, ...budget },
+          viewerLogin: undefined,
         };
       } else {
         if (error?.kind !== "rate-limited") budget.remaining--;
+        const result: GitHubResult<T> = error
+          ? { ok: false, error }
+          : respond();
         answered = {
-          ...(error ? { ok: false, error } : respond()),
+          ...result,
           budget: { pool, ...budget },
+          viewerLogin: namesViewer(result) ? viewer : undefined,
         };
       }
     }
@@ -616,6 +627,29 @@ function reachesGitHub(error: GitHubError): boolean {
     case "graphql":
     case "unexpected-response":
       return true;
+  }
+}
+
+/**
+ * Whether GitHub's answer names the account it answered as: every GraphQL
+ * answer does, also about what it will not show, unless GitHub failed it
+ * with an HTTP error status.
+ */
+function namesViewer(result: GitHubResult<unknown>): boolean {
+  if (result.ok) return true;
+  switch (result.error.kind) {
+    case "unavailable":
+    case "graphql":
+      return true;
+    case "gh-not-found":
+    case "gh-unusable":
+    case "gh-signed-out":
+    case "gh-failed":
+    case "rate-limited":
+    case "server-error":
+    case "http":
+    case "unexpected-response":
+      return false;
   }
 }
 

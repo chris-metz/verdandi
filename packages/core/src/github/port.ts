@@ -90,10 +90,13 @@ export interface RateLimitBudget {
 
 /**
  * GitHub's answer to one read, with the budget left in the pool it drew on,
- * if the answer said.
+ * and the login of the account GitHub answered as, if the answer said. Every
+ * GraphQL answer names the account, unless GitHub failed it with an HTTP
+ * error; REST answers never do.
  */
 export type GitHubResponse<T> = GitHubResult<T> & {
   budget: RateLimitBudget | undefined;
+  viewerLogin: string | undefined;
 };
 
 /** Whether gh has working credentials for github.com. */

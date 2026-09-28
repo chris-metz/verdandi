@@ -24,9 +24,11 @@ const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
  * The window: the sidebar and the main area, which have the keyboard in turn.
  * The pane that has it follows the DOM focus, and survives the main area's
  * list being replaced when another entry is selected. What is on screen is
- * read again with `r`, and when it is old as the window regains focus. While
- * the setup blocker is up, everything behind it stays as it was but is inert;
- * once it goes, the pane that had the keyboard has it again.
+ * read again with `r`, and when it is old as the window regains focus. When
+ * GitHub is read as another account, the issue pages opened are dropped for
+ * the selected entry's list. While the setup blocker is up, everything behind
+ * it stays as it was but is inert; once it goes, the pane that had the
+ * keyboard has it again.
  */
 export function App() {
   const setup = useSetup();
@@ -70,6 +72,16 @@ export function App() {
       focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
     }
   }, [blocked, focused]);
+
+  // The issue pages were opened as the previous account, which may be all
+  // that could read them: the selected entry's list is read anew instead.
+  useEffect(
+    () =>
+      window.verdandi.on("notice", (notice) => {
+        if (notice.kind === "account-changed") navigate({ kind: "list" });
+      }),
+    [],
+  );
 
   // Back in the window, what is on screen is read again if it is old.
   useEffect(() => {

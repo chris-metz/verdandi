@@ -65,6 +65,15 @@ export type RequestResult<T> =
   { ok: true; value: T } | { ok: false; error: RequestError };
 
 /**
+ * What a request comes to that was dropped, or whose answer was discarded:
+ * nothing.
+ */
+export const interrupted = {
+  ok: false,
+  error: { kind: "interrupted" },
+} as const satisfies RequestResult<never>;
+
+/**
  * Sends one GitHub read through the core's request queue, which schedules
  * them all; the core's modules take this instead of the port itself. The
  * queue asks `urgency` whenever it picks what to send next: a request that
@@ -82,7 +91,9 @@ export type SendRequest = <R extends GitHubRead>(
  * each rate-limit pool's budget as GitHub's answers report it, and holds a
  * pool's requests back while GitHub's rate limit stops them: until the pool
  * resets once its budget is used up, or as long as GitHub asks after a
- * secondary limit. Requests held back go on on their own.
+ * secondary limit. Requests held back go on on their own. Each request is
+ * tagged with the account as it is sent, and what GitHub answers to one sent
+ * as an earlier account is discarded.
  */
 export interface RequestQueue {
   /**
@@ -97,6 +108,13 @@ export interface RequestQueue {
   ): Promise<RequestResult<T>>;
   /** Drops the waiting requests that nothing needs any more. */
   sweep(): void;
+  /**
+   * Cancels every request as GitHub is read as another account: those
+   * waiting are dropped unsent, and answer as interrupted, as do those under
+   * way once GitHub answers. What GitHub reported of each pool's budget, and
+   * any pause, are forgotten, since they were the previous account's.
+   */
+  cancel(): void;
   /**
    * Whether less than a tenth of a pool's budget is left until GitHub resets
    * it.
@@ -115,6 +133,8 @@ export interface RequestQueueOptions {
   wait: (milliseconds: number) => Promise<void>;
   /** Takes every pool that holds requests back, whenever that changes. */
   push: (states: RateLimitState[]) => void;
+  /** The account GitHub is read as, by its tag. */
+  account: () => number;
 }
 
 /** Below this share of its budget, a pool is low. */
@@ -136,6 +156,8 @@ interface Entry {
   order: number;
   /** How many requests had been sent when it was last sent, itself included. */
   sentAs: number;
+  /** The tag of the account it was last sent as. */
+  account: number;
   settle: (result: RequestResult<unknown>) => void;
   fail: (reason: unknown) => void;
 }
@@ -162,20 +184,14 @@ export function createRequestQueue({
   now,
   wait,
   push,
+  account,
 }: RequestQueueOptions): RequestQueue {
   const waiting = new Set<Entry>();
-  const pools = new Map<RateLimitPool, Pool>(
-    rateLimitPools.map((name) => [
-      name,
-      {
-        budget: undefined,
-        pausedUntil: undefined,
-        pausedAfter: 0,
-        secondaryLimits: 0,
-        lowUntil: undefined,
-      },
-    ]),
-  );
+  /**
+   * What the queue knows of each pool, replaced as a whole on `cancel`, so
+   * that the timers of the pools before change nothing.
+   */
+  let pools = freshPools();
   let running = 0;
   let order = 0;
   /** How many requests have been sent. */
@@ -226,7 +242,7 @@ export function createRequestQueue({
   /** Drops a waiting request, unsent, which answers as interrupted. */
   function drop(entry: Entry) {
     waiting.delete(entry);
-    entry.settle({ ok: false, error: { kind: "interrupted" } });
+    entry.settle(interrupted);
   }
 
   /**
@@ -261,6 +277,7 @@ export function createRequestQueue({
       waiting.delete(entry);
       running++;
       entry.sentAs = ++sent;
+      entry.account = account();
       entry.send().then(
         (response) => {
           answered(entry, response);
@@ -283,6 +300,12 @@ export function createRequestQueue({
    */
   function answered(entry: Entry, response: GitHubResponse<unknown>) {
     running--;
+    // Answered as an earlier account, it tells nothing of this one.
+    if (entry.account !== account()) {
+      entry.settle(interrupted);
+      pump();
+      return;
+    }
     const pool = poolOf(entry.pool);
     const sentSincePause = entry.sentAs > pool.pausedAfter;
     if (response.budget) keepBudget(response.budget);
@@ -376,6 +399,7 @@ export function createRequestQueue({
           send,
           order: order++,
           sentAs: 0,
+          account: account(),
           settle: settle as (result: RequestResult<unknown>) => void,
           fail,
         });
@@ -387,7 +411,29 @@ export function createRequestQueue({
         if (entry.urgency() === undefined) drop(entry);
       }
     },
+    cancel() {
+      for (const entry of waiting) drop(entry);
+      pools = freshPools();
+      slowedAfter = undefined;
+      pushStates();
+    },
     isLow,
     states,
   };
+}
+
+/** Every pool as the queue knows it before GitHub has said anything of it. */
+function freshPools(): Map<RateLimitPool, Pool> {
+  return new Map(
+    rateLimitPools.map((name) => [
+      name,
+      {
+        budget: undefined,
+        pausedUntil: undefined,
+        pausedAfter: 0,
+        secondaryLimits: 0,
+        lowUntil: undefined,
+      },
+    ]),
+  );
 }

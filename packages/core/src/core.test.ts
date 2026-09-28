@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  Account,
   Contract,
   IssueList,
   IssueNode,
@@ -396,6 +395,15 @@ async function readLocalState(): Promise<unknown> {
   }
 }
 
+/** The notice that GitHub is read as another account than before. */
+function accountChange(previous: string, login: string): Notice {
+  return {
+    kind: "account-changed",
+    previous: { login: previous, host: "github.com" },
+    account: { login, host: "github.com" },
+  };
+}
+
 /** The setup when gh at a path signs in as `login` with stored credentials. */
 function readyAs(login: string, path = "/usr/bin/gh"): Setup {
   return {
@@ -679,17 +687,16 @@ describe("setup: credentials", () => {
     expect(sidebarLines(await readUntilCounted(core))).toEqual(["acme/api –"]);
   });
 
-  it("pushes an account change when gh signs in as another account", async () => {
+  it("tells the user when gh signs in as another account", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     const core = createTestCore(github);
-    const changes: Account[] = [];
-    core.on("accountChanged", (account) => changes.push(account));
+    const notices = collectNotices(core);
     await checkedSetup(core);
 
     github.signInAs("octo-writer");
     await core.checkSetupAgain();
 
-    expect(changes).toEqual([{ login: "octo-writer", host: "github.com" }]);
+    expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
   });
 });
 
@@ -912,6 +919,270 @@ describe("setup: during a session", () => {
     machine.executables.set("/usr/bin/gh", ghVersion());
 
     expect(await core.checkSetupAgain()).toEqual(readyAs("octo-reader"));
+  });
+});
+
+describe("account changes", () => {
+  it("never shows what a slow answer for the previous account brings once GitHub answers as another", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Private roadmap" }]);
+    const core = createTestCore(github);
+    await checkedSetup(core);
+    const lists: IssueList[] = [];
+    core.on("listChanged", (list) => lists.push(list));
+    // octo-reader's answer with acme/api's issues is slow.
+    github.pause("fetchOpenIssues");
+    void core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    // gh switches to an account that may not read acme/api, and the
+    // sidebar's counts are the first answer as that account.
+    github.signInAs("octo-writer");
+    github.hide("acme/api");
+    await readUntilCounted(core);
+    const list = await untilSettled(core, acmeApi, () => {
+      github.resume();
+      return Promise.resolve();
+    });
+
+    expect(list.loading).toEqual({
+      status: "failed",
+      problem: { kind: "unavailable", access: undefined },
+    });
+    expect(lists.flatMap((pushed) => outline(pushed))).toEqual([]);
+  });
+
+  it("follows GitHub answering as another account once, naming it, however late answers as the previous one arrive", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await checkedSetup(core);
+    const notices = collectNotices(core);
+    github.pause("fetchOpenIssues");
+    void core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    github.signInAs("octo-writer");
+    const setup = await nextSetup(core, () => readUntilCounted(core));
+    const list = await untilSettled(core, acmeApi, () => {
+      github.resume();
+      return Promise.resolve();
+    });
+
+    expect(setup).toEqual(readyAs("octo-writer"));
+    expect(outline(list)).toEqual(["#1 Crash on start"]);
+    expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
+    expect(await core.getSetup()).toEqual(readyAs("octo-writer"));
+  });
+
+  it("asks gh which account it reads GitHub as when the window regains focus, and follows it", async () => {
+    const clock = createClock();
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github, { clock });
+    await checkedSetup(core);
+    const notices = collectNotices(core);
+
+    clock.advance(minute);
+    github.signInAs("octo-writer");
+    const setup = await nextSetup(core, () => core.revalidate(undefined));
+
+    expect(setup).toEqual(readyAs("octo-writer"));
+    expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
+  });
+
+  it("asks gh as the window regains focus at most once a minute", async () => {
+    const clock = createClock();
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github, { clock });
+    await checkedSetup(core);
+
+    // Within a minute of the check at startup.
+    clock.advance(minute - 1);
+    await core.revalidate(undefined);
+    await core.revalidate(undefined);
+    expect(github.authStatusChecks).toBe(1);
+
+    clock.advance(1);
+    await core.revalidate(undefined);
+    await core.revalidate(undefined);
+    await vi.waitFor(() => {
+      expect(github.authStatusChecks).toBe(2);
+    });
+    clock.advance(minute - 1);
+    await core.revalidate(undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(github.authStatusChecks).toBe(2);
+  });
+  it("follows gh to another account it names once GitHub answered 401", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    const notices = collectNotices(core);
+
+    github.signInAs("octo-writer");
+    github.failNextWith({
+      kind: "http",
+      status: 401,
+      message: "Bad credentials",
+    });
+    await core.refresh(undefined);
+
+    await vi.waitFor(() => {
+      expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
+    });
+    expect(github.authStatusChecks).toBe(2);
+  });
+
+  it("asks gh again, rather than switching back, when GitHub answered as another account while gh was asked", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Crash on start" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await checkedSetup(core);
+    const notices = collectNotices(core);
+    // gh names octo-reader, but its answer is slow.
+    github.pause("fetchAuthStatus");
+    clock.advance(minute);
+    await core.revalidate(undefined);
+    await vi.waitFor(() => {
+      expect(github.authStatusChecks).toBe(2);
+    });
+
+    github.signInAs("octo-writer");
+    await readUntilCounted(core);
+    github.resume();
+
+    expect(await core.checkSetupAgain()).toEqual(readyAs("octo-writer"));
+    expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
+  });
+
+  it("reads the issue page shown again as the new account, never showing what the previous one read", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Private roadmap" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    const pages: IssuePage[] = [];
+    core.on("issuePageChanged", (page) => pages.push(page));
+
+    github.signInAs("octo-writer");
+    github.hide("acme/api");
+    clock.advance(minute);
+    const page = await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.revalidate({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+
+    expect(page.loading).toEqual({
+      status: "failed",
+      problem: { kind: "unavailable", access: undefined },
+    });
+    expect(pages.map(({ issue }) => issue)).toEqual(pages.map(() => undefined));
+  });
+
+  it("drops what was read as the previous account when the setup blocker clears as another", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Private roadmap" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    await openUntilLoaded(core, acmeApi);
+    github.rejectCredentials();
+    await nextSetup(core, () => core.refresh({ kind: "list", scope: acmeApi }));
+    const notices = collectNotices(core);
+
+    github.signInAs("octo-writer");
+    github.hide("acme/api");
+    const list = await untilSettled(core, acmeApi, async () => {
+      await core.checkSetupAgain();
+    });
+
+    expect(list.loading).toEqual({
+      status: "failed",
+      problem: { kind: "unavailable", access: undefined },
+    });
+    expect(outline(list)).toEqual([]);
+    expect(notices).toEqual([accountChange("octo-reader", "octo-writer")]);
+  });
+
+  it("keeps the tracked repositories, dropping the previous account's counts at once for the new one's", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on start" },
+      { number: 2, title: "Usage endpoint" },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Landing page" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    expect(sidebarLines(await readUntilCounted(core))).toEqual([
+      "acme/api 2",
+      "acme/web 1",
+    ]);
+    const pushed: SidebarEntries[] = [];
+    core.on("sidebarChanged", (sidebar) => pushed.push(sidebar));
+
+    github.signInAs("octo-writer");
+    github.hide("acme/web");
+    clock.advance(minute);
+    await core.revalidate(undefined);
+    await vi.waitFor(() => {
+      expect(pushed).toHaveLength(2);
+    });
+
+    expect(pushed.map((sidebar) => sidebarLines(sidebar))).toEqual([
+      ["acme/api –", "acme/web –"],
+      ["acme/api 2", "acme/web –"],
+    ]);
+  });
+
+  it("sends none of the requests still waiting for the previous account, and reads what is on screen again as the new one", async () => {
+    const names = Array.from({ length: 6 }, (_, n) => `acme/repo-${String(n)}`);
+    await writeSettings({
+      version: 1,
+      repositories: names.map((name) => ({ name })),
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    for (const name of names) {
+      github.addRepository(name, [{ number: 1, title: `Issue of ${name}` }]);
+    }
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await checkedSetup(core);
+    github.pause();
+    void core.openList(all);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(4);
+    });
+
+    clock.advance(minute);
+    github.signInAs("octo-writer");
+    const list = await untilSettled(core, all, async () => {
+      await nextSetup(core, () =>
+        core.revalidate({ kind: "list", scope: all }),
+      );
+      github.resume();
+    });
+
+    expect(list.trees).toHaveLength(6);
+    expect(list.loading.status).toBe("current");
+    expect(
+      github.received.filter((read) => read.startsWith("fetchOpenIssues")),
+    ).toEqual([
+      ...names.slice(0, 4).map((name) => `fetchOpenIssues ${name}`),
+      ...names.map((name) => `fetchOpenIssues ${name}`),
+    ]);
   });
 });
 
@@ -1405,6 +1676,62 @@ describe("rate limits", () => {
       retryAfter,
     };
   }
+
+  it("no longer holds requests back for the previous account's rate limit once GitHub is read as another", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    github.setBudget("graphql", {
+      remaining: 0,
+      resetAt: startTime + 20 * minute,
+    });
+    await core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(limits.at(-1)).toEqual([
+        { pool: "graphql", status: "paused", until: startTime + 20 * minute },
+      ]);
+    });
+
+    // The other account draws on a budget of its own.
+    github.signInAs("octo-writer");
+    github.setBudget("graphql", { remaining: 5000 });
+    await passTime(clock, minute);
+    const loaded = await untilSettled(core, acmeApi, () =>
+      core.revalidate({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(loaded)).toEqual(["#1 Crash on start"]);
+    expect(limits.at(-1)).toEqual([]);
+    expect(await core.getRateLimits()).toEqual([]);
+  });
+
+  it("takes no rate limit from a late answer as the previous account, which names no account", async () => {
+    const { clock, github, core, limits } = rateLimitedSession();
+    await checkedSetup(core);
+    github.setBudget("graphql", {
+      remaining: 0,
+      resetAt: startTime + 20 * minute,
+    });
+    // octo-reader's answer, a rate limit, is slow.
+    github.pause("fetchOpenIssues");
+    void core.openList(acmeApi);
+    await vi.waitFor(() => {
+      expect(github.requestsInFlight).toBe(1);
+    });
+
+    github.signInAs("octo-writer");
+    github.setBudget("graphql", { remaining: 5000 });
+    await passTime(clock, minute);
+    await nextSetup(core, () =>
+      core.revalidate({ kind: "list", scope: acmeApi }),
+    );
+    const loaded = await untilSettled(core, acmeApi, () => {
+      github.resume();
+      return Promise.resolve();
+    });
+
+    expect(outline(loaded)).toEqual(["#1 Crash on start"]);
+    expect(limits).toEqual([]);
+    expect(await core.getRateLimits()).toEqual([]);
+  });
 
   it("waits as long as GitHub asks after a secondary rate limit", async () => {
     const { clock, github, core, limits } = rateLimitedSession();

@@ -1,4 +1,9 @@
-import type { Contract, CoreEvents, Screen } from "./contract.ts";
+import type {
+  Contract,
+  CoreEventName,
+  CoreEvents,
+  Screen,
+} from "./contract.ts";
 import type { HostEnvironment } from "./directories.ts";
 import { createEmitter } from "./emitter.ts";
 import type { CommandRunner } from "./github/command-runner.ts";
@@ -9,15 +14,19 @@ import {
   type GitHubResponse,
   type ReadValue,
 } from "./github/port.ts";
-import { createIssueLists } from "./issue-lists.ts";
-import { createIssuePages } from "./issue-pages.ts";
+import { createIssueLists, type IssueLists } from "./issue-lists.ts";
+import { createIssuePages, type IssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
 import { isTransient } from "./problems.ts";
-import { createRequestQueue, type SendRequest } from "./request-queue.ts";
+import {
+  createRequestQueue,
+  interrupted,
+  type SendRequest,
+} from "./request-queue.ts";
 import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
-import { createSidebar } from "./sidebar.ts";
+import { createSidebar, type Sidebar } from "./sidebar.ts";
 
 /** At most this many `gh` processes run at once. */
 const maxConcurrentRequests = 4;
@@ -51,6 +60,23 @@ export interface CoreOptions {
   wait?: (milliseconds: number) => Promise<void>;
 }
 
+/**
+ * What the core has read from GitHub as one account, and the sidebar's
+ * counts, lists and issue pages built from it. When GitHub is read as another
+ * account, it is dropped as a whole for a new one, so that nothing read as
+ * one account ever shows for another.
+ */
+interface Session {
+  /** The sidebar's counts. */
+  sidebar: Sidebar;
+  /** The lists, which share the session's issue store with the pages. */
+  lists: IssueLists;
+  /** The issue pages. */
+  pages: IssuePages;
+  /** Ends the session: it asks GitHub nothing more, and pushes nothing. */
+  end(): void;
+}
+
 /** Creates the core, which implements the contract every interface uses. */
 export function createCore({
   github,
@@ -71,6 +97,7 @@ export function createCore({
     push: (states) => {
       events.emit("rateLimitsChanged", states);
     },
+    account: () => setup.accountTag(),
   });
   /** The screen the main area shows, as last opened, refreshed or shown. */
   let shown: Screen | undefined;
@@ -101,29 +128,49 @@ export function createCore({
     notify: (notice) => {
       events.emit("notice", notice);
     },
+    now,
     // Back from the blocker, what is on screen is shown again at once, as
     // if it had been opened now: what failed meanwhile, or is older than five
     // minutes, is read again, and what waited is not asked for twice.
     recovered: () => {
-      if (shown?.kind === "list") lists.open(shown.scope);
-      if (shown?.kind === "issue") pages.open(shown.issueId);
-      void sidebar.read();
+      openShown();
+      void session.sidebar.read();
     },
-    accountChanged: (account) => {
-      events.emit("accountChanged", account);
+    // Everything read as the previous account is dropped, and what is on
+    // screen read anew.
+    accountChanged: (account, previous) => {
+      queue.cancel();
+      session.end();
+      session = createSession();
+      events.emit("notice", { kind: "account-changed", previous, account });
+      openShown();
+      session.sidebar.reload();
     },
   });
 
+  /** Opens the screen the main area shows, if any, as if it opened now. */
+  function openShown() {
+    if (shown?.kind === "list") session.lists.open(shown.scope);
+    if (shown?.kind === "issue") session.pages.open(shown.issueId);
+  }
+
   // Every request waits until gh is usable and signed in, and has what
-  // becomes of it checked for signs that it is no longer. One that GitHub's
-  // servers failed is tried again, a few times; any other failure waits to
-  // be retried, so that failing to reach GitHub never loops.
+  // becomes of it checked for signs that it is no longer. GitHub answering
+  // it as another account than it was sent as changes the account, and the
+  // request queue discards the answer. One that GitHub's servers failed is
+  // tried again, a few times; any other failure waits to be retried, so that
+  // failing to reach GitHub never loops.
   const request: SendRequest = async (read, args, urgency) => {
     for (let attempt = 0; ; attempt++) {
       const access = await setup.access();
-      const result = await queue.run(readPools[read], urgency, () =>
-        send(access, read, args),
-      );
+      const result = await queue.run(readPools[read], urgency, async () => {
+        const tag = setup.accountTag();
+        const response = await send(access, read, args);
+        if (response.viewerLogin !== undefined) {
+          setup.answeredAs(response.viewerLogin, tag);
+        }
+        return response;
+      });
       if (result.ok) return result;
       if (result.error.kind === "interrupted") return result;
       setup.requestFailed(result.error);
@@ -134,50 +181,73 @@ export function createCore({
     }
   };
 
-  const sidebar = createSidebar({
-    settings,
-    request,
-    clock,
-    mayRevalidate,
-    push: (entries) => {
-      events.emit("sidebarChanged", entries);
-    },
-  });
+  /** Starts reading GitHub afresh, with nothing read yet. */
+  function createSession(): Session {
+    let live = true;
+    // Once the session has ended, its requests are dropped unsent, and what
+    // it would push is never pushed.
+    const sessionRequest: SendRequest = (read, args, urgency) =>
+      live
+        ? request(read, args, () => (live ? urgency() : undefined))
+        : Promise.resolve(interrupted);
+    function emit<E extends CoreEventName>(event: E, payload: CoreEvents[E]) {
+      if (live) events.emit(event, payload);
+    }
 
-  const store = createIssueStore();
-  const pages = createIssuePages({
-    store,
-    request,
-    settings,
-    clock,
-    shown: () => shown,
-    mayRevalidate,
-    push: (page) => {
-      events.emit("issuePageChanged", page);
-    },
-  });
-  const lists = createIssueLists({
-    store,
-    request,
-    settings,
-    clock,
-    shown: () => shown,
-    mayRevalidate,
-    push: (list) => {
-      events.emit("listChanged", list);
-    },
-    // The sidebar's count follows a repository's open issues each time they
-    // have loaded, for its list or for All.
-    openIssuesLoaded: (repository, openIssues, readAt) => {
-      sidebar.openIssuesLoaded(repository, openIssues, readAt);
-    },
-  });
+    const sidebar = createSidebar({
+      settings,
+      request: sessionRequest,
+      clock,
+      mayRevalidate,
+      push: (entries) => {
+        emit("sidebarChanged", entries);
+      },
+    });
+    const store = createIssueStore();
+    const pages = createIssuePages({
+      store,
+      request: sessionRequest,
+      settings,
+      clock,
+      shown: () => shown,
+      mayRevalidate,
+      push: (page) => {
+        emit("issuePageChanged", page);
+      },
+    });
+    const lists = createIssueLists({
+      store,
+      request: sessionRequest,
+      settings,
+      clock,
+      shown: () => shown,
+      mayRevalidate,
+      push: (list) => {
+        emit("listChanged", list);
+      },
+      // The sidebar's count follows a repository's open issues each time
+      // they have loaded, for its list or for All.
+      openIssuesLoaded: (repository, openIssues, readAt) => {
+        sidebar.openIssuesLoaded(repository, openIssues, readAt);
+      },
+    });
+    return {
+      sidebar,
+      lists,
+      pages,
+      end() {
+        live = false;
+      },
+    };
+  }
+
+  let session = createSession();
 
   return {
     openIssuePage(issueId) {
       show({ kind: "issue", issueId });
-      pages.open(issueId);
-      sidebar.revalidate();
+      session.pages.open(issueId);
+      session.sidebar.revalidate();
       return Promise.resolve();
     },
     getSetup() {
@@ -190,24 +260,25 @@ export function createCore({
       return setup.choose(path);
     },
     getSidebar() {
-      return sidebar.read();
+      return session.sidebar.read();
     },
     openList(scope) {
       show({ kind: "list", scope });
-      lists.open(scope);
-      sidebar.revalidate();
+      session.lists.open(scope);
+      session.sidebar.revalidate();
       return Promise.resolve();
     },
     setExpanded(scope, issueId, expanded) {
-      lists.setExpanded(scope, issueId, expanded);
+      session.lists.setExpanded(scope, issueId, expanded);
       return Promise.resolve();
     },
     setAllExpanded(scope, expanded) {
-      lists.setAllExpanded(scope, expanded);
+      session.lists.setAllExpanded(scope, expanded);
       return Promise.resolve();
     },
     refresh(screen) {
       show(screen);
+      const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.refresh(screen.scope);
       if (screen?.kind === "issue") pages.refresh(screen.issueId);
       sidebar.refresh();
@@ -215,6 +286,8 @@ export function createCore({
     },
     revalidate(screen) {
       show(screen);
+      setup.revalidate();
+      const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.revalidate(screen.scope);
       if (screen?.kind === "issue") pages.revalidate(screen.issueId);
       sidebar.revalidate();
@@ -222,6 +295,7 @@ export function createCore({
     },
     retry(screen) {
       show(screen);
+      const { lists, pages, sidebar } = session;
       if (screen?.kind === "list") lists.retry(screen.scope);
       if (screen?.kind === "issue") pages.retry(screen.issueId);
       sidebar.retry();

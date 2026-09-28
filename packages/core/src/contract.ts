@@ -89,7 +89,13 @@ export type Notice =
    * The gh the user chose is gone or no longer usable, so Verdandi forgot it
    * and uses one it found on its own.
    */
-  { kind: "gh-replaced"; previous: string; gh: GhExecutable };
+  | { kind: "gh-replaced"; previous: string; gh: GhExecutable }
+  /**
+   * GitHub is read as another account than before, e.g. after `gh auth
+   * switch`: everything read as the previous one was dropped, and what is on
+   * screen is read again. The tracked repositories stay as they are.
+   */
+  | { kind: "account-changed"; previous: Account; account: Account };
 
 /**
  * Why GitHub would not let this account read something, named only when
@@ -503,6 +509,13 @@ export interface CoreRequests {
    * blocker clears, the screen shown last and the sidebar's counts are shown
    * again at once as if opened now, keeping what was loaded: what failed, or
    * is older than five minutes, is read again.
+   *
+   * The account changes when gh names another one, also as the window
+   * regains focus, or GitHub answers a request as another one, e.g. after
+   * `gh auth switch`. Then every request is cancelled, what GitHub answers
+   * to one sent before is discarded, everything read as the previous account
+   * is dropped, and `notice` says so; the screen shown last and the sidebar's
+   * counts are read anew, with the same tracked repositories.
    */
   getSetup: () => Promise<Setup>;
   /**
@@ -563,7 +576,8 @@ export interface CoreRequests {
    * sidebar's counts, and the screen the main area shows, if any, once
    * opened. What is older than five minutes is read again in the background,
    * as opening a screen would, and what failed or GitHub would not show, at
-   * once, however recently.
+   * once, however recently. gh is asked which account it reads GitHub as,
+   * too, unless it was asked in the last minute, to follow it to another.
    */
   revalidate: (screen: Screen | undefined) => Promise<void>;
   /**
@@ -584,8 +598,6 @@ export interface CoreRequests {
 
 /** Events the core pushes, by name, with their payloads. */
 export interface CoreEvents {
-  /** gh now reads GitHub as a different account than it did before. */
-  accountChanged: Account;
   /** The setup, whenever it changes. */
   setupChanged: Setup;
   /** Something to tell the user briefly, as it happens. */
@@ -633,7 +645,6 @@ const requests: Record<keyof CoreRequests, true> = {
   getRateLimits: true,
 };
 const events: Record<CoreEventName, true> = {
-  accountChanged: true,
   setupChanged: true,
   notice: true,
   listChanged: true,

@@ -355,6 +355,7 @@ describe("gh adapter: what GitHub will not show", () => {
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: false,
       error: {
         kind: "unavailable",
@@ -384,6 +385,7 @@ describe("gh adapter: what GitHub will not show", () => {
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: false,
       error: {
         kind: "unavailable",
@@ -418,6 +420,7 @@ describe("gh adapter: what GitHub will not show", () => {
       await github.fetchOpenIssues({ owner: "acme", name: "gone" }),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: false,
       error: { kind: "unavailable", message, access: undefined },
     });
@@ -436,6 +439,7 @@ describe("gh adapter: what GitHub will not show", () => {
 
     expect(await github.fetchIssueDetails("I_kwDOAbCdEs4AAAAZ")).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: false,
       error: { kind: "unavailable", message, access: undefined },
     });
@@ -946,6 +950,7 @@ describe("gh adapter: more reads", () => {
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: true,
       value: {
         issues: [
@@ -1095,6 +1100,7 @@ describe("gh adapter: more reads", () => {
       await github.fetchOpenIssues({ owner: "acme", name: "api" }),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: false,
       error: { kind: "unexpected-response" },
     });
@@ -1272,6 +1278,7 @@ describe("gh adapter: repository summaries", () => {
       ]),
     ).toEqual({
       budget: graphqlBudget,
+      viewerLogin: "octo-reader",
       ok: true,
       value: [
         {
@@ -1480,6 +1487,58 @@ it("reads issue page metadata, including nullable authors and milestones", async
       ],
       commentCount: 12,
     },
+  });
+});
+
+describe("gh adapter: the account GitHub answers as", () => {
+  it("names the account GitHub answered a query as", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-writer" }, nodes: [issueNode({ number: 1 })] },
+        [],
+      ),
+    });
+
+    const read = await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"]);
+
+    expect(read.ok).toBe(true);
+    expect(read.viewerLogin).toBe("octo-writer");
+  });
+
+  it("names the account also when GitHub will not show what the query asked for", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringGraphql(
+        { viewer: { login: "octo-writer" }, repository: null },
+        [
+          {
+            type: "NOT_FOUND",
+            path: ["repository"],
+            locations: [{ line: 1, column: 40 }],
+            message:
+              "Could not resolve to a Repository with the name 'acme/api'.",
+          },
+        ],
+      ),
+    });
+
+    const read = await github.fetchOpenIssues({ owner: "acme", name: "api" });
+
+    expect(read.ok).toBe(false);
+    expect(read.viewerLogin).toBe("octo-writer");
+  });
+
+  it("names no account when GitHub answers with an HTTP error", async () => {
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnsweringHttp("401 Unauthorized", "Bad credentials"),
+    });
+
+    const read = await github.fetchIssues(["I_kwDOAbCdEs4AAAAB"]);
+
+    expect(read.ok).toBe(false);
+    expect(read.viewerLogin).toBeUndefined();
   });
 });
 
