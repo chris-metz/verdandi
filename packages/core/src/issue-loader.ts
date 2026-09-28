@@ -62,6 +62,11 @@ export interface RepositoryIssues {
 }
 
 export interface IssueLoaderOptions {
+  openIssuesFailed: (
+    repository: RepositoryAddress,
+    problem: Problem,
+    readAt: Moment,
+  ) => void;
   store: IssueStore;
   request: SendRequest;
   clock: Clock;
@@ -116,6 +121,7 @@ export function createIssueLoader({
   pagesUrgency,
   pageRead,
   openIssuesLoaded,
+  openIssuesFailed,
 }: IssueLoaderOptions): IssueLoader {
   /** Each repository's reads of its open issues, by `repositoryKey`. */
   const repositories = new Map<string, Reads>();
@@ -207,6 +213,7 @@ export function createIssueLoader({
         }
       } else {
         thisRead.problem = problemOf(result.error);
+        openIssuesFailed(repository, thisRead.problem, thisRead.startedAt);
         // What GitHub no longer shows this account shows no more.
         if (thisRead.problem.kind === "unavailable") {
           reads.complete = undefined;

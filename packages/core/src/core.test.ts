@@ -2054,6 +2054,278 @@ describe("sidebar", () => {
   });
 });
 
+describe("unavailable tracked repositories", () => {
+  it("marks unreadable and disabled repositories at startup without moving entries, while archived repositories stay readable", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [
+        { name: "acme/gone" },
+        { name: "acme/off" },
+        { name: "acme/archive" },
+      ],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/off", [], { hasIssuesEnabled: false });
+    github.addRepository(
+      "acme/archive",
+      [{ number: 1, title: "Still readable" }],
+      { isArchived: true },
+    );
+    const core = createTestCore(github);
+    const sidebar = await readUntilCounted(core);
+    expect(sidebar).toMatchObject({
+      repositories: [
+        {
+          repository: { owner: "acme", name: "gone" },
+          unavailable: { kind: "unavailable", access: undefined },
+        },
+        {
+          repository: { owner: "acme", name: "off" },
+          unavailable: { kind: "unavailable", issuesDisabled: true },
+        },
+        {
+          repository: { owner: "acme", name: "archive" },
+          archived: true,
+          openIssues: { status: "known", count: 1 },
+        },
+      ],
+    });
+    expect(github.requestsReceived).toBe(1);
+    const archived = await openUntilLoaded(core, {
+      kind: "repository",
+      repository: { owner: "acme", name: "archive" },
+    });
+    expect(archived.archived).toBe(true);
+    expect(archived.trees[0]?.issue.title).toBe("Still readable");
+  });
+  it("replaces a disabled repository's cached list and excludes it from All until Issues are enabled again", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "API issue" }]);
+    github.addRepository("acme/web", [{ number: 1, title: "Web issue" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    const scope: Scope = {
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    };
+    await openUntilLoaded(core, scope);
+    github.addRepository("acme/api", [], { hasIssuesEnabled: false });
+    let latest: IssueList | undefined;
+    core.on("listChanged", (list) => {
+      latest = list;
+    });
+    await core.refresh({ kind: "list", scope });
+    await expect
+      .poll(() => latest?.loading)
+      .toMatchObject({
+        status: "failed",
+        problem: { kind: "unavailable", issuesDisabled: true },
+      });
+    expect(latest?.trees).toEqual([]);
+    const all = await openUntilLoaded(core, { kind: "all" });
+    expect(all.trees.map((tree) => tree.issue.title)).toEqual(["Web issue"]);
+    expect(all.repositories[0]?.loading).toMatchObject({
+      status: "failed",
+      problem: { issuesDisabled: true },
+    });
+    github.addRepository("acme/api", [{ number: 2, title: "Restored issue" }]);
+    await core.revalidate({ kind: "list", scope: { kind: "all" } });
+    await expect
+      .poll(() => latest?.trees.map((tree) => tree.issue.title).sort())
+      .toEqual(["Restored issue", "Web issue"]);
+  });
+
+  it("does not replace a recovered list with an older startup access failure", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    const core = createTestCore(github);
+    github.pause("fetchRepositorySummaries");
+    await core.getSidebar();
+    await expect.poll(() => github.requestsInFlight).toBe(1);
+    github.addRepository("acme/api", [{ number: 1, title: "Recovered" }]);
+    const scope: Scope = {
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    };
+    await openUntilLoaded(core, scope);
+    const later: IssueList[] = [];
+    core.on("listChanged", (list) => later.push(list));
+    github.resume();
+    await expect.poll(() => github.requestsInFlight).toBe(0);
+    expect(
+      later.every(
+        (list) => list.loading.status === "current" && list.trees.length === 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps SSO evidence and restores the same entry when switching back to an account that can read it", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Readable" }]);
+    const clock = createClock();
+    const core = createTestCore(github, { clock });
+    await readUntilCounted(core);
+    const scope: Scope = {
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    };
+    await openUntilLoaded(core, scope);
+    const access = {
+      kind: "sso" as const,
+      message: "Authorize your token for acme SAML SSO",
+      url: "https://github.com/orgs/acme/sso",
+    };
+    let sidebar: SidebarEntries | undefined;
+    let list: IssueList | undefined;
+    core.on("sidebarChanged", (pushed) => {
+      sidebar = pushed;
+    });
+    core.on("listChanged", (pushed) => {
+      list = pushed;
+    });
+    github.signInAs("octo-other");
+    github.hide("acme/api", access);
+    clock.advance(minute);
+    await core.revalidate({ kind: "list", scope });
+    await expect
+      .poll(() => sidebar)
+      .toMatchObject({
+        repositories: [
+          {
+            repository: scope.repository,
+            unavailable: { kind: "unavailable", access },
+          },
+        ],
+      });
+    await expect
+      .poll(() => list?.loading)
+      .toMatchObject({
+        status: "failed",
+        problem: { kind: "unavailable", access },
+      });
+    github.signInAs("octo-reader");
+    github.reveal("acme/api");
+    clock.advance(minute);
+    await core.revalidate({ kind: "list", scope });
+    await expect
+      .poll(() => list?.trees.map((tree) => tree.issue.title))
+      .toEqual(["Readable"]);
+    await expect
+      .poll(
+        () =>
+          sidebar?.status === "read" && sidebar.repositories[0]?.unavailable,
+      )
+      .toBeUndefined();
+    expect(
+      sidebar?.status === "read" &&
+        sidebar.repositories.map((entry) => entry.repository),
+    ).toEqual([scope.repository]);
+  });
+
+  it("keeps cached issues stale on connection failure without marking the repository unavailable", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Cached issue" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    const scope: Scope = {
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    };
+    await openUntilLoaded(core, scope);
+    github.failWith({ kind: "gh-failed", message: "offline" });
+    const list = await untilSettled(core, scope, () =>
+      core.refresh({ kind: "list", scope }),
+    );
+    expect(list.loading).toMatchObject({
+      status: "stale",
+      problem: { kind: "unreachable" },
+    });
+    expect(list.trees.map((tree) => tree.issue.title)).toEqual([
+      "Cached issue",
+    ]);
+    const sidebar = await core.getSidebar();
+    expect(
+      sidebar.status === "read" && sidebar.repositories[0]?.unavailable,
+    ).toBeUndefined();
+  });
+  it("keeps a newer list access failure retryable when an older startup count arrives", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [{ number: 1, title: "Visible again" }]);
+    const core = createTestCore(github);
+    let sidebar: SidebarEntries | undefined;
+    core.on("sidebarChanged", (pushed) => {
+      sidebar = pushed;
+    });
+    github.pause("fetchRepositorySummaries");
+    await core.getSidebar();
+    await expect.poll(() => github.requestsInFlight).toBe(1);
+    github.hide("acme/api");
+    await openUntilLoaded(core, {
+      kind: "repository",
+      repository: { owner: "acme", name: "api" },
+    });
+    github.resume();
+    await expect.poll(() => github.requestsInFlight).toBe(0);
+    expect(sidebar).toMatchObject({
+      repositories: [
+        {
+          openIssues: { status: "failed" },
+          unavailable: { kind: "unavailable" },
+        },
+      ],
+    });
+    github.reveal("acme/api");
+    await core.revalidate(undefined);
+    await expect
+      .poll(
+        () =>
+          sidebar?.status === "read" && sidebar.repositories[0]?.unavailable,
+      )
+      .toBeUndefined();
+  });
+  it("marks cached sub-issues in an unavailable tracked repository within All", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Parent", subIssues: ["acme/web#1"] },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Sub-issue" }]);
+    const core = createTestCore(github);
+    await readUntilCounted(core);
+    await openUntilLoaded(core, { kind: "all" });
+    let list: IssueList | undefined;
+    core.on("listChanged", (pushed) => {
+      list = pushed;
+    });
+    github.hide("acme/web");
+    // The count query discovers access loss without rereading cached issues.
+    await core.refresh(undefined);
+    await expect
+      .poll(() => list?.repositories[1]?.loading)
+      .toMatchObject({ status: "failed", problem: { kind: "unavailable" } });
+    expect(list?.trees[0]?.subIssues[0]?.unread).toMatchObject({
+      status: "failed",
+      problem: { kind: "unavailable" },
+    });
+    github.reveal("acme/web");
+    await core.revalidate({ kind: "list", scope: { kind: "all" } });
+    await expect
+      .poll(() => list?.trees[0]?.subIssues[0]?.unread)
+      .toBeUndefined();
+    expect(list?.trees[0]?.subIssues[0]?.issue.title).toBe("Sub-issue");
+  });
+});
+
 describe("sidebar counts", () => {
   it("reads every tracked repository's open-issue count in one request, without loading their issues", async () => {
     await writeSettings({
@@ -2172,6 +2444,7 @@ describe("sidebar counts", () => {
         },
         {
           repository: { owner: "acme", name: "gone" },
+          unavailable: { kind: "unavailable", access: undefined },
           openIssues: {
             status: "failed",
             message:

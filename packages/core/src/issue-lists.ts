@@ -5,6 +5,7 @@ import type {
   LoadingState,
   Problem,
   RepositoryAddress,
+  RepositoryEntry,
   RepositoryLoading,
   Scope,
   Screen,
@@ -48,6 +49,8 @@ import type { SettingsStorage } from "./settings/port.ts";
  * interrupted where it lacks something, until it shows again.
  */
 export interface IssueLists {
+  /** Updates lists when the startup count query learns repository availability. */
+  repositoriesChanged(): void;
   /** Applies hand-edited tracking to cached lists, loading only the shown one. */
   settingsChanged(): Promise<void>;
   /**
@@ -80,6 +83,14 @@ export interface IssueLists {
 }
 
 export interface IssueListsOptions {
+  repositoryStatus: (
+    repository: RepositoryAddress,
+  ) => Pick<RepositoryEntry, "unavailable" | "archived">;
+  openIssuesFailed: (
+    repository: RepositoryAddress,
+    problem: Problem,
+    readAt: Moment,
+  ) => void;
   store: IssueStore;
   request: SendRequest;
   clock: Clock;
@@ -164,6 +175,8 @@ export function createIssueLists({
   settings,
   push,
   openIssuesLoaded,
+  openIssuesFailed,
+  repositoryStatus,
 }: IssueListsOptions): IssueLists {
   const lists = new Map<string, ListState>();
   const loader = createIssueLoader({
@@ -185,7 +198,24 @@ export function createIssueLists({
       }
     },
     openIssuesLoaded,
+    openIssuesFailed,
   });
+
+  /** Confirmed unavailability overrides cached pages until access recovers. */
+  function openIssuesOf(
+    repository: RepositoryAddress,
+  ): RepositoryIssues | undefined {
+    const unavailable = repositoryStatus(repository).unavailable;
+    return unavailable
+      ? {
+          openIssueIds: new Set(),
+          closedIssueCount: 0,
+          readAt: undefined,
+          reading: loader.openIssuesOf(repository)?.reading ?? false,
+          problem: unavailable,
+        }
+      : loader.openIssuesOf(repository);
+  }
 
   /** Whether a list shows a repository's open issues. */
   function shows(list: ListState, repository: RepositoryAddress): boolean {
@@ -238,6 +268,8 @@ export function createIssueLists({
    * comes with their pages, reading those did.
    */
   function unreadIssue(list: ListState, issue: IssueReference): UnreadIssue {
+    const unavailable = repositoryStatus(issue.repository).unavailable;
+    if (unavailable) return { status: "failed", problem: unavailable };
     if (loader.isReading(issue.id)) return { status: "loading" };
     const failure = failureOf(list, issue.id);
     if (failure) return { status: "failed", problem: failure.problem };
@@ -245,7 +277,7 @@ export function createIssueLists({
       issue.state === "open" &&
       repositoriesOf(list).some((own) => sameRepository(own, issue.repository));
     const pageProblem = ownOpen
-      ? loader.openIssuesOf(issue.repository)?.problem
+      ? openIssuesOf(issue.repository)?.problem
       : undefined;
     return pageProblem
       ? { status: "failed", problem: pageProblem }
@@ -259,9 +291,14 @@ export function createIssueLists({
     return buildForest({
       scope: list.scope,
       openIssueIds: repositoriesOf(list).flatMap((repository) => [
-        ...(loader.openIssuesOf(repository)?.openIssueIds ?? []),
+        ...(openIssuesOf(repository)?.openIssueIds ?? []),
       ]),
-      lookup: (id) => store.get(id),
+      lookup: (id) => {
+        const issue = store.get(id);
+        return issue && !repositoryStatus(issue.repository).unavailable
+          ? issue
+          : undefined;
+      },
       unread: (issue) => unreadIssue(list, issue),
       isTracked: (address) => trackedKeys.has(repositoryKey(address)),
       isExpanded: (id) => (except.has(id) ? !expanded : expanded),
@@ -299,6 +336,7 @@ export function createIssueLists({
     // as a page that failed is read again, unless it changed while the
     // pages were read.
     const unread = [...forest.missing, ...outdated].filter((reference) => {
+      if (repositoryStatus(reference.repository).unavailable) return false;
       if (reference.state === "closed") return true;
       if (
         !own.some((repository) =>
@@ -307,7 +345,7 @@ export function createIssueLists({
       ) {
         return true;
       }
-      const load = loader.openIssuesOf(reference.repository);
+      const load = openIssuesOf(reference.repository);
       return load?.reading === false && load.problem === undefined;
     });
     if (isShown(list)) {
@@ -322,13 +360,17 @@ export function createIssueLists({
     }
     return {
       scope,
+      ...(scope.kind === "repository" &&
+      repositoryStatus(scope.repository).archived
+        ? { archived: true as const }
+        : {}),
       trees: forest.trees,
       loading: loadingOf(list, forest),
       repositories:
         scope.kind === "all"
           ? own.map((repository): RepositoryLoading => ({
               repository,
-              loading: repositoryLoading(loader.openIssuesOf(repository)),
+              loading: repositoryLoading(openIssuesOf(repository)),
             }))
           : [],
     };
@@ -414,7 +456,7 @@ export function createIssueLists({
     const own = repositoriesOf(list);
     // A list whose repositories other lists have read shows what they read,
     // while it reads again what is older than it needs.
-    if (own.every((repository) => loader.openIssuesOf(repository)?.readAt)) {
+    if (own.every((repository) => openIssuesOf(repository)?.readAt)) {
       list.loaded = true;
     }
     // A repository that starts loading updates a list that has not loaded
@@ -461,8 +503,11 @@ export function createIssueLists({
     if (list.tracked === undefined) return false;
     let retried = false;
     for (const repository of repositoriesOf(list)) {
-      if (loader.openIssuesOf(repository)?.problem) {
-        loader.loadOpenIssues(repository, list.validFrom);
+      if (openIssuesOf(repository)?.problem) {
+        loader.loadOpenIssues(
+          repository,
+          repositoryStatus(repository).unavailable ? clock() : list.validFrom,
+        );
         retried = true;
       }
     }
@@ -517,7 +562,7 @@ export function createIssueLists({
       return { status: "failed", problem: list.settingsProblem };
     }
     const loads = repositoriesOf(list).map((repository) =>
-      loader.openIssuesOf(repository),
+      openIssuesOf(repository),
     );
     const reading =
       list.readingTracked ||
@@ -588,6 +633,9 @@ export function createIssueLists({
   }
 
   return {
+    repositoriesChanged() {
+      for (const list of lists.values()) update(list);
+    },
     async settingsChanged() {
       const { value } = await settings.read();
       for (const [key, list] of lists) {

@@ -146,7 +146,12 @@ export type Problem =
    * account may not read it. GitHub does not say which, unless `access`
    * names why.
    */
-  | { kind: "unavailable"; access: AccessEvidence | undefined }
+  | {
+      kind: "unavailable";
+      access: AccessEvidence | undefined;
+      /** Only when the readable repository reports `hasIssuesEnabled: false`. */
+      issuesDisabled?: true;
+    }
   /**
    * Reading it stopped before GitHub was asked, as its screen was left; it is
    * read again once the screen shows again.
@@ -235,6 +240,10 @@ export interface RepositoryEntry {
   /** Its address, as the settings file names it. */
   repository: TrackedRepository;
   openIssues: OpenIssueCount;
+  /** Confirmed access failure; transient failures never make an entry unavailable. */
+  unavailable?: Extract<Problem, { kind: "unavailable" }>;
+  /** Archived repositories remain readable. */
+  archived?: true;
 }
 
 /**
@@ -475,6 +484,8 @@ export interface ListCounts {
  */
 export interface IssueList {
   scope: Scope;
+  /** Only for a repository scope, once GitHub reports it archived. */
+  archived?: true;
   trees: IssueTree[];
   loading: ListLoading;
   /**

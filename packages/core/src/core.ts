@@ -223,6 +223,7 @@ export function createCore({
       mayRevalidate,
       push: (entries) => {
         emit("sidebarChanged", entries);
+        lists.repositoriesChanged();
       },
     });
     const store = createIssueStore();
@@ -248,6 +249,10 @@ export function createCore({
       pages.requestsChanged();
     });
     const lists = createIssueLists({
+      repositoryStatus: (repository) => sidebar.statusOf(repository),
+      openIssuesFailed: (repository, problem, readAt) => {
+        sidebar.openIssuesFailed(repository, problem, readAt);
+      },
       store,
       request: sessionRequest,
       settings,

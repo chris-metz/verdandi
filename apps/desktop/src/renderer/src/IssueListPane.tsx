@@ -1,6 +1,8 @@
 import type {
   IssueList,
   RepositoryAddress,
+  RepositoryEntry,
+  TrackedRepository,
   RepositoryLoading,
   Scope,
 } from "@verdandi/core/contract";
@@ -47,8 +49,14 @@ export function IssueListPane({
   login,
   hasKeyboard,
   onOpen,
+  repositories,
+  onSelectRepository,
+  onRemoveRepository,
 }: {
   scope: Scope;
+  repositories: readonly RepositoryEntry[];
+  onSelectRepository: (repository: TrackedRepository) => void;
+  onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
   onOpen: (issue: IssueDestination) => void;
@@ -172,20 +180,44 @@ export function IssueListPane({
   }
 
   const { label, repositoryChips } = presentScope(scope);
+  const repository =
+    scope.kind === "repository"
+      ? repositories.find((entry) =>
+          sameScope(
+            { kind: "repository", repository: entry.repository },
+            scope,
+          ),
+        )
+      : undefined;
   const failure =
-    list?.loading.status === "failed" ? list.loading.problem : undefined;
+    repository?.unavailable ??
+    (list?.loading.status === "failed" ? list.loading.problem : undefined);
+  const unavailable = repositories.filter((entry) => entry.unavailable);
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        <h1 className="min-w-0 flex-1 truncate font-medium">{label}</h1>
-        <RateLimitStatus />
-        {list && (
-          <RefreshControl
-            freshness={(now) => listFreshness(list, now)}
-            onRefresh={() => {
-              void window.verdandi.refresh({ kind: "list", scope });
-            }}
-            onRetry={retry}
+      <header className="shrink-0 border-b">
+        <div className="flex h-12 items-center gap-2 pr-2 pl-4">
+          <h1 className="min-w-0 flex-1 truncate font-medium">{label}</h1>
+          {list?.archived && (
+            <span className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Archived
+            </span>
+          )}
+          <RateLimitStatus />
+          {list && (
+            <RefreshControl
+              freshness={(now) => listFreshness(list, now)}
+              onRefresh={() => {
+                void window.verdandi.refresh({ kind: "list", scope });
+              }}
+              onRetry={retry}
+            />
+          )}
+        </div>
+        {scope.kind === "all" && unavailable.length > 0 && (
+          <UnavailableRepositories
+            repositories={unavailable}
+            onSelect={onSelectRepository}
           />
         )}
       </header>
@@ -205,7 +237,7 @@ export function IssueListPane({
         }}
         className="group min-h-0 flex-1 overflow-y-auto outline-none"
       >
-        {list && failure && rows.length === 0 ? (
+        {failure && (repository?.unavailable || rows.length === 0) ? (
           // Nothing to show, so why stands in place of the list.
           <ProblemNotice
             problem={failure}
@@ -216,6 +248,13 @@ export function IssueListPane({
                 : undefined
             }
             onRetry={retry}
+            onRemove={
+              repository && failure.kind === "unavailable" && onRemoveRepository
+                ? () => {
+                    onRemoveRepository(repository.repository);
+                  }
+                : undefined
+            }
             className="px-4 py-6"
           />
         ) : (
@@ -266,6 +305,50 @@ export function IssueListPane({
   );
 }
 
+/** All names unavailable entries in their sidebar order, including when every one failed. */
+function UnavailableRepositories({
+  repositories,
+  onSelect,
+}: {
+  repositories: readonly RepositoryEntry[];
+  onSelect: (repository: TrackedRepository) => void;
+}) {
+  const shown = repositories.slice(0, 2);
+  const rest = repositories.slice(2);
+  return (
+    <div role="status" className="px-4 pb-3 text-xs text-muted-foreground">
+      Unavailable:{" "}
+      {shown.map(({ repository }, index) => (
+        <span key={repositoryLabel(repository)}>
+          {index > 0 && (rest.length ? ", " : " and ")}
+          <button
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={() => {
+              onSelect(repository);
+            }}
+          >
+            {repositoryLabel(repository)}
+          </button>
+        </span>
+      ))}
+      {rest[0] && (
+        <>
+          {" "}
+          and{" "}
+          <button
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={() => {
+              if (rest[0]) onSelect(rest[0].repository);
+            }}
+          >
+            {rest.length} more
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * The repositories within All that could not be read, each with why and what
  * to do, above the issues of the others.
@@ -280,7 +363,7 @@ function RepositoryProblems({
   onRetry: () => void;
 }) {
   const failed = repositories.flatMap(({ repository, loading }) =>
-    loading.status === "failed"
+    loading.status === "failed" && loading.problem.kind !== "unavailable"
       ? [{ repository, problem: loading.problem }]
       : [],
   );

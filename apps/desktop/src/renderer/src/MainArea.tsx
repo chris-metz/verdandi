@@ -1,4 +1,8 @@
-import type { Scope } from "@verdandi/core/contract";
+import type {
+  Scope,
+  RepositoryEntry,
+  TrackedRepository,
+} from "@verdandi/core/contract";
 import { IssueListPane } from "./IssueListPane";
 import { IssuePagePane } from "./IssuePagePane";
 import type { IssueNavigation, IssueVisit } from "./issue-navigation";
@@ -11,8 +15,14 @@ export function MainArea({
   login,
   onNavigate,
   hasKeyboard,
+  repositories,
+  onSelectRepository,
+  onRemoveRepository,
 }: {
   scope: Scope;
+  repositories: readonly RepositoryEntry[];
+  onSelectRepository: (repository: TrackedRepository) => void;
+  onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
   /** The issue pages opened from the list, the one shown last. */
   stack: readonly IssueVisit[];
   /** The account GitHub is read as, if known. */
@@ -25,6 +35,9 @@ export function MainArea({
     return (
       <IssueListPane
         scope={scope}
+        repositories={repositories}
+        onSelectRepository={onSelectRepository}
+        onRemoveRepository={onRemoveRepository}
         login={login}
         hasKeyboard={hasKeyboard}
         onOpen={(issue) => {

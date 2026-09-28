@@ -308,6 +308,18 @@ export function App() {
             <MainArea
               key={scopeLabel(selected)}
               scope={selected}
+              repositories={
+                sidebar?.status === "read" ? sidebar.repositories : []
+              }
+              onSelectRepository={(repository) => {
+                select({ kind: "repository", repository });
+              }}
+              onRemoveRepository={
+                sidebar?.status === "read" &&
+                sidebar.settings.status === "writable"
+                  ? confirmRemoval
+                  : undefined
+              }
               stack={stack}
               login={login}
               onNavigate={navigate}

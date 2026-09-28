@@ -1,4 +1,8 @@
-import type { OpenIssueCount, SidebarEntries } from "@verdandi/core/contract";
+import type {
+  OpenIssueCount,
+  SidebarEntries,
+  RepositoryEntry,
+} from "@verdandi/core/contract";
 
 import type { SidebarScope as Scope } from "./scope";
 
@@ -6,6 +10,7 @@ import type { SidebarScope as Scope } from "./scope";
 export interface SidebarItem {
   scope: Scope;
   openIssues: OpenIssueCount;
+  unavailable?: RepositoryEntry["unavailable"];
 }
 
 /**
@@ -24,10 +29,13 @@ export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
   }
   return [
     { scope: { kind: "all" }, openIssues: sidebar.all.openIssues },
-    ...sidebar.repositories.map(({ repository, openIssues }): SidebarItem => ({
-      scope: { kind: "repository", repository },
-      openIssues,
-    })),
+    ...sidebar.repositories.map(
+      ({ repository, openIssues, unavailable }): SidebarItem => ({
+        scope: { kind: "repository", repository },
+        openIssues,
+        ...(unavailable ? { unavailable } : {}),
+      }),
+    ),
     ...sidebar.views.map((view): SidebarItem => ({
       scope: { kind: "view", view },
       openIssues: { status: "loading" },

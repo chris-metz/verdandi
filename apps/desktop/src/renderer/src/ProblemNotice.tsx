@@ -15,6 +15,7 @@ export function ProblemNotice({
   url,
   onRetry,
   className,
+  onRemove,
 }: {
   problem: Problem;
   /** The account GitHub is read as, if known, to name it when unavailable. */
@@ -25,6 +26,7 @@ export function ProblemNotice({
   url: string | undefined;
   onRetry: () => void;
   className?: string;
+  onRemove?: (() => void) | undefined;
 }) {
   const { text, detail, link } = problemText(problem, login);
   return (
@@ -51,6 +53,11 @@ export function ProblemNotice({
             }}
           >
             Open on GitHub
+          </Button>
+        )}
+        {onRemove && (
+          <Button size="sm" variant="ghost" onClick={onRemove}>
+            Remove repository…
           </Button>
         )}
         {link && (

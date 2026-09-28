@@ -5,6 +5,8 @@ import type {
   SidebarDestination,
   TrackedRepository,
 } from "@verdandi/core/contract";
+import { TriangleAlert } from "lucide-react";
+import { problemText } from "./problem-text";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -86,6 +88,20 @@ export function Sidebar({
       <Entry
         key={key}
         item={item}
+        login={
+          setup?.status === "ready" && setup.account.status === "known"
+            ? setup.account.account.login
+            : undefined
+        }
+        onRetry={
+          item.scope.kind === "repository"
+            ? () => {
+                if (item.scope.kind !== "repository") return;
+                onSelect(item.scope);
+                void window.verdandi.retry({ kind: "list", scope: item.scope });
+              }
+            : undefined
+        }
         draggable={writable && entry !== undefined}
         onRemove={
           item.scope.kind === "repository"
@@ -246,7 +262,9 @@ function SectionHeading({
  * the modifier is held.
  */
 function Entry({
-  item: { scope, openIssues },
+  item: { scope, openIssues, unavailable },
+  login,
+  onRetry,
   selected,
   focused,
   shortcut,
@@ -258,6 +276,8 @@ function Entry({
   ...dragHandlers
 }: {
   item: SidebarItem;
+  login: string | undefined;
+  onRetry: (() => void) | undefined;
   selected: boolean;
   focused: boolean;
   shortcut: string | undefined;
@@ -272,6 +292,7 @@ function Entry({
   onDragEnd: React.DragEventHandler<HTMLLIElement>;
 }) {
   const { description, entry } = presentScope(scope);
+  const reason = unavailable ? problemText(unavailable, login) : undefined;
   const row = (
     <li
       role="option"
@@ -309,7 +330,12 @@ function Entry({
           </span>
         </>
       ) : (
-        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+        <span
+          className={cn(
+            "flex min-w-0 flex-1 flex-col leading-tight",
+            unavailable && "opacity-60",
+          )}
+        >
           <span className={cn("truncate", selected && "font-medium")}>
             {entry.name}
           </span>
@@ -322,6 +348,13 @@ function Entry({
         <kbd className="shrink-0 rounded border border-b-2 bg-background px-1 font-mono text-[11px] text-muted-foreground">
           {shortcut}
         </kbd>
+      ) : reason ? (
+        <span title={[reason.text, reason.detail].filter(Boolean).join(" · ")}>
+          <TriangleAlert
+            aria-label={reason.text}
+            className="size-4 shrink-0 text-warning"
+          />
+        </span>
       ) : (
         <span
           title={
@@ -341,6 +374,26 @@ function Entry({
       <ContextMenu.Portal>
         <ContextMenu.Positioner className="z-50">
           <ContextMenu.Popup className="min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md outline-none">
+            {unavailable && scope.kind === "repository" && (
+              <>
+                <ContextMenu.Item
+                  onClick={onRetry}
+                  className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
+                >
+                  Retry
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  onClick={() => {
+                    window.desktop.openExternal(
+                      `https://github.com/${scope.repository.owner}/${scope.repository.name}`,
+                    );
+                  }}
+                  className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
+                >
+                  Open on GitHub
+                </ContextMenu.Item>
+              </>
+            )}
             <ContextMenu.Item
               disabled={!removable}
               onClick={onRemove}

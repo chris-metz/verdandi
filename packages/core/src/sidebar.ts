@@ -1,5 +1,7 @@
 import type {
   OpenIssueCount,
+  RepositoryEntry,
+  Problem,
   RepositoryAddress,
   SidebarEntries,
   SavedView,
@@ -25,7 +27,7 @@ import type { SettingsStorage } from "./settings/port.ts";
 
 /**
  * The sidebar: the tracked repositories from the settings file, with their
- * open-issue counts. Counts are read many repositories at a time and without
+ * availability, archive status and open-issue counts. Counts are read many repositories at a time and without
  * their issues: when the sidebar is read, again when it is refreshed, when
  * they are older than five minutes as a screen opens or is shown again, and
  * when reading them failed, as a screen is retried, opened or shown again.
@@ -41,6 +43,16 @@ export interface Sidebar {
    * already asking for them.
    */
   read(): Promise<SidebarEntries>;
+  /** The latest evidence of availability, independent of the count. */
+  statusOf(
+    repository: RepositoryAddress,
+  ): Pick<RepositoryEntry, "unavailable" | "archived">;
+  /** A list also learns when GitHub stops showing a repository. */
+  openIssuesFailed(
+    repository: RepositoryAddress,
+    problem: Problem,
+    readAt: Moment,
+  ): void;
   /**
    * Reads the sidebar as `read` does, and pushes it at once, before any
    * count it asks for arrives, e.g. in place of counts read as another
@@ -92,13 +104,17 @@ const unanswered: GitHubResult<RepositorySummary> = {
   error: { kind: "unexpected-response" },
 };
 
-/** A repository's count, and how it was read. */
+/** What the sidebar knows of a repository, and when it was read. */
 interface Count {
   count: OpenIssueCount;
   /** When GitHub was asked for the count, once it is known. */
   readAt: Moment | undefined;
   /** Whether GitHub is being asked for it. */
   asking: boolean;
+  unavailable?: RepositoryEntry["unavailable"];
+  archived?: true | undefined;
+  /** When the last explicit availability evidence was requested. */
+  availabilityAt?: Moment;
 }
 
 export function createSidebar({
@@ -132,7 +148,18 @@ export function createSidebar({
       repositories: repositories.map((repository) => ({
         repository,
         openIssues: countOf(repository),
+        ...statusOf(repository),
       })),
+    };
+  }
+
+  function statusOf(
+    repository: RepositoryAddress,
+  ): Pick<RepositoryEntry, "unavailable" | "archived"> {
+    const known = counts.get(repositoryKey(repository));
+    return {
+      ...(known?.unavailable ? { unavailable: known.unavailable } : {}),
+      ...(known?.archived ? { archived: true } : {}),
     };
   }
 
@@ -155,12 +182,19 @@ export function createSidebar({
 
   /** Whether reading a count failed. */
   function failed(repository: RepositoryAddress): boolean {
-    return countOf(repository).status === "failed";
+    return (
+      countOf(repository).status === "failed" ||
+      statusOf(repository).unavailable !== undefined
+    );
   }
 
   /** Whether a count is unknown, or due to be read again. */
   function unknownOrDue(repository: RepositoryAddress): boolean {
-    return countOf(repository).status !== "known" || dueAgain(repository);
+    return (
+      countOf(repository).status !== "known" ||
+      failed(repository) ||
+      dueAgain(repository)
+    );
   }
 
   /**
@@ -218,18 +252,59 @@ export function createSidebar({
       const count = counts.get(repositoryKey(repository));
       if (!count) continue;
       count.asking = false;
-      // Open issues that loaded meanwhile gave a count at least as recent.
-      if (count.readAt && atOrAfter(count.readAt, askedAt)) continue;
       // Each repository fails on its own, unless the whole request did.
       const summary: RequestResult<RepositorySummary> = result.ok
         ? (result.value[index] ?? unanswered)
         : result;
-      const answer: OpenIssueCount = summary.ok
-        ? { status: "known", count: summary.value.openIssueCount }
-        : { status: "failed", message: describeRequestError(summary.error) };
+      const previousUnavailable = count.unavailable;
+      const previousArchived = count.archived;
+      if (summary.ok)
+        count.archived = summary.value.isArchived ? true : undefined;
+      const newerAvailability =
+        count.availabilityAt && atOrAfter(count.availabilityAt, askedAt);
+      if (summary.ok && !newerAvailability) {
+        count.availabilityAt = askedAt;
+        count.unavailable = summary.value.hasIssuesEnabled
+          ? undefined
+          : { kind: "unavailable", access: undefined, issuesDisabled: true };
+      } else if (
+        !summary.ok &&
+        summary.error.kind === "unavailable" &&
+        !newerAvailability &&
+        !(count.readAt && atOrAfter(count.readAt, askedAt))
+      ) {
+        count.availabilityAt = askedAt;
+        count.unavailable = {
+          kind: "unavailable",
+          access: summary.error.access,
+        };
+      }
+      if (
+        JSON.stringify(previousUnavailable) !==
+          JSON.stringify(count.unavailable) ||
+        previousArchived !== count.archived
+      )
+        changed = true;
+      // A newer list read wins the count; metadata is still useful even
+      // when that list supplied a more recent count.
+      if (
+        count.readAt &&
+        atOrAfter(count.readAt, askedAt) &&
+        !count.unavailable
+      )
+        continue;
+      const answer: OpenIssueCount =
+        summary.ok && count.unavailable
+          ? unavailableCount(count.unavailable)
+          : summary.ok
+            ? { status: "known", count: summary.value.openIssueCount }
+            : {
+                status: "failed",
+                message: describeRequestError(summary.error),
+              };
       if (!sameCount(count.count, answer)) changed = true;
       count.count = answer;
-      count.readAt = summary.ok ? askedAt : undefined;
+      count.readAt = summary.ok && !count.unavailable ? askedAt : undefined;
     }
     if (changed) pushTracked();
   }
@@ -258,6 +333,24 @@ export function createSidebar({
   }
 
   return {
+    statusOf,
+    openIssuesFailed(repository, problem, readAt) {
+      if (problem.kind !== "unavailable") return;
+      const key = repositoryKey(repository);
+      const known = counts.get(key);
+      if (known?.availabilityAt && atOrAfter(known.availabilityAt, readAt))
+        return;
+      if (known?.unavailable?.issuesDisabled) return;
+      counts.set(key, {
+        ...known,
+        count: unavailableCount(problem),
+        readAt: undefined,
+        asking: known?.asking ?? false,
+        unavailable: problem,
+        availabilityAt: readAt,
+      });
+      pushTracked();
+    },
     read() {
       return read({ announce: false });
     },
@@ -280,8 +373,22 @@ export function createSidebar({
       // A count GitHub was asked for later is at least as recent.
       if (known?.readAt && atOrAfter(known.readAt, readAt)) return;
       const count: OpenIssueCount = { status: "known", count: openIssues };
-      const changed = !known || !sameCount(known.count, count);
-      counts.set(key, { count, readAt, asking: known?.asking ?? false });
+      const changed =
+        !known ||
+        !sameCount(known.count, count) ||
+        known.unavailable !== undefined;
+      if (
+        known?.unavailable &&
+        (known.unavailable.issuesDisabled ||
+          (known.availabilityAt && atOrAfter(known.availabilityAt, readAt)))
+      )
+        return;
+      counts.set(key, {
+        count,
+        readAt,
+        asking: known?.asking ?? false,
+        ...(known?.archived ? { archived: true } : {}),
+      });
       if (
         changed &&
         tracked?.some((entry) => sameRepository(entry, repository))
@@ -289,6 +396,19 @@ export function createSidebar({
         pushTracked();
       }
     },
+  };
+}
+
+/** A confirmed access failure has no usable count, even if an older read did. */
+function unavailableCount(
+  problem: Extract<Problem, { kind: "unavailable" }>,
+): OpenIssueCount {
+  return {
+    status: "failed",
+    message: problem.issuesDisabled
+      ? "Issues are turned off for this repository"
+      : (problem.access?.message ??
+        "Unavailable or not accessible with this account"),
   };
 }
 

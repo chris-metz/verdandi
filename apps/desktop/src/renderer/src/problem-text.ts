@@ -28,7 +28,9 @@ export function problemText(problem: Problem, login?: string): ProblemText {
       const account = login === undefined ? "" : ` (@${login})`;
       return {
         text: `Unavailable or not accessible with this account${account}`,
-        detail: access?.message,
+        detail: problem.issuesDisabled
+          ? "Issues are turned off for this repository"
+          : access?.message,
         link:
           access?.kind === "sso" && access.url !== undefined
             ? { label: "Authorize on GitHub", url: access.url }
