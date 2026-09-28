@@ -79,7 +79,34 @@ export function App() {
     navigate({ kind: "list" });
   }
 
-  // Nothing is selected at first, so the sidebar has the keyboard.
+  // Restore only the sidebar entry; the issue stack and list places start fresh.
+  useEffect(() => {
+    let current = true;
+    void window.verdandi.getSelectedSidebarEntry().then(
+      (entry) => {
+        if (current) setSelected((selected) => selected ?? entry);
+      },
+      () => {
+        if (current) setSelected((selected) => selected ?? { kind: "all" });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    void window.verdandi
+      .selectSidebarEntry(
+        selected.kind === "view"
+          ? { kind: "view", id: selected.view.id }
+          : selected,
+      )
+      .catch(() => undefined);
+  }, [selected]);
+
+  // The sidebar has the keyboard at launch.
   useEffect(() => {
     focusPane(sidebarPane.current);
   }, []);

@@ -5,6 +5,7 @@ import type {
   SidebarDestination,
   SettingsChangeResult,
   SettingsStatus,
+  WindowState,
 } from "../contract.ts";
 
 /**
@@ -26,7 +27,7 @@ export interface SettingsStorage {
 /** Portable user data as the core and sidebar use it. */
 export interface Settings {
   /** The tracked repositories, in sidebar order. */
-  repositories: RepositoryAddress[];
+  repositories: (RepositoryAddress & { id?: number })[];
   views: SavedView[];
 }
 
@@ -44,13 +45,26 @@ export interface LocalStateStorage {
   read(): Promise<LocalState>;
   /**
    * Changes the state, keeping what else it holds; `undefined` removes a
-   * value.
+   * value. Changes and reads wait for earlier changes. A factory resolves
+   * a change inside that queue, e.g. looking up a repository ID in settings;
+   * it must not call this storage again.
    */
-  update(change: Partial<LocalState>): Promise<void>;
+  update(
+    change: Partial<LocalState> | (() => Promise<Partial<LocalState>>),
+  ): Promise<void>;
 }
 
 /** Machine-local state, as far as the core uses it so far. */
 export interface LocalState {
+  selectedEntry?: StoredSidebarEntry | undefined;
+  window?: WindowState | undefined;
   /** The gh executable the user chose, if any. */
   ghExecutable: string | undefined;
 }
+
+/** A stable reference, without a view's mutable text or any list state. */
+export type StoredSidebarEntry =
+  | { kind: "all" }
+  | { kind: "repository"; id: number }
+  | { kind: "repository"; name: string }
+  | { kind: "view"; id: string };

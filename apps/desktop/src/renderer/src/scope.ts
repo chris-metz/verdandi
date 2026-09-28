@@ -1,11 +1,10 @@
 import type {
   RepositoryAddress,
-  Scope,
-  SavedView,
+  SidebarSelection,
 } from "@verdandi/core/contract";
 
 /** A saved view can be arranged before its search list is opened. */
-export type SidebarScope = Scope | { kind: "view"; view: SavedView };
+export type SidebarScope = SidebarSelection;
 
 /** How the window presents a scope, wherever it shows it. */
 export interface ScopePresentation {

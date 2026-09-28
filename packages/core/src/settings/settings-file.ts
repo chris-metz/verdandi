@@ -147,9 +147,11 @@ export function createSettingsFile(
         try {
           const { document } = await readDocument();
           lastValid = {
-            repositories: document.repositories.flatMap(({ name }) => {
+            repositories: document.repositories.flatMap(({ name, id }) => {
               const address = parseRepositoryAddress(name);
-              return address ? [address] : [];
+              return address
+                ? [{ ...address, ...(id === undefined ? {} : { id }) }]
+                : [];
             }),
             views: document.views,
           };

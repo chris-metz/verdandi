@@ -28,6 +28,7 @@ import {
 import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
 import { createSidebar, type Sidebar } from "./sidebar.ts";
+import { createSidebarSelection } from "./sidebar-selection.ts";
 
 /** At most this many `gh` processes run at once. */
 const maxConcurrentRequests = 4;
@@ -50,7 +51,7 @@ export interface CoreOptions {
    */
   host: HostEnvironment;
   settings: SettingsStorage;
-  /** Machine-local state, which keeps the gh the user chose. */
+  /** Machine-local state, kept apart from portable user data. */
   localState: LocalStateStorage;
   /** The time, in milliseconds since the epoch: the system clock by default. */
   now?: () => number;
@@ -268,6 +269,13 @@ export function createCore({
   });
 
   return {
+    ...createSidebarSelection(settings, localState),
+    async getWindowState() {
+      return (await localState.read()).window;
+    },
+    saveWindowState(window) {
+      return localState.update({ window });
+    },
     dispose() {
       stopWatchingSettings();
       session.end();

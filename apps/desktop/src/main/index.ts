@@ -62,16 +62,30 @@ function start() {
   });
 
   wireContract(core);
+  let quitting = false;
   app.on("before-quit", () => {
+    quitting = true;
+  });
+  app.on("will-quit", () => {
     core.dispose();
   });
+  let opening: Promise<void> | undefined;
+  function openWindow() {
+    opening ??= createWindow(core, () => {
+      // A close delayed for its state write also delayed app.quit on macOS.
+      if (quitting) app.quit();
+    }).finally(() => {
+      opening = undefined;
+    });
+    return opening;
+  }
   app.on("second-instance", () => {
     const window = BrowserWindow.getAllWindows()[0];
     if (window) {
       if (window.isMinimized()) window.restore();
       window.show();
       window.focus();
-    } else if (app.isReady()) createWindow();
+    } else if (app.isReady()) void openWindow();
   });
   ipcMain.handle(ipcChannels.showSettingsFolder, showSettingsFolder);
   // The renderer's one way to open a link, e.g. `o` on an issue.
@@ -115,9 +129,9 @@ function start() {
         { role: "windowMenu" },
       ]),
     );
-    createWindow();
+    void openWindow();
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) void openWindow();
     });
   });
 
@@ -182,10 +196,12 @@ function start() {
   }
 }
 
-function createWindow() {
+async function createWindow(core: Contract, afterClose: () => void) {
+  const saved = await core.getWindowState();
   const window = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...(saved
+      ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height }
+      : { width: 1200, height: 800 }),
     show: false,
     title: "Verdandi",
     // Matches the page background, so the window does not flash on opening.
@@ -198,7 +214,47 @@ function createWindow() {
     },
   });
   window.once("ready-to-show", () => {
+    if (saved?.maximized) window.maximize();
     window.show();
+  });
+
+  let maximized = saved?.maximized ?? false;
+  let closing = false;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function save() {
+    return core
+      .saveWindowState({ ...window.getNormalBounds(), maximized })
+      .catch(() => undefined);
+  }
+  function changed() {
+    clearTimeout(saveTimer);
+    if (!closing)
+      saveTimer = setTimeout(() => {
+        void save();
+      }, 200);
+  }
+  window.on("move", changed);
+  window.on("resize", changed);
+  window.on("maximize", () => {
+    maximized = true;
+    changed();
+  });
+  window.on("unmaximize", () => {
+    maximized = false;
+    changed();
+  });
+  window.on("close", (event) => {
+    event.preventDefault();
+    if (closing) return;
+    closing = true;
+    clearTimeout(saveTimer);
+    void save().finally(() => {
+      window.destroy();
+      afterClose();
+    });
+  });
+  window.on("closed", () => {
+    clearTimeout(saveTimer);
   });
 
   // The window only ever shows Verdandi; links leave for the browser.

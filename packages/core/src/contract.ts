@@ -244,6 +244,9 @@ export type OpenIssueCount =
 export type Scope =
   { kind: "all" } | { kind: "repository"; repository: RepositoryAddress };
 
+/** The selected sidebar entry, with the current view text when it is a view. */
+export type SidebarSelection = Scope | { kind: "view"; view: SavedView };
+
 /** What the main area shows: a scope's list, or an issue page. */
 export type Screen =
   { kind: "list"; scope: Scope } | { kind: "issue"; issueId: string };
@@ -617,8 +620,27 @@ export type IssueLookup =
   | { status: "pull-request"; url: string }
   | { status: "failed"; problem: Problem };
 
+/** Normal window bounds, even while maximised; interpreted by the desktop. */
+export interface WindowState {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+}
+
 /** Request/response calls. */
 export interface CoreRequests {
+  /** Machine-local window state, or none so the desktop uses its defaults. */
+  getWindowState: () => Promise<WindowState | undefined>;
+  /** Stores only window geometry; the desktop owns capturing and applying it. */
+  saveWindowState: (state: WindowState) => Promise<void>;
+  /** The remembered entry in current settings, or All if it no longer exists. */
+  getSelectedSidebarEntry: () => Promise<SidebarSelection>;
+  /** Remembers an entry on this machine, independently of the open issue page. */
+  selectSidebarEntry: (
+    entry: SidebarEntryKey | { kind: "all" },
+  ) => Promise<void>;
   /**
    * Opens an issue page: an issue with its ancestry and sub-issues, from any
    * repository, tracked or not. Its current state is pushed as
@@ -808,6 +830,10 @@ export interface Contract extends CoreRequests {
 }
 
 const requests: Record<keyof CoreRequests, true> = {
+  getWindowState: true,
+  saveWindowState: true,
+  getSelectedSidebarEntry: true,
+  selectSidebarEntry: true,
   openIssuePage: true,
   activateBlockingEnd: true,
   retryBlockingBranch: true,

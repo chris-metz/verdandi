@@ -23,9 +23,14 @@ export const ipcChannels = {
 /**
  * The contract requests the renderer cannot make. It chooses gh through
  * `DesktopApi.chooseGhExecutable` instead, so that it never names a file for
- * main to run: only the user does, in main's file dialog.
+ * main to run: only the user does, in main's file dialog. Window geometry is
+ * also captured and applied only by main.
  */
-const mainOnlyRequests = ["chooseGhExecutable"] as const;
+const mainOnlyRequests = [
+  "chooseGhExecutable",
+  "getWindowState",
+  "saveWindowState",
+] as const;
 
 /** The contract as the renderer reaches it. */
 export type RendererContract = Omit<
