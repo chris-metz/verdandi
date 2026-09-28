@@ -68,6 +68,28 @@ function select(number: number): ListCommand {
 }
 
 describe("visible rows", () => {
+  it("nests a view's tree below its missing parent issue once it could not be loaded", () => {
+    const failed = {
+      status: "failed",
+      problem: { kind: "interrupted" },
+    } as const;
+    const trees = [
+      { ...tree(issue(1, [issue(2)])), missingParent: failed },
+      { ...tree(issue(3)), missingParent: { status: "loading" } as const },
+    ];
+    expect(
+      visibleRows(trees).map(({ node, depth, missingParent }) => ({
+        issue: node.issue.reference,
+        depth,
+        missingParent: missingParent?.status,
+      })),
+    ).toEqual([
+      { issue: "#1", depth: 1, missingParent: "failed" },
+      { issue: "#2", depth: 2, missingParent: undefined },
+      { issue: "#3", depth: 0, missingParent: "loading" },
+    ]);
+  });
+
   it("shows expanded sub-issues nested below their parent issue", () => {
     expect(
       visibleRows(forest).map(({ node, depth, parentId }) => ({

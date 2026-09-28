@@ -7,6 +7,7 @@ import type {
   LoadingState,
   Problem,
   UnreadIssue,
+  ViewList,
 } from "@verdandi/core/contract";
 import { problemText } from "./problem-text";
 
@@ -52,6 +53,32 @@ export function listFreshness(list: IssueList, now: number): Freshness {
       list.trees.flatMap((tree) => tree.parent?.unread ?? []),
     ),
   ];
+  return withMissing(loadingFreshness(loading, now), missing);
+}
+
+/**
+ * A view's freshness: while the matches' parent issues and sub-issues load
+ * after the search answered, that they do; otherwise the age of its search,
+ * and what of its trees could not be read, the parent issues above them
+ * included.
+ */
+export function viewFreshness(list: ViewList, now: number): Freshness {
+  const { loading } = list;
+  if (
+    list.readingContext &&
+    loading.status !== "loading" &&
+    loading.status !== "failed"
+  ) {
+    return {
+      text: "Loading parent issues and sub-issues…",
+      busy: true,
+      retry: false,
+    };
+  }
+  const missing = missingIssues(
+    list.trees,
+    list.trees.flatMap((tree) => tree.missingParent ?? []),
+  );
   return withMissing(loadingFreshness(loading, now), missing);
 }
 

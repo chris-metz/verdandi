@@ -2756,6 +2756,7 @@ describe("gh adapter: issue search", () => {
             url: "https://github.com/acme/api/issues/7",
             updatedAt: "2026-09-15T03:26:56Z",
             labels: [{ name: "bug", color: "d73a4a" }],
+            hasParent: false,
             subIssuesSummary: { total: 3, completed: 1 },
             issueDependenciesSummary: {
               blockedBy: 1,
@@ -2780,6 +2781,42 @@ describe("gh adapter: issue search", () => {
       },
       viewerLogin: undefined,
     });
+  });
+
+  it("reads whether a match has a parent issue from GitHub's pointer to it, before reading the parent", async () => {
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 0,
+      stdout: transcript(
+        "200 OK",
+        searchHeaders,
+        JSON.stringify({
+          total_count: 3,
+          incomplete_results: false,
+          items: [
+            searchItem(7, {
+              parent_issue_url:
+                "https://api.github.com/repos/acme/api/issues/2",
+            }),
+            searchItem(8, { parent_issue_url: null }),
+            // GitHub leaves the pointer out of an issue without a parent.
+            searchItem(9),
+          ],
+        }),
+      ),
+      stderr: "",
+    });
+
+    const answer = await github.searchIssues("label:bug", 1);
+
+    expect(
+      answer.ok &&
+        answer.value.issues.map(({ number, hasParent }) => [number, hasParent]),
+    ).toEqual([
+      [7, true],
+      [8, false],
+      [9, false],
+    ]);
   });
 
   it("reports a search GitHub rejects with its own message", async () => {

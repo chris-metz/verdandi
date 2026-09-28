@@ -2,6 +2,7 @@ import type {
   IssueNode,
   IssueTree,
   ParentIssue,
+  UnreadIssue,
 } from "@verdandi/core/contract";
 
 import type { IssueDestination } from "./issue-navigation";
@@ -15,6 +16,11 @@ export interface ListRow {
   parentId: string | undefined;
   /** The parent issue a top-level row names with a ↑ chip, if any. */
   parent: ParentIssue | undefined;
+  /**
+   * In a view, the parent issue above a top-level row that does not show:
+   * loading, or failed, when the row nests below a placeholder for it.
+   */
+  missingParent?: UnreadIssue | undefined;
 }
 
 /** What a key asks for. */
@@ -25,8 +31,13 @@ export type ListCommand =
   | { kind: "setAllExpanded"; expanded: boolean }
   | { kind: "openOnGitHub"; url: string };
 
-/** The rows a forest shows: every tree, with the sub-issues of expanded ones. */
-export function visibleRows(trees: readonly IssueTree[]): ListRow[] {
+/**
+ * The rows a forest shows: every tree, with the sub-issues of expanded ones.
+ * A view's tree whose parent issue failed nests below a placeholder for it.
+ */
+export function visibleRows(
+  trees: readonly (IssueTree & { missingParent?: UnreadIssue | undefined })[],
+): ListRow[] {
   const rows: ListRow[] = [];
   function add(node: IssueNode, depth: number, parentId: string | undefined) {
     rows.push({ node, depth, parentId, parent: undefined });
@@ -37,9 +48,12 @@ export function visibleRows(trees: readonly IssueTree[]): ListRow[] {
   }
   for (const tree of trees) {
     const index = rows.length;
-    add(tree, 0, undefined);
+    add(tree, tree.missingParent?.status === "failed" ? 1 : 0, undefined);
     const top = rows[index];
-    if (top) top.parent = tree.parent;
+    if (top) {
+      top.parent = tree.parent;
+      top.missingParent = tree.missingParent;
+    }
   }
   return rows;
 }

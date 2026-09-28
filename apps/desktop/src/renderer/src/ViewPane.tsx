@@ -1,10 +1,10 @@
 import type { SavedView, ViewList } from "@verdandi/core/contract";
 import { Pencil } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { loadingFreshness } from "./freshness";
+import { viewFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
-import { IssueColumnHeader, IssueRow } from "./IssueRow";
+import { IssueColumnHeader, IssueRow, MissingParentRow } from "./IssueRow";
 import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
@@ -13,9 +13,12 @@ import { matchesLabel } from "./view-screen";
 
 /**
  * A view's screen: its name and search, how many issues match, and the
- * matches in GitHub's order, from any repository, each with its repository's
- * chip, outlined for an untracked one. It is driven by keyboard and mouse
- * as a list is, and keeps its place as a list does.
+ * matches' trees, each match under its ancestry with context issues around
+ * it, from any repository, each row with its repository's chip, outlined
+ * for an untracked one. It is driven by keyboard and mouse as a list is,
+ * expands and collapses as a list does, and keeps its place as a list does:
+ * as matches move under their parent issues, the selection stays on its
+ * issue.
  */
 export function ViewPane({
   view,
@@ -40,9 +43,26 @@ export function ViewPane({
   );
   const list = useViewList(view);
   const trees = useMemo(() => list?.trees ?? [], [list]);
-  // Matches show without their sub-issues for now, so nothing expands.
   const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
-    { scope, list, trees, hasKeyboard, onOpen },
+    {
+      scope,
+      list,
+      trees,
+      hasKeyboard,
+      onOpen,
+      onSetExpanded: (issueId, expanded) => {
+        void window.verdandi.setExpanded(screen, issueId, expanded);
+      },
+      onSetAllExpanded: (expanded) => {
+        void window.verdandi.setAllExpanded(screen, expanded);
+      },
+    },
+  );
+  const toggle = useCallback(
+    (issueId: string, expanded: boolean) => {
+      void window.verdandi.setExpanded(screen, issueId, expanded);
+    },
+    [screen],
   );
   const retry = useCallback(() => {
     void window.verdandi.retry(screen);
@@ -70,7 +90,7 @@ export function ViewPane({
                   matchCount: list.matchCount,
                   pullRequests: list.pullRequests,
                 },
-                list.trees.length,
+                list.matchesShown,
               )}
             </span>
           )}
@@ -78,7 +98,7 @@ export function ViewPane({
           <RateLimitStatus />
           {list && (
             <RefreshControl
-              freshness={(now) => loadingFreshness(list.loading, now)}
+              freshness={(now) => viewFreshness(list, now)}
               onRefresh={() => {
                 void window.verdandi.refresh(screen);
               }}
@@ -135,17 +155,24 @@ export function ViewPane({
             <>
               {rows.length > 0 && <IssueColumnHeader sticky />}
               {rows.map((row, index) => (
-                <IssueRow
-                  key={row.node.issue.id}
-                  row={row}
-                  withRepository
-                  selected={index === selected}
-                  login={login}
-                  onOpen={onOpen}
-                  onSelect={select}
-                  onToggle={() => undefined}
-                  onRetry={retry}
-                />
+                <Fragment key={row.node.issue.id}>
+                  {row.missingParent?.status === "failed" && (
+                    <MissingParentRow
+                      missingParent={row.missingParent}
+                      onRetry={retry}
+                    />
+                  )}
+                  <IssueRow
+                    row={row}
+                    withRepository
+                    selected={index === selected}
+                    login={login}
+                    onOpen={onOpen}
+                    onSelect={select}
+                    onToggle={toggle}
+                    onRetry={retry}
+                  />
+                </Fragment>
               ))}
               {list.loading.status !== "loading" && rows.length === 0 && (
                 <p role="status" className="px-4 py-6 text-muted-foreground">
@@ -176,6 +203,8 @@ function useViewList(view: SavedView): ViewList | undefined {
         setList({
           view,
           trees: [],
+          matchesShown: 0,
+          readingContext: false,
           matchCount: undefined,
           pullRequests: 0,
           rejected: undefined,

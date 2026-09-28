@@ -276,6 +276,7 @@ export function createCore({
       },
     });
     const views = createViewLists({
+      store,
       request: sessionRequest,
       clock,
       shown: () => shown,
@@ -549,12 +550,16 @@ export function createCore({
       session.sidebar.revalidate();
       return Promise.resolve();
     },
-    setExpanded(scope, issueId, expanded) {
-      session.lists.setExpanded(scope, issueId, expanded);
+    setExpanded(list, issueId, expanded) {
+      if (list.kind === "view") {
+        session.views.setExpanded(list.viewId, issueId, expanded);
+      } else session.lists.setExpanded(list, issueId, expanded);
       return Promise.resolve();
     },
-    setAllExpanded(scope, expanded) {
-      session.lists.setAllExpanded(scope, expanded);
+    setAllExpanded(list, expanded) {
+      if (list.kind === "view") {
+        session.views.setAllExpanded(list.viewId, expanded);
+      } else session.lists.setAllExpanded(list, expanded);
       return Promise.resolve();
     },
     refresh(screen) {

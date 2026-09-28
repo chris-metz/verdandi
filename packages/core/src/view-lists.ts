@@ -3,30 +3,44 @@ import type {
   Problem,
   SavedView,
   Screen,
+  UnreadIssue,
   ViewList,
   ViewMatchCount,
 } from "./contract.ts";
-import type { SearchPage } from "./github/port.ts";
-import { summarizeIssue } from "./issue-summary.ts";
-import { atOrAfter, isOutdated, type Clock, type Moment } from "./moments.ts";
+import type { IssueReference, SearchPage } from "./github/port.ts";
+import { createIssueLoader } from "./issue-loader.ts";
+import type { IssueStore } from "./issue-store.ts";
+import {
+  atOrAfter,
+  fiveMinutesAgo,
+  isOutdated,
+  type Clock,
+  type Moment,
+} from "./moments.ts";
 import { problemOf } from "./problems.ts";
 import { repositoryKey } from "./repository-address.ts";
 import {
   screenUrgency,
   type RequestResult,
+  type ScreenPart,
   type SendRequest,
   type Urgency,
 } from "./request-queue.ts";
 import type { Settings } from "./settings/port.ts";
+import { buildViewForest } from "./view-forest.ts";
 
 /**
  * The views' screens, one per saved view, and what their searches last
  * answered. A view's search runs when it is first opened, or is handed the
  * answer of the search Save ran; it then runs again as the view is
  * refreshed, has grown old or failed, but never on its own once GitHub
- * rejected it, until its search changes. Only the view on screen asks GitHub
- * for anything. What a view shows comes from its search text alone, never
- * from the tracked repositories, which only tell its external issues apart.
+ * rejected it, until its search changes. Once it answers, the matches are
+ * read by ID into the one issue store, for their parent issues and
+ * sub-issues, then their ancestors and the sub-issues the view shows, 100
+ * at a time; what would show only below collapsed issues after the rest.
+ * Only the view on screen asks GitHub for anything. What a view shows comes
+ * from its search text alone, never from the tracked repositories, which
+ * only tell its external issues apart.
  */
 export interface ViewLists {
   /**
@@ -56,11 +70,20 @@ export interface ViewLists {
   refresh(viewId: string): void;
   /** Runs an opened view's search again as `open` would. */
   revalidate(viewId: string): void;
-  /** Runs an opened view's search again if it failed, unless GitHub rejected it. */
+  /**
+   * Runs an opened view's search again if it failed, unless GitHub rejected
+   * it, and reads again the issues it shows that failed or GitHub answered
+   * in part.
+   */
   retry(viewId: string): void;
+  /** Expands or collapses one issue in an opened view, and pushes it. */
+  setExpanded(viewId: string, issueId: string, expanded: boolean): void;
+  /** Expands or collapses every issue in an opened view, and pushes it. */
+  setAllExpanded(viewId: string, expanded: boolean): void;
 }
 
 export interface ViewListsOptions {
+  store: IssueStore;
   request: SendRequest;
   clock: Clock;
   /** The screen the main area shows, if any. */
@@ -106,9 +129,38 @@ interface ViewState {
    * because it was asked for.
    */
   background: boolean;
+  /**
+   * The issues it shows must have been read from GitHub at this moment or
+   * later; anything older is read again as it shows.
+   */
+  validFrom: Moment;
+  /**
+   * Issues asked for by ID since `validFrom`, so none is asked for twice
+   * unless it is retried.
+   */
+  requested: Set<string>;
+  /**
+   * Reads of issues by ID the view waits for to show them, not counting
+   * those that would show only below collapsed issues.
+   */
+  pendingRequests: number;
+  expansion: Expansion;
+}
+
+/**
+ * Which issues are expanded: those the user expanded or collapsed one by
+ * one, else all or none once the user said so, else the paths to matches
+ * the view expanded the first time they showed.
+ */
+interface Expansion {
+  chosen: Map<string, boolean>;
+  all: boolean | undefined;
+  /** Every issue that has shown on a path to a match. */
+  onPath: Set<string>;
 }
 
 export function createViewLists({
+  store,
   request,
   clock,
   shown,
@@ -120,6 +172,16 @@ export function createViewLists({
   const states = new Map<string, ViewState>();
   /** The settings as last read. */
   let settings: Settings | undefined;
+  // Views read no repository's open issues, only issues by ID.
+  const loader = createIssueLoader({
+    store,
+    request,
+    clock,
+    pagesUrgency: () => undefined,
+    pageRead: () => undefined,
+    openIssuesLoaded: () => undefined,
+    openIssuesFailed: () => undefined,
+  });
 
   function stateOf(viewId: string): ViewState {
     let state = states.get(viewId);
@@ -129,6 +191,10 @@ export function createViewLists({
         failure: undefined,
         searching: undefined,
         background: false,
+        validFrom: fiveMinutesAgo(clock),
+        requested: new Set(),
+        pendingRequests: 0,
+        expansion: { chosen: new Map(), all: undefined, onPath: new Set() },
       };
       states.set(viewId, state);
     }
@@ -181,33 +247,136 @@ export function createViewLists({
       : { status: "loading" };
   }
 
+  /**
+   * Why reading an issue the view asked for failed since the view needed it,
+   * if it did.
+   */
+  function failureOf(state: ViewState, id: string) {
+    const failure = store.failure(id);
+    return state.requested.has(id) &&
+      failure &&
+      atOrAfter(failure.at, state.validFrom)
+      ? failure
+      : undefined;
+  }
+
+  /** Why the view shows an issue it names only as a relationship names it. */
+  function unreadIssue(state: ViewState, issue: IssueReference): UnreadIssue {
+    if (loader.isReading(issue.id)) return { status: "loading" };
+    const failure = failureOf(state, issue.id);
+    return failure
+      ? { status: "failed", problem: failure.problem }
+      : { status: "loading" };
+  }
+
+  /**
+   * Arranges a view's trees from its search and the store, and, while it is
+   * on screen, asks for the issues they need but have not read, and for
+   * those they show that are older than the view needs them: first what
+   * shows, then what would show below collapsed issues.
+   */
   function listOf(view: SavedView): ViewList {
+    const state = stateOf(view.id);
     const { run, failure } = currentOf(view);
     const tracked = new Set(
       (settings?.repositories ?? []).map((repository) =>
         repositoryKey(repository),
       ),
     );
+    const { expansion } = state;
+    const matches = run?.page.issues ?? [];
+    const forest = buildViewForest({
+      matches,
+      lookup: (id) => store.get(id),
+      readSinceSearch: (id) => {
+        const readAt = store.readAt(id);
+        return (
+          run !== undefined &&
+          readAt !== undefined &&
+          atOrAfter(readAt, run.readAt)
+        );
+      },
+      unread: (issue) => unreadIssue(state, issue),
+      isTracked: (repository) => tracked.has(repositoryKey(repository)),
+      isExpanded: (id, onPath) => {
+        // A path to a match expands the first time it shows, and only then.
+        if (onPath) expansion.onPath.add(id);
+        return (
+          expansion.chosen.get(id) ?? expansion.all ?? expansion.onPath.has(id)
+        );
+      },
+    });
+    if (run && isShown(view.id)) {
+      const olderThan = (id: string, since: Moment) => {
+        const readAt = store.readAt(id);
+        return readAt !== undefined && !atOrAfter(readAt, since);
+      };
+      // A match's parent issue must be as new as the search's pointer to it.
+      const outdated = [
+        ...forest.shownIssues.filter((id) => olderThan(id, state.validFrom)),
+        ...matches.flatMap(({ id }) => (olderThan(id, run.readAt) ? [id] : [])),
+      ].map((id) => ({ id }));
+      const needed = [
+        ...forest.missing,
+        ...outdated,
+        ...forest.outdatedAncestors.map((id) => ({ id })),
+      ];
+      const collapsedAway = ({ id }: { id: string }) =>
+        forest.belowCollapsed.has(id);
+      readMissing(
+        view.id,
+        state,
+        needed.filter((issue) => !collapsedAway(issue)),
+        "visible",
+      );
+      readMissing(view.id, state, needed.filter(collapsedAway), "rest");
+    }
     return {
       view,
       matchCount: run?.page.total,
       pullRequests: run?.page.pullRequests ?? 0,
       rejected: failure?.rejected,
       loading: loadingOf(view),
-      trees: (run?.page.issues ?? []).map((match) => ({
-        issue: summarizeIssue(
-          { ...match, parent: undefined, subIssues: [], incomplete: undefined },
-          {
-            // Every row names its repository with a chip, as in All.
-            reference: `#${String(match.number)}`,
-            external: !tracked.has(repositoryKey(match.repository)),
-          },
-        ),
-        subIssues: [],
-        expanded: false,
-        parent: undefined,
-      })),
+      trees: forest.trees,
+      matchesShown: forest.matchesShown,
+      readingContext: run !== undefined && state.pendingRequests > 0,
     };
+  }
+
+  /**
+   * Reads the issues a view names but has not asked for since it needs them
+   * newer, together with any other read that asks for them, as urgently as
+   * the part of the view they belong to.
+   */
+  function readMissing(
+    viewId: string,
+    state: ViewState,
+    missing: readonly { id: string }[],
+    part: ScreenPart,
+  ) {
+    const ids = [
+      ...new Set(
+        missing.map(({ id }) => id).filter((id) => !state.requested.has(id)),
+      ),
+    ];
+    if (ids.length === 0) return;
+    for (const id of ids) state.requested.add(id);
+    const urgency = (): Urgency | undefined =>
+      states.get(viewId) === state
+        ? screenUrgency(
+            { shown: isShown(viewId), background: state.background },
+            part,
+          )
+        : undefined;
+    // Only what shows keeps the view reading its context.
+    const waits = part === "visible" ? 1 : 0;
+    for (const read of loader.readIssues(ids, state.validFrom, urgency)) {
+      state.pendingRequests += waits;
+      void read.then(() => {
+        state.pendingRequests -= waits;
+        update(viewId);
+      });
+    }
   }
 
   function update(viewId: string) {
@@ -222,6 +391,10 @@ export function createViewLists({
     readAt: Moment,
   ) {
     if (result.ok) {
+      // What the first run shows may have been read by other screens in
+      // the last five minutes; a run after it needs it newer.
+      state.validFrom = state.run ? readAt : fiveMinutesAgo(clock);
+      state.requested.clear();
       state.run = { query, readAt, page: result.value };
       state.failure = undefined;
       return;
@@ -334,9 +507,42 @@ export function createViewLists({
     },
     retry(viewId) {
       withView(viewId, (view) => {
-        stateOf(view.id).background = false;
+        const state = stateOf(view.id);
+        state.background = false;
         if (failedRetriably(view)) void search(view, false);
+        // Issues that failed are asked for again as the view is arranged;
+        // those GitHub answered in part are neither missing nor outdated.
+        const failed = [...state.requested].filter((id) =>
+          failureOf(state, id),
+        );
+        const partial = [...state.requested].filter(
+          (id) => !failureOf(state, id) && store.get(id)?.incomplete,
+        );
+        if (failed.length === 0 && partial.length === 0) return;
+        for (const id of [...failed, ...partial]) state.requested.delete(id);
+        readMissing(
+          view.id,
+          state,
+          partial.map((id) => ({ id })),
+          "visible",
+        );
+        update(view.id);
       });
+    },
+    setExpanded(viewId, issueId, expanded) {
+      const state = states.get(viewId);
+      if (!state) return;
+      state.expansion.chosen.set(issueId, expanded);
+      state.background = false;
+      update(viewId);
+    },
+    setAllExpanded(viewId, expanded) {
+      const state = states.get(viewId);
+      if (!state) return;
+      state.expansion.chosen.clear();
+      state.expansion.all = expanded;
+      state.background = false;
+      update(viewId);
     },
   };
 }

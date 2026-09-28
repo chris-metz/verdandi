@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type {
   Contract,
+  IssueNode,
   IssuePage,
   SidebarEntries,
   ViewEntry,
   ViewList,
+  ViewTree,
 } from "./contract.ts";
 import { createCore } from "./core.ts";
 import type { HostEnvironment } from "./directories.ts";
@@ -555,4 +557,451 @@ it("opens the page of a match outside every tracked repository without tracking 
   expect(await readSettings()).toMatchObject({
     repositories: [{ name: "acme/api" }],
   });
+});
+
+/** Whether a view has run its search and read the issues its trees show. */
+function settled(list: ViewList): boolean {
+  return (
+    list.loading.status !== "loading" &&
+    list.loading.status !== "refreshing" &&
+    !list.readingContext
+  );
+}
+
+/**
+ * The rows a view's trees show, top to bottom, each indented by its depth:
+ * `owner/name#12`, whether it is a match or a context issue, ▾ when
+ * expanded and ▸ when collapsed, the matches inside a collapsed issue, and
+ * a tree's missing parent issue above it.
+ */
+function outline(trees: readonly ViewTree[]): string[] {
+  const rows: string[] = [];
+  function add(node: IssueNode, depth: number) {
+    const { owner, name } = node.issue.repository;
+    const hasSubIssues = node.subIssues.length > 0;
+    const inside = node.view?.matchesInside ?? 0;
+    rows.push(
+      [
+        `${"  ".repeat(depth)}${owner}/${name}${node.issue.reference}`,
+        node.view?.match ? "match" : "context",
+        ...(hasSubIssues ? [node.expanded ? "▾" : "▸"] : []),
+        ...(hasSubIssues && !node.expanded && inside > 0
+          ? [`(${String(inside)} inside)`]
+          : []),
+        ...(node.unread ? [node.unread.status] : []),
+      ].join(" "),
+    );
+    if (node.expanded) for (const sub of node.subIssues) add(sub, depth + 1);
+  }
+  for (const tree of trees) {
+    const { missingParent } = tree;
+    if (missingParent) {
+      rows.push(
+        missingParent.status === "loading"
+          ? "(parent loading)"
+          : `(parent ${missingParent.problem.kind})`,
+      );
+    }
+    add(tree, missingParent && missingParent.status !== "loading" ? 1 : 0);
+  }
+  return rows;
+}
+
+/**
+ * A billing parent issue in `acme/api` with sub-issues in two repositories, one
+ * nested two levels deep, and an unrelated issue.
+ */
+function githubWithBilling(): FakeGitHub {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    {
+      number: 10,
+      title: "Billing",
+      subIssues: ["acme/api#11", "acme/api#12", "other/lib#20"],
+    },
+    { number: 11, title: "Invoices", subIssues: ["acme/api#13"] },
+    { number: 12, title: "Refunds", state: "closed" },
+    { number: 13, title: "PDF export" },
+    { number: 14, title: "Unrelated" },
+  ]);
+  github.addRepository("other/lib", [{ number: 20, title: "Currency" }]);
+  return github;
+}
+
+it("shows every match under its whole ancestry, with the other sub-issues of each ancestor as context", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", {
+    matches: ["acme/api#13", "acme/api#12"],
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "billing", name: "Billing", query: "label:billing" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("billing"), settled);
+
+  expect(outline(list.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 context ▾",
+    "    acme/api#13 match",
+    "  acme/api#12 match",
+    "  other/lib#20 context",
+  ]);
+  expect(list.trees[0]?.subIssues[2]?.issue).toMatchObject({
+    title: "Currency",
+    external: true,
+  });
+  expect(list.matchesShown).toBe(2);
+  // Relationships and context are read by ID, many at once.
+  expect(
+    github.received.filter((read) => read.startsWith("fetchIssues ")).length,
+  ).toBeLessThanOrEqual(3);
+});
+
+it("starts a match without a matching sub-issue collapsed, and shows its sub-issues as context once expanded", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:invoices", { matches: ["acme/api#11"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "inv", name: "Invoices", query: "label:invoices" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "inv" } as const;
+
+  const list = await nextView(core, () => core.openView("inv"), settled);
+
+  expect(outline(list.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+  ]);
+
+  const collapsed = await nextView(core, () =>
+    core.setExpanded(view, "I_acme/api#10", false),
+  );
+  expect(outline(collapsed.trees)).toEqual([
+    "acme/api#10 context ▸ (1 inside)",
+  ]);
+
+  await core.setExpanded(view, "I_acme/api#10", true);
+  const expanded = await nextView(
+    core,
+    () => core.setExpanded(view, "I_acme/api#11", true),
+    settled,
+  );
+  expect(outline(expanded.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 match ▾",
+    "    acme/api#13 context",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+  ]);
+});
+
+it("shows each issue once, a matching sub-issue of a match below it", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", {
+    matches: ["acme/api#13", "acme/api#10", "acme/api#11"],
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "billing", name: "Billing", query: "label:billing" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("billing"), settled);
+
+  expect(outline(list.trees)).toEqual([
+    "acme/api#10 match ▾",
+    "  acme/api#11 match ▾",
+    "    acme/api#13 match",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+  ]);
+  expect(list.matchesShown).toBe(3);
+});
+
+it("orders the trees by the search's rank of the first match anywhere inside each", async () => {
+  const github = githubWithBilling();
+  github.setSearch("first", { matches: ["acme/api#14", "acme/api#13"] });
+  github.setSearch("second", {
+    matches: ["acme/api#13", "acme/api#14", "acme/api#10"],
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [
+      { id: "first", name: "First", query: "first" },
+      { id: "second", name: "Second", query: "second" },
+    ],
+  });
+  const core = createTestCore(github);
+
+  const first = await nextView(core, () => core.openView("first"), settled);
+  expect(first.trees.map(({ issue }) => issue.id)).toEqual([
+    "I_acme/api#14",
+    "I_acme/api#10",
+  ]);
+
+  const second = await nextView(core, () => core.openView("second"), settled);
+  expect(second.trees.map(({ issue }) => issue.id)).toEqual([
+    "I_acme/api#10",
+    "I_acme/api#14",
+  ]);
+});
+
+it("expands a path to a match the first time it shows, and never again once the user collapsed it", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", { matches: ["acme/api#12"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "billing", name: "Billing", query: "label:billing" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "billing" } as const;
+  const opened = await nextView(core, () => core.openView("billing"), settled);
+  expect(outline(opened.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 context ▸",
+    "  acme/api#12 match",
+    "  other/lib#20 context",
+  ]);
+  await nextView(core, () => core.setExpanded(view, "I_acme/api#10", false));
+
+  github.setSearch("label:billing", {
+    matches: ["acme/api#12", "acme/api#13"],
+  });
+  const refreshed = await nextView(
+    core,
+    () => core.refresh(view),
+    (list) => settled(list) && list.matchesShown === 2,
+  );
+
+  expect(outline(refreshed.trees)).toEqual([
+    "acme/api#10 context ▸ (2 inside)",
+  ]);
+  const expanded = await nextView(core, () =>
+    core.setExpanded(view, "I_acme/api#10", true),
+  );
+  // #11 is on a path to a match for the first time.
+  expect(outline(expanded.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 context ▾",
+    "    acme/api#13 match",
+    "  acme/api#12 match",
+    "  other/lib#20 context",
+  ]);
+});
+
+it("shows the matches in the search's order with their parent issues loading, then moves them under their parents", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", {
+    matches: ["acme/api#13", "acme/api#14"],
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "billing", name: "Billing", query: "label:billing" }],
+  });
+  const core = createTestCore(github);
+  github.pause("fetchIssues");
+
+  const searched = await nextView(
+    core,
+    () => core.openView("billing"),
+    (list) => list.loading.status === "current",
+  );
+
+  expect(searched.readingContext).toBe(true);
+  // #14 has no parent issue, as the search says.
+  expect(outline(searched.trees)).toEqual([
+    "(parent loading)",
+    "acme/api#13 match",
+    "acme/api#14 match",
+  ]);
+
+  const placed = nextView(core, () => Promise.resolve(), settled);
+  github.resume();
+  expect(outline((await placed).trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 context ▾",
+    "    acme/api#13 match",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+    "acme/api#14 match",
+  ]);
+  // Matches first, then their ancestors level by level, with the
+  // sub-issues each shows.
+  expect(
+    github.received.filter((read) => read.startsWith("fetchIssues ")),
+  ).toEqual([
+    "fetchIssues acme/api#13 acme/api#14",
+    "fetchIssues acme/api#11",
+    "fetchIssues acme/api#10",
+    "fetchIssues acme/api#12 other/lib#20",
+  ]);
+});
+
+it("puts a placeholder above a match whose parent issue GitHub does not show, and one that could not be loaded until retried", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", { matches: ["acme/api#11"] });
+  github.setSearch("label:pdf", { matches: ["acme/api#13"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [
+      { id: "billing", name: "Billing", query: "label:billing" },
+      { id: "pdf", name: "PDF", query: "label:pdf" },
+    ],
+  });
+  const core = createTestCore(github);
+  github.hide("acme/api#11");
+
+  const hidden = await nextView(core, () => core.openView("pdf"), settled);
+
+  expect(outline(hidden.trees)).toEqual([
+    "(parent unavailable)",
+    "  acme/api#13 match",
+  ]);
+
+  // Once the match is read, reading its parent issue fails.
+  github.reveal("acme/api#11");
+  const failing = core.on("viewChanged", (list) => {
+    if (list.trees[0]?.subIssues.length) {
+      github.failWith({ kind: "gh-failed", message: "no connection" });
+      failing();
+    }
+  });
+  const failed = await nextView(core, () => core.openView("billing"), settled);
+  expect(outline(failed.trees)).toEqual([
+    "(parent unreachable)",
+    "  acme/api#11 match ▸",
+  ]);
+
+  github.failWith(undefined);
+  const retried = await nextView(
+    core,
+    () => core.retry({ kind: "view", viewId: "billing" }),
+    (list) => settled(list) && list.trees[0]?.missingParent === undefined,
+  );
+  expect(outline(retried.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+  ]);
+});
+
+it("updates a refreshed view in place, showing its trees while their issues are read again", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:billing", { matches: ["acme/api#13"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "billing", name: "Billing", query: "label:billing" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "billing" } as const;
+  const before = await nextView(core, () => core.openView("billing"), settled);
+  github.pause("fetchIssues");
+
+  const pushed: ViewList[] = [];
+  const unsubscribe = core.on("viewChanged", (list) => pushed.push(list));
+  const searched = await nextView(
+    core,
+    () => core.refresh(view),
+    (list) => list.loading.status === "current" && list.readingContext,
+  );
+  unsubscribe();
+
+  for (const list of pushed) {
+    expect(outline(list.trees)).toEqual(outline(before.trees));
+  }
+  expect(searched.trees).toEqual(before.trees);
+  const reread = nextView(core, () => Promise.resolve(), settled);
+  github.resume();
+  expect(outline((await reread).trees)).toEqual(outline(before.trees));
+  // Everything it shows is read again, at once.
+  const last = github.received.filter((read) =>
+    read.startsWith("fetchIssues "),
+  );
+  expect(new Set(last.at(-1)?.split(" ").slice(1))).toEqual(
+    new Set([
+      "acme/api#10",
+      "acme/api#11",
+      "acme/api#12",
+      "acme/api#13",
+      "other/lib#20",
+    ]),
+  );
+});
+
+it("reads a collapsed context issue's sub-issues only once it shows, one level ahead", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    { number: 1, title: "Parent", subIssues: ["acme/api#2", "acme/api#3"] },
+    { number: 2, title: "Match" },
+    { number: 3, title: "Context", subIssues: ["acme/api#4"] },
+    { number: 4, title: "Deeper", subIssues: ["acme/api#5"] },
+    { number: 5, title: "Deepest" },
+  ]);
+  github.setSearch("label:x", { matches: ["acme/api#2"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "x", name: "X", query: "label:x" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("x"), settled);
+
+  expect(outline(list.trees)).toEqual([
+    "acme/api#1 context ▾",
+    "  acme/api#2 match",
+    "  acme/api#3 context ▸",
+  ]);
+  const read = github.received.filter((r) => r.startsWith("fetchIssues "));
+  expect(read.join(" ")).toContain("acme/api#4");
+  expect(read.join(" ")).not.toContain("acme/api#5");
+});
+
+it("reads again a match another screen read before its search, before saying its parent issue is not visible", async () => {
+  const clock = createClock();
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("other/lib", [
+    { number: 20, title: "Currency" },
+    { number: 21, title: "Rounding" },
+  ]);
+  github.setSearch("label:rounding", { matches: ["other/lib#21"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "other/lib" }],
+    views: [{ id: "r", name: "Rounding", query: "label:rounding" }],
+  });
+  const core = createTestCore(github, { now: clock.now });
+  // All reads #21 while it has no parent issue.
+  await new Promise<void>((resolve) => {
+    core.on("listChanged", (list) => {
+      if (list.loading.status === "current") resolve();
+    });
+    void core.openList({ kind: "all" });
+  });
+  clock.advance(minute);
+  github.addRepository("other/lib", [
+    { number: 20, title: "Currency", subIssues: ["other/lib#21"] },
+    { number: 21, title: "Rounding" },
+  ]);
+
+  const list = await nextView(core, () => core.openView("r"), settled);
+
+  expect(outline(list.trees)).toEqual([
+    "other/lib#20 context ▾",
+    "  other/lib#21 match",
+  ]);
 });

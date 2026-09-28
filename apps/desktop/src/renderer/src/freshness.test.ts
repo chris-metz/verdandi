@@ -4,6 +4,8 @@ import type {
   IssuePage,
   ListLoading,
   LoadingState,
+  ViewList,
+  ViewTree,
 } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
@@ -12,6 +14,7 @@ import {
   loadingFreshness,
   pageFreshness,
   updatedAgo,
+  viewFreshness,
 } from "./freshness";
 
 /** 14:32 on the machine's clock, wherever it is. */
@@ -379,5 +382,75 @@ describe("the age of data", () => {
 
   it("is just now when the clock went back", () => {
     expect(updatedAgo(now + minute, now)).toBe("Updated just now");
+  });
+});
+
+describe("a view's freshness", () => {
+  function view(
+    loading: LoadingState,
+    readingContext: boolean,
+    trees: ViewTree[] = [],
+  ): ViewList {
+    return {
+      view: { id: "v", name: "V", query: "is:open" },
+      trees,
+      matchesShown: trees.length,
+      readingContext,
+      matchCount: trees.length,
+      pullRequests: 0,
+      rejected: undefined,
+      loading,
+    };
+  }
+  /** A match whose parent issue could not be loaded. */
+  const withFailedParent: ViewTree = {
+    issue: {
+      id: "I_1",
+      repository: { owner: "acme", name: "api" },
+      reference: "#1",
+      title: "One",
+      state: "open",
+      url: "https://github.com/acme/api/issues/1",
+      external: false,
+      labels: [],
+      subIssueProgress: { closed: 0, total: 0 },
+      blockedBy: { open: 0, total: 0 },
+      blocking: { open: 0, total: 0 },
+      incomplete: undefined,
+    },
+    subIssues: [],
+    expanded: false,
+    parent: undefined,
+    missingParent: { status: "failed", problem: cannotReachGitHub },
+  };
+
+  it("says that parent issues and sub-issues load once the search has answered", () => {
+    expect(
+      viewFreshness(view({ status: "current", updatedAt: now }, true), now),
+    ).toEqual({
+      text: "Loading parent issues and sub-issues…",
+      busy: true,
+      retry: false,
+    });
+    expect(viewFreshness(view({ status: "loading" }, false), now)).toEqual({
+      text: "Loading…",
+      busy: true,
+      retry: false,
+    });
+  });
+
+  it("counts the parent issues that could not be loaded, and offers to retry", () => {
+    expect(
+      viewFreshness(
+        view({ status: "current", updatedAt: now - 3 * minute }, false, [
+          withFailedParent,
+        ]),
+        now,
+      ),
+    ).toEqual({
+      text: "Updated 3 min ago · 1 issue could not be loaded",
+      busy: false,
+      retry: true,
+    });
   });
 });

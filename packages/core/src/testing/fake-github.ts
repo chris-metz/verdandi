@@ -1027,6 +1027,12 @@ export function createFakeGitHub({
                   subIssuesSummary,
                   issueDependenciesSummary,
                 } = read(ref.split("#")[0] ?? "", issue);
+                // GitHub points to a parent issue it may not show.
+                const hasParent = [...repositories.values()].some((issues) =>
+                  issues.some((candidate) =>
+                    candidate.subIssues?.includes(ref),
+                  ),
+                );
                 return [
                   {
                     id,
@@ -1037,6 +1043,7 @@ export function createFakeGitHub({
                     url,
                     updatedAt,
                     labels,
+                    hasParent,
                     subIssuesSummary,
                     issueDependenciesSummary,
                   },

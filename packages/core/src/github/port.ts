@@ -295,8 +295,14 @@ export interface SearchPage {
   pullRequests: number;
 }
 
-/** An issue as a search answers it, without the issues it relates to. */
-export type SearchMatch = Omit<Issue, "parent" | "subIssues" | "incomplete">;
+/**
+ * An issue as a search answers it, without the issues it relates to, but
+ * saying whether it has a parent issue: GitHub points to it without naming
+ * its node ID.
+ */
+export type SearchMatch = Omit<Issue, "parent" | "subIssues" | "incomplete"> & {
+  hasParent: boolean;
+};
 
 export interface IssuePage {
   issues: Issue[];

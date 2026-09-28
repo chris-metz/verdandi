@@ -4,7 +4,9 @@ import type {
   Label,
   ParentIssue,
   SubIssueProgress,
+  UnreadIssue,
 } from "@verdandi/core/contract";
+import { LoaderCircle, Lock } from "lucide-react";
 import { memo } from "react";
 import { cn } from "@/lib/utils";
 import type { IssueDestination } from "./issue-navigation";
@@ -53,6 +55,10 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  * "Blocks" columns. An issue that has not been read shows as its parent issue
  * names it, with why, and Retry and Open on GitHub once it failed; its
  * columns stay empty, as nothing is known of them.
+ *
+ * In a view, only context issues are dimmed, as whole rows, counts
+ * included; a closed match is not, and only its state icon says closed. A
+ * collapsed issue with matches below it says how many.
  */
 export const IssueRow = memo(function IssueRow({
   row,
@@ -76,10 +82,15 @@ export const IssueRow = memo(function IssueRow({
   /** Reads what failed on screen again. */
   onRetry: () => void;
 }) {
-  const { node, depth, parent } = row;
-  const { issue } = node;
+  const { node, depth, parent, missingParent } = row;
+  const { issue, view } = node;
   const hasSubIssues = node.subIssues.length > 0;
   const read = node.unread ? undefined : node.issue;
+  // In a view, dimming means only "context"; elsewhere it means closed.
+  const context = view !== undefined && !view.match;
+  const closedDimmed = view === undefined && issue.state === "closed";
+  const inside =
+    hasSubIssues && !node.expanded ? (view?.matchesInside ?? 0) : 0;
   return (
     <div
       role="treeitem"
@@ -87,6 +98,7 @@ export const IssueRow = memo(function IssueRow({
       aria-selected={selected}
       aria-expanded={hasSubIssues ? node.expanded : undefined}
       data-issue-id={issue.id}
+      title={view && viewRoleTitle(view.match)}
       onClick={() => {
         onSelect(issue.id);
         onOpen(issue);
@@ -126,7 +138,7 @@ export const IssueRow = memo(function IssueRow({
       <span
         className={cn(
           "flex min-w-0 items-center gap-1.5",
-          (issue.state === "closed" || !read) && "opacity-55",
+          (closedDimmed || context || !read) && "opacity-55",
         )}
       >
         <IssueStateIcon state={issue.state} />
@@ -155,6 +167,18 @@ export const IssueRow = memo(function IssueRow({
           onRetry={onRetry}
         />
       )}
+      {missingParent?.status === "loading" && <LoadingParentChip />}
+      {inside > 0 && (
+        <span
+          title={`${countMatches(inside)} below this issue`}
+          className={cn(
+            "shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground",
+            context && "opacity-55",
+          )}
+        >
+          {countMatches(inside)} inside
+        </span>
+      )}
       {parent && (
         <ParentChip
           parent={parent}
@@ -169,20 +193,83 @@ export const IssueRow = memo(function IssueRow({
         className={cn(
           "flex items-center gap-1.5",
           columnClasses.progress,
-          issue.state === "closed" && "opacity-55",
+          (closedDimmed || context) && "opacity-55",
         )}
       >
         {read && <Progress progress={read.subIssueProgress} />}
       </span>
-      <span className={cn("flex", columnClasses.blockedBy)}>
+      <span
+        className={cn("flex", columnClasses.blockedBy, context && "opacity-55")}
+      >
         {read && <Relationship issue={read} kind="blockedBy" />}
       </span>
-      <span className={cn("flex", columnClasses.blocking)}>
+      <span
+        className={cn("flex", columnClasses.blocking, context && "opacity-55")}
+      >
         {read && <Relationship issue={read} kind="blocking" />}
       </span>
     </div>
   );
 });
+
+/** What a view's row is, in its tooltip. */
+function viewRoleTitle(match: boolean): string {
+  return match
+    ? "Match: the search returned this issue"
+    : "Context issue: shown for its place in the tree; the search did not return it";
+}
+
+/** "1 match", "3 matches". */
+function countMatches(count: number): string {
+  return `${String(count)} ${count === 1 ? "match" : "matches"}`;
+}
+
+/** The chip of a match whose parent issue is still loading, in a view. */
+function LoadingParentChip() {
+  return (
+    <span
+      title="Loading the parent issue"
+      className="flex shrink-0 items-center gap-1 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground"
+    >
+      <LoaderCircle aria-hidden className="size-3 animate-spin" />
+      parent issue
+    </span>
+  );
+}
+
+/**
+ * The row above a view's tree whose parent issue does not show: GitHub
+ * does not show it to this account, or it could not be loaded, with Retry.
+ * It is no issue, so the selection passes it by.
+ */
+export function MissingParentRow({
+  missingParent,
+  onRetry,
+}: {
+  missingParent: Extract<UnreadIssue, { status: "failed" }>;
+  onRetry: () => void;
+}) {
+  const notVisible = missingParent.problem.kind === "unavailable";
+  return (
+    <div
+      role="note"
+      className="flex h-8 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap text-muted-foreground select-none"
+    >
+      <span aria-hidden className="size-[18px] shrink-0" />
+      {notVisible ? (
+        <Lock aria-hidden className="size-3.5 shrink-0" />
+      ) : (
+        <WarningIcon title={problemText(missingParent.problem).text} />
+      )}
+      <span className={cn("min-w-0 truncate", !notVisible && "text-warning")}>
+        {notVisible
+          ? "Parent issue not visible to you"
+          : "Parent issue could not be loaded ·"}
+      </span>
+      {!notVisible && <RowAction label="Retry" onClick={onRetry} />}
+    </div>
+  );
+}
 
 /**
  * Why a row shows an issue only as its parent issue names it: loading, or

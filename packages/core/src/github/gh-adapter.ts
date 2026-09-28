@@ -1397,6 +1397,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     labels,
     sub_issues_summary,
     issue_dependencies_summary,
+    parent_issue_url,
   } = item;
   const repository =
     typeof repository_url === "string"
@@ -1434,6 +1435,8 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     url: html_url,
     updatedAt: updated_at,
     labels: labelList as Label[],
+    // GitHub leaves the pointer out of an issue without a parent issue.
+    hasParent: typeof parent_issue_url === "string",
     // GitHub leaves out summaries it has not computed, e.g. for old issues.
     subIssuesSummary: subIssues ?? { total: 0, completed: 0 },
     issueDependenciesSummary: {

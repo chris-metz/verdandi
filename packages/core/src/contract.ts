@@ -308,6 +308,9 @@ export type OpenIssueCount =
 export type Scope =
   { kind: "all" } | { kind: "repository"; repository: RepositoryAddress };
 
+/** A list whose issues expand and collapse: a scope's, or a view's. */
+export type ExpandableList = Scope | { kind: "view"; viewId: string };
+
 /** The selected sidebar entry, with the current view text when it is a view. */
 export type SidebarSelection = Scope | { kind: "view"; view: SavedView };
 
@@ -388,9 +391,14 @@ export interface ReadIssueNode {
   issue: IssueSummary;
   /** Its sub-issues in GitHub's order, read or not. */
   subIssues: IssueNode[];
-  /** Whether its sub-issues show: initially expanded in lists, collapsed on pages. */
+  /**
+   * Whether its sub-issues show: initially expanded in lists, collapsed on
+   * pages, and in a view on a path to a match.
+   */
   expanded: boolean;
   unread?: undefined;
+  /** How a view shows it; none outside views. */
+  view?: ViewMark;
 }
 
 /**
@@ -402,6 +410,22 @@ export interface UnreadIssueNode {
   subIssues: [];
   expanded: false;
   unread: UnreadIssue;
+  /** How a view shows it; none outside views. */
+  view?: ViewMark;
+}
+
+/**
+ * How a view shows an issue in its tree: as a match, which its search
+ * returned, or as a context issue, which shows only as an ancestor or
+ * sub-issue of a match. Context issues are dimmed; closed matches are not.
+ */
+export interface ViewMark {
+  match: boolean;
+  /**
+   * How many matches lie below it, at any depth, collapsed away or not. An
+   * issue with matches below it is on a path to a match.
+   */
+  matchesInside: number;
 }
 
 /** Why an issue a relationship names shows only as the relationship names it. */
@@ -435,6 +459,21 @@ export type IssueTree = IssueNode & {
    * (yet).
    */
   parent: ParentIssue | undefined;
+};
+
+/**
+ * A tree at the top level of a view: the top-level issue above one or more
+ * matches, as far as their ancestry has loaded. `parent` is none.
+ */
+export type ViewTree = IssueTree & {
+  /**
+   * The parent issue above the tree that the view cannot show yet or at
+   * all: loading, until the matches' parent issues have loaded; or failed,
+   * as unavailable when GitHub does not show it to this account (its
+   * search named a parent that reading the match left out), or with why it
+   * could not be loaded. None once the tree reaches its top-level issue.
+   */
+  missingParent: UnreadIssue | undefined;
 };
 
 /**
@@ -547,13 +586,31 @@ export interface IssueList {
 
 /**
  * A view's screen: the issues its search matches, from any repository,
- * tracked or not, in GitHub's order, as far as its search has run. For now
- * each match shows on its own, without its parent issue or sub-issues.
+ * tracked or not, each under its whole ancestry up to its top-level issue,
+ * as far as its search has run and their parent issues and sub-issues have
+ * loaded. An ancestor on a path to a match shows all its sub-issues in
+ * GitHub's order; those that do not match are context issues, and so are
+ * the sub-issues of a match. Each issue appears once, a matching sub-issue
+ * of a match below it. The trees are in the order of the search's rank of
+ * the first match anywhere inside each. Until their parent issues have
+ * loaded, the matches show on their own, in the search's order.
+ *
+ * A path to a match expands the first time it shows; a match without a
+ * matching sub-issue starts collapsed. Once expanded or collapsed, by the
+ * view or the user, an issue stays so for the session, as its search runs
+ * again.
  */
 export interface ViewList {
   /** The view, as the settings file names it now. */
   view: SavedView;
-  trees: IssueTree[];
+  trees: ViewTree[];
+  /** How many matches the trees show, each once. */
+  matchesShown: number;
+  /**
+   * Whether the matches' parent issues and sub-issues are being read, once
+   * the search has answered.
+   */
+  readingContext: boolean;
   /**
    * How many issues and pull requests GitHub counts as matches, once the
    * search has run; pull requests are not listed.
@@ -1036,19 +1093,19 @@ export interface CoreRequests {
    */
   openList: (scope: Scope) => Promise<void>;
   /**
-   * Expands or collapses one issue's sub-issues in an opened scope's list,
-   * then pushes the list. Each list keeps its expansion for the session.
+   * Expands or collapses one issue's sub-issues in an opened scope's list or
+   * view, then pushes it. Each keeps its expansion for the session.
    */
   setExpanded: (
-    scope: Scope,
+    list: ExpandableList,
     issueId: string,
     expanded: boolean,
   ) => Promise<void>;
   /**
-   * Expands or collapses every tree of an opened scope's list, including
-   * issues that load later, then pushes the list.
+   * Expands or collapses every tree of an opened scope's list or view,
+   * including issues that load later, then pushes it.
    */
-  setAllExpanded: (scope: Scope, expanded: boolean) => Promise<void>;
+  setAllExpanded: (list: ExpandableList, expanded: boolean) => Promise<void>;
   /**
    * Reads everything on screen again now, however recently it was read: the
    * sidebar's counts, and the screen the main area shows, if any, pushing
