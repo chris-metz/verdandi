@@ -44,6 +44,7 @@ export function Sidebar({
   onTrackNewRepository,
   onNewView,
   onEditView,
+  onDuplicateView,
   onRemoveView,
   settingsError,
   focused,
@@ -73,6 +74,8 @@ export function Sidebar({
   onNewView: () => void;
   /** Opens the view dialog for a view. */
   onEditView: (view: SavedView) => void;
+  /** Opens the view dialog for a new view that duplicates a view. */
+  onDuplicateView: (view: SavedView) => void;
   /** Asks to remove a view. */
   onRemoveView: (view: SavedView) => void;
   settingsError: string | undefined;
@@ -184,6 +187,13 @@ export function Sidebar({
           label: "Edit view…",
           onClick: () => {
             onEditView(scope.view);
+          },
+        },
+        {
+          label: "Duplicate view…",
+          disabled: !writable,
+          onClick: () => {
+            onDuplicateView(scope.view);
           },
         },
         {

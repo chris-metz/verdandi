@@ -567,7 +567,7 @@ export function createCore({
           ? { status: "rejected", message: error.message }
           : { status: "unchecked", problem: problemOf(error) };
       }
-      const result = await settings.saveView(view);
+      const result = await settings.saveView(view, draft.after);
       if (!result.ok) return { status: "failed", message: result.message };
       if (checked?.result.ok) {
         views.take(view, checked.result.value, checked.readAt);

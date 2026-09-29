@@ -304,6 +304,43 @@ it("saves a new name alone without searching, keeping the view's ID and place", 
   });
 });
 
+it("saves a new view right after the one it names, or at the end once that one is gone", async () => {
+  const github = githubWithIssues();
+  github.setSearch("label:bug is:closed", { matches: [] });
+  github.setSearch("label:bug no:assignee", { matches: [] });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [
+      { id: "bugs", name: "Bugs", query: "label:bug" },
+      { id: "mine", name: "Mine", query: "assignee:@me" },
+    ],
+  });
+  const core = createTestCore(github);
+
+  const copy = await core.saveView({
+    name: "Bugs copy",
+    query: "label:bug is:closed",
+    after: "bugs",
+  });
+  const orphan = await core.saveView({
+    name: "Unassigned bugs",
+    query: "label:bug no:assignee",
+    after: "gone",
+  });
+
+  expect(copy).toMatchObject({ status: "saved" });
+  expect(orphan).toMatchObject({ status: "saved" });
+  expect(await readSettings()).toMatchObject({
+    views: [
+      { name: "Bugs" },
+      { name: "Bugs copy" },
+      { name: "Mine" },
+      { name: "Unassigned bugs" },
+    ],
+  });
+});
+
 it("runs a changed search before saving it, keeping the view's ID, and opens with its matches", async () => {
   const github = githubWithIssues();
   github.setSearch("label:bug", { matches: ["acme/api#3"] });

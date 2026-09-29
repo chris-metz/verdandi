@@ -15,7 +15,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { ShortcutModifier } from "./pane-navigation";
 import { problemText } from "./problem-text";
-import { applyExample, scopeLine, viewExamples } from "./view-dialog";
+import {
+  applyExample,
+  dialogStart,
+  scopeLine,
+  viewExamples,
+  type ViewDialogPurpose,
+} from "./view-dialog";
 
 /** Why the dialog could not save, as Save last found. */
 type Outcome =
@@ -27,14 +33,15 @@ const field =
   "h-8 rounded-md border bg-background px-2.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /**
- * The dialog that creates a view, or edits one: its name and GitHub search,
+ * The dialog that creates a view, edits one or duplicates one: its name and
+ * GitHub search,
  * a line saying what the search covers, and examples. Save runs the search
  * once and saves only what GitHub accepts; when it cannot be run, the view
  * can be saved anyway. ↵ in the search field or ⌘/Ctrl+↵ saves, Esc
  * cancels.
  */
 export function ViewDialog({
-  view,
+  purpose,
   tracked,
   removable,
   modifier,
@@ -42,8 +49,8 @@ export function ViewDialog({
   onRemove,
   onClose,
 }: {
-  /** The view to edit, or none for a new one. */
-  view: SavedView | undefined;
+  /** A new view, the view to edit, or the view to duplicate. */
+  purpose: ViewDialogPurpose;
   /** The tracked repositories, which the examples name. */
   tracked: readonly RepositoryAddress[];
   /** Whether the view can be removed, which it cannot while settings are read-only. */
@@ -54,8 +61,9 @@ export function ViewDialog({
   onRemove: () => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState(view?.name ?? "");
-  const [query, setQuery] = useState(view?.query ?? "");
+  const [start] = useState(() => dialogStart(purpose));
+  const [name, setName] = useState(start.name);
+  const [query, setQuery] = useState(start.query);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
   const nameField = useRef<HTMLInputElement>(null);
@@ -69,7 +77,7 @@ export function ViewDialog({
     setOutcome(undefined);
     try {
       const result = await window.verdandi.saveView(
-        { ...(view ? { id: view.id } : {}), name, query },
+        { ...start.draft, name, query },
         { force },
       );
       switch (result.status) {
@@ -119,12 +127,18 @@ export function ViewDialog({
     >
       <DialogContent
         showCloseButton={false}
-        initialFocus={view ? searchField : nameField}
+        initialFocus={() => {
+          if (start.focus === "search") return searchField.current;
+          // A duplicate's name is there to be typed over.
+          nameField.current?.focus();
+          nameField.current?.select();
+          return false;
+        }}
         onKeyDown={onKeyDown}
         className="flex max-h-[calc(100%-3rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
         <div className="flex items-center justify-between px-4 pt-4 pb-2">
-          <DialogTitle>{view ? "Edit view" : "New view"}</DialogTitle>
+          <DialogTitle>{start.title}</DialogTitle>
           <kbd className="rounded border border-b-2 px-1 font-mono text-[11px] text-muted-foreground">
             Esc
           </kbd>
@@ -222,7 +236,7 @@ export function ViewDialog({
           </ul>
         </div>
         <DialogFooter className="m-0 items-center">
-          {view && (
+          {purpose.kind === "edit" && (
             <Button
               variant="destructive"
               disabled={busy || !removable}

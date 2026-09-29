@@ -304,13 +304,17 @@ export function createSettingsFile(
         );
       });
     },
-    saveView(view) {
+    saveView(view, after) {
       return change((document) => {
         const entry = document.views.find(({ id }) => id === view.id);
         if (entry) {
           entry.name = view.name;
           entry.query = view.query;
-        } else document.views.push({ ...view });
+          return;
+        }
+        const index = document.views.findIndex(({ id }) => id === after);
+        if (index < 0) document.views.push({ ...view });
+        else document.views.splice(index + 1, 0, { ...view });
       });
     },
     removeView(id) {

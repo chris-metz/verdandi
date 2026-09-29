@@ -57,10 +57,10 @@ export interface SettingsStorage {
   ): Promise<SettingsChangeResult>;
   /**
    * Saves a view: the one with its ID takes its name and search where it is;
-   * any other goes to the end of the section. Creates the file if there is
-   * none.
+   * any other goes right after the view with the ID `after`, or to the end
+   * of the section when there is none. Creates the file if there is none.
    */
-  saveView(view: SavedView): Promise<SettingsChangeResult>;
+  saveView(view: SavedView, after?: string): Promise<SettingsChangeResult>;
   /** Removes the view with this ID; repositories are kept verbatim. */
   removeView(id: string): Promise<SettingsChangeResult>;
   /** Creates the file empty if there is none; an existing one stays as it is. */

@@ -269,12 +269,17 @@ export interface ViewDraft {
   id?: string;
   name: string;
   query: string;
+  /**
+   * The view a new view goes right after, such as the one it duplicates;
+   * without it, or once that view is gone, it goes to the end.
+   */
+  after?: string;
 }
 
 /**
  * What became of saving a view. Nothing is saved unless it says `saved`.
  *
- * - `saved`: it is saved, a new one at the end of the Views section, as its
+ * - `saved`: it is saved, a new one where its draft's `after` says, as its
  *   search ran, or without running it when only its name changed or it was
  *   saved anyway.
  * - `rejected`: GitHub rejected the search, saying why.

@@ -1,5 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { applyExample, scopeLine, viewExamples } from "./view-dialog";
+import {
+  applyExample,
+  dialogStart,
+  scopeLine,
+  viewExamples,
+} from "./view-dialog";
+
+describe("start", () => {
+  const bugs = { id: "bugs", name: "Bugs", query: "is:open label:bug" };
+
+  it("is empty for a new view, starting at its name", () => {
+    expect(dialogStart({ kind: "new" })).toEqual({
+      title: "New view",
+      name: "",
+      query: "",
+      focus: "name",
+      draft: {},
+    });
+  });
+
+  it("is the view to edit, starting at its search and keeping its ID", () => {
+    expect(dialogStart({ kind: "edit", view: bugs })).toEqual({
+      title: "Edit view",
+      name: "Bugs",
+      query: "is:open label:bug",
+      focus: "search",
+      draft: { id: "bugs" },
+    });
+  });
+
+  it("is a new view named after the one it duplicates, with its search, going right after it", () => {
+    expect(dialogStart({ kind: "duplicate", view: bugs })).toEqual({
+      title: "Duplicate view",
+      name: "Bugs copy",
+      query: "is:open label:bug",
+      focus: "name",
+      draft: { after: "bugs" },
+    });
+  });
+});
 
 describe("examples", () => {
   it("offer the searches the dialog suggests, with the tracked repositories' names", () => {

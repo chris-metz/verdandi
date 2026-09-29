@@ -383,7 +383,16 @@ describe("views", () => {
       kind: "new-view",
     });
     expect(onView(key("v", { metaKey: true }))).toBeUndefined();
-    expect(onView(key("V", { shiftKey: true }))).toBeUndefined();
+  });
+
+  it("duplicates the selected view with V, whichever pane has the keyboard", () => {
+    const duplicate = { kind: "duplicate-view", view: bugs.view };
+    expect(onView(key("V", { shiftKey: true }))).toEqual(duplicate);
+    expect(onView(key("V", { shiftKey: true }), "main")).toEqual(duplicate);
+    expect(
+      onView(key("V", { shiftKey: true }), "main", repository("api")),
+    ).toBeUndefined();
+    expect(onView(key("V", { shiftKey: true, metaKey: true }))).toBeUndefined();
   });
 
   it("edits the selected view with E, whichever pane has the keyboard", () => {

@@ -31,6 +31,7 @@ import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder, followSelection } from "./sidebar-entries";
 import { ViewDialog } from "./ViewDialog";
+import type { ViewDialogPurpose } from "./view-dialog";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
 const modifier = shortcutModifier(window.desktop.platform);
@@ -82,10 +83,8 @@ export function App() {
    * to follow a selection that does not know its repository's ID.
    */
   const renamed = useRef(new Map<string, RepositoryAddress>());
-  /** The view dialog, open for a view or, without one, for a new view. */
-  const [viewDialog, setViewDialog] = useState<{
-    view: SavedView | undefined;
-  }>();
+  /** The view dialog, open for a new view, or to edit or duplicate a view. */
+  const [viewDialog, setViewDialog] = useState<ViewDialogPurpose>();
   const dialogOpen =
     picking || removing !== undefined || viewDialog !== undefined;
   const login =
@@ -172,12 +171,20 @@ export function App() {
       sidebar?.status === "read"
         ? sidebar.views.find((entry) => entry.view.id === view.id)?.view
         : undefined;
-    if (current) openViewDialog(current);
+    if (current) openViewDialog({ kind: "edit", view: current });
   }
 
   /** Opens the view dialog, unless the setup blocker is up. */
-  function openViewDialog(view: SavedView | undefined) {
-    if (!blocked && sidebar?.status === "read") setViewDialog({ view });
+  function openViewDialog(purpose: ViewDialogPurpose) {
+    if (!blocked && sidebar?.status === "read") setViewDialog(purpose);
+  }
+
+  function editView(view: SavedView) {
+    openViewDialog({ kind: "edit", view });
+  }
+
+  function duplicateView(view: SavedView) {
+    openViewDialog({ kind: "duplicate", view });
   }
 
   /** Closes the view dialog, giving the pane that had the keyboard it again. */
@@ -360,10 +367,13 @@ export function App() {
           confirmRepositoryRemoval(command.repository);
           break;
         case "new-view":
-          openViewDialog(undefined);
+          openViewDialog({ kind: "new" });
           break;
         case "edit-view":
-          openViewDialog(command.view);
+          editView(command.view);
+          break;
+        case "duplicate-view":
+          duplicateView(command.view);
           break;
         case "remove-view":
           confirmViewRemoval(command.view);
@@ -403,9 +413,10 @@ export function App() {
               void trackNewRepository(repository);
             }}
             onNewView={() => {
-              openViewDialog(undefined);
+              openViewDialog({ kind: "new" });
             }}
-            onEditView={openViewDialog}
+            onEditView={editView}
+            onDuplicateView={duplicateView}
             onRemoveView={confirmViewRemoval}
             settingsError={settingsError}
             focused={focused === "sidebar"}
@@ -449,7 +460,7 @@ export function App() {
                 void trackNewRepository(repository);
               }}
               onEditView={() => {
-                if (selected.kind === "view") openViewDialog(selected.view);
+                if (selected.kind === "view") editView(selected.view);
               }}
               stack={stack}
               login={login}
@@ -504,7 +515,7 @@ export function App() {
       )}
       {viewDialog && (
         <ViewDialog
-          view={viewDialog.view}
+          purpose={viewDialog}
           tracked={
             sidebar?.status === "read"
               ? sidebar.repositories.map(({ repository }) => repository)
@@ -516,9 +527,8 @@ export function App() {
           modifier={modifier}
           onSaved={showSaved}
           onRemove={() => {
-            const { view } = viewDialog;
             setViewDialog(undefined);
-            if (view) confirmViewRemoval(view);
+            if (viewDialog.kind === "edit") confirmViewRemoval(viewDialog.view);
           }}
           onClose={closeViewDialog}
         />

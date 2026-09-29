@@ -1,9 +1,63 @@
-import type { RepositoryAddress } from "@verdandi/core/contract";
+import type {
+  RepositoryAddress,
+  SavedView,
+  ViewDraft,
+} from "@verdandi/core/contract";
 import {
   describeViewScope,
   type ViewScopeTarget,
 } from "@verdandi/core/view-scope";
 import { repositoryLabel } from "./scope";
+
+/** What the view dialog is open for. */
+export type ViewDialogPurpose =
+  | { kind: "new" }
+  | { kind: "edit"; view: SavedView }
+  | { kind: "duplicate"; view: SavedView };
+
+/**
+ * How the view dialog opens: its title, its fields and the field with the
+ * keyboard, and what Save saves besides them. A duplicate starts as a new
+ * view named after its view, with its search, and goes right after it.
+ */
+export function dialogStart(purpose: ViewDialogPurpose): {
+  title: string;
+  name: string;
+  query: string;
+  focus: "name" | "search";
+  draft: Pick<ViewDraft, "id" | "after">;
+} {
+  switch (purpose.kind) {
+    case "new":
+      return {
+        title: "New view",
+        name: "",
+        query: "",
+        focus: "name",
+        draft: {},
+      };
+    case "edit": {
+      const { view } = purpose;
+      return {
+        title: "Edit view",
+        name: view.name,
+        query: view.query,
+        focus: "search",
+        draft: { id: view.id },
+      };
+    }
+    case "duplicate": {
+      const { view } = purpose;
+      return {
+        title: "Duplicate view",
+        name: `${view.name} copy`,
+        query: view.query,
+        focus: "name",
+        draft: { after: view.id },
+      };
+    }
+  }
+}
 
 /** A search the view dialog suggests, with a name for the view and what it finds. */
 export interface ViewExample {
