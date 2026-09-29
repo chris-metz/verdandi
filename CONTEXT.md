@@ -20,14 +20,6 @@ _Avoid_: foreign issue, remote issue
 A named, saved GitHub issue search whose scope is defined by its search text, independently of tracked repositories.
 _Avoid_: dashboard, workspace, smart folder
 
-**Match**:
-An issue returned by a view's search.
-_Avoid_: hit, result
-
-**Context issue**:
-An issue shown in a view's tree only as an ancestor or sub-issue of a match, not because the search returned it. It is known not to match only when the view's search results are complete; otherwise its match status is unknown.
-_Avoid_: nonmatch, filler issue
-
 ### Issues
 
 **Author**:
@@ -63,9 +55,25 @@ The sidebar entry that shows every tracked repository at once, as one list. It i
 _Avoid_: everything, overview, home, inbox
 
 **Scope**:
-The issues a sidebar entry stands for: a tracked repository's open issues, the open issues of every tracked repository for All, or a view's matches.
+The issues a sidebar entry stands for: a tracked repository's issues in the chosen state, the issues in the chosen state of every tracked repository for All, or the issues a view's search returns.
 _Avoid_: filter, source
 
+**State**:
+Whether an issue is open or closed. A tracked repository and All show one state at a time, open unless the user switches to closed; a view's state comes from its search text.
+_Avoid_: status
+
+**Label filter**:
+The labels the user has picked from a list to narrow it to issues that carry all of them. Each sidebar entry has its own, and it lasts until the user removes it or quits.
+_Avoid_: tag, label search
+
+**Match**:
+An issue in a sidebar entry's scope that carries every label of its label filter; without a label filter, every issue in the scope. For a view, that means an issue its search returned.
+_Avoid_: hit, result
+
+**Context issue**:
+An issue shown in a list only as an ancestor or sub-issue of a match, not a match itself. In a view it is known not to match only when the view's search results are complete; otherwise its match status is unknown.
+_Avoid_: nonmatch, filler issue
+
 **List**:
-What the main area shows for a sidebar entry: the issues of its scope, each under its parent issue, together with the parent issues and sub-issues needed to place them.
+What the main area shows for a sidebar entry: its matches, each under its parent issue, together with the context issues needed to place them.
 _Avoid_: tree view, feed, board
