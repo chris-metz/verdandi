@@ -115,8 +115,18 @@ export async function layoutBlockingMap(
     const by = to.y + to.height / 2;
     const mid = (ax + bx) / 2;
     const top = 44;
+    // A long arrow takes the lane above the columns only when a card stands
+    // between its ends; past empty columns, such as on the way to an edge
+    // card while the map loads, it runs straight.
+    const inTheWay = cards.some(
+      (card) =>
+        card.step > Math.min(from.step, to.step) &&
+        card.step < Math.max(from.step, to.step) &&
+        card.y < Math.max(ay, by) &&
+        card.y + card.height > Math.min(ay, by),
+    );
     const path = (
-      edge.cycle || Math.abs(from.step - to.step) > 1
+      edge.cycle || inTheWay
         ? [
             "M",
             ax,
