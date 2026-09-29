@@ -78,11 +78,18 @@ const bodyUnavailable: GitHubError = {
 const referenceFields = "id number title state repository { nameWithOwner }";
 
 /**
+ * The size, in pixels, of the avatars a list shows, twice what a row draws
+ * for sharp high-density screens; GitHub's links serve them far larger.
+ */
+const listAvatarSize = 40;
+
+/**
  * What Verdandi reads of an issue for a list. A parent has at most 100
  * sub-issues, and an issue at most 100 labels, so one page of each is all.
  */
 const issueFields = `
   id number title state url updatedAt
+  author { login avatarUrl }
   repository { nameWithOwner }
   labels(first: 100) { nodes { name color } }
   parent { ${referenceFields} }
@@ -308,7 +315,6 @@ export function createGhAdapter({
         `node(id: $id) { ... on Issue {
           ${issueFields}
           stateReason createdAt
-          author { login avatarUrl }
           assignees(first: 100) { nodes { login avatarUrl } }
           milestone { title }
           comments { totalCount }
@@ -1018,7 +1024,7 @@ function readIssue(
 ): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
-  const { url, updatedAt, labels, parent, subIssues } = node;
+  const { url, updatedAt, author, labels, parent, subIssues } = node;
   const subIssuesSummary = readCounts(node.subIssuesSummary, [
     "total",
     "completed",
@@ -1033,9 +1039,11 @@ function readIssue(
   const labelList = readNodes(labels, readLabel, partial);
   const subIssueList = readNodes(subIssues, readReference, partial);
   const parentReference = parent === null ? null : readReference(parent);
+  const readAuthor = author === null ? null : readActor(author, listAvatarSize);
   if (
     typeof url !== "string" ||
     typeof updatedAt !== "string" ||
+    readAuthor === undefined ||
     !subIssuesSummary ||
     !issueDependenciesSummary ||
     !labelList ||
@@ -1047,6 +1055,7 @@ function readIssue(
   return {
     ...reference,
     url,
+    author: readAuthor ?? undefined,
     updatedAt,
     labels: labelList,
     parent: parentReference ?? undefined,
@@ -1448,6 +1457,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     state,
     html_url,
     repository_url,
+    user,
     updated_at,
     labels,
     sub_issues_summary,
@@ -1468,6 +1478,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     "total_blocking",
   ]);
   const labelList = Array.isArray(labels) ? labels.map(readLabel) : undefined;
+  const author = user === null ? null : readRestActor(user, listAvatarSize);
   if (
     typeof node_id !== "string" ||
     typeof number !== "number" ||
@@ -1475,6 +1486,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     (state !== "open" && state !== "closed") ||
     typeof html_url !== "string" ||
     typeof updated_at !== "string" ||
+    author === undefined ||
     !repository ||
     !labelList ||
     labelList.some((label) => label === undefined)
@@ -1488,6 +1500,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     title,
     state,
     url: html_url,
+    author: author ?? undefined,
     updatedAt: updated_at,
     labels: labelList as Label[],
     // GitHub leaves the pointer out of an issue without a parent issue.
@@ -1550,14 +1563,32 @@ function readComment(node: unknown): IssueComment | undefined {
   return { id, author: readAuthor ?? undefined, createdAt, url, bodyHTML };
 }
 
-function readActor(node: unknown): IssueActor | undefined {
+/**
+ * Reads an account as REST answers it, or `undefined` if it is not one, with
+ * its avatar at `size` pixels if given.
+ */
+function readRestActor(node: unknown, size?: number): IssueActor | undefined {
+  if (!isObject(node)) return undefined;
+  return readActor({ login: node.login, avatarUrl: node.avatar_url }, size);
+}
+
+/**
+ * Reads an account, or `undefined` if it is not one, with its avatar at
+ * `size` pixels if given. GitHub's avatar service takes the size in the
+ * link; GraphQL's own size argument would conflict with the full-size
+ * avatar a page reads of the same issue in the same query.
+ */
+function readActor(node: unknown, size?: number): IssueActor | undefined {
   if (
     !isObject(node) ||
     typeof node.login !== "string" ||
-    typeof node.avatarUrl !== "string"
+    typeof node.avatarUrl !== "string" ||
+    !URL.canParse(node.avatarUrl)
   )
     return undefined;
-  return { login: node.login, avatarUrl: node.avatarUrl };
+  const avatarUrl = new URL(node.avatarUrl);
+  if (size !== undefined) avatarUrl.searchParams.set("s", String(size));
+  return { login: node.login, avatarUrl: avatarUrl.href };
 }
 
 /**
@@ -1569,8 +1600,7 @@ function readMetadata(
   partial: boolean,
 ): IssueMetadata | undefined {
   if (!isObject(node)) return undefined;
-  const { stateReason, createdAt, author, milestone, comments, bodyHTML } =
-    node;
+  const { stateReason, createdAt, milestone, comments, bodyHTML } = node;
   const reasons = {
     COMPLETED: "completed",
     NOT_PLANNED: "not-planned",
@@ -1583,7 +1613,6 @@ function readMetadata(
   )
     return undefined;
   const assignees = readNodes(node.assignees, readActor, partial);
-  const readAuthor = author === null ? null : readActor(author);
   const milestoneTitle =
     milestone === null
       ? null
@@ -1593,7 +1622,6 @@ function readMetadata(
   if (
     typeof createdAt !== "string" ||
     !assignees ||
-    readAuthor === undefined ||
     (milestoneTitle !== null && typeof milestoneTitle !== "string") ||
     !isObject(comments) ||
     typeof comments.totalCount !== "number" ||
@@ -1606,7 +1634,6 @@ function readMetadata(
         ? undefined
         : reasons[stateReason as keyof typeof reasons],
     createdAt,
-    author: readAuthor ?? undefined,
     assignees,
     milestone: milestoneTitle ?? undefined,
     commentCount: comments.totalCount,

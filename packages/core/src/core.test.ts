@@ -3225,7 +3225,7 @@ describe("sub-issue forest", () => {
     ]);
   });
 
-  it("shows each issue's labels, sub-issue progress and blocking counts", async () => {
+  it("shows each issue's author, labels, sub-issue progress and blocking counts", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
       {
@@ -3241,6 +3241,7 @@ describe("sub-issue forest", () => {
       {
         number: 1,
         title: "Launch billing",
+        author: "octo-dev",
         labels: [{ name: "roadmap", color: "3e4b9e" }],
         subIssues: ["acme/api#2", "acme/api#3"],
         blockedBy: { open: 1, total: 3 },
@@ -3257,6 +3258,10 @@ describe("sub-issue forest", () => {
       title: "Launch billing",
       state: "open",
       url: "https://github.com/acme/api/issues/1",
+      author: {
+        login: "octo-dev",
+        avatarUrl: "https://avatars.githubusercontent.com/octo-dev",
+      },
       labels: [{ name: "roadmap", color: "3e4b9e" }],
       external: false,
       subIssueProgress: { closed: 1, total: 2 },
@@ -4351,10 +4356,6 @@ describe("issue pages", () => {
     const metadata = {
       stateReason: "not-planned" as const,
       createdAt: "2026-08-01T12:00:00Z",
-      author: {
-        login: "octo-author",
-        avatarUrl: "https://avatars.githubusercontent.com/u/1",
-      },
       assignees: [
         {
           login: "octo-dev",
@@ -4373,6 +4374,7 @@ describe("issue pages", () => {
         number: 1,
         title: "Done",
         state: "closed",
+        author: "octo-author",
         labels,
         metadata,
         blockedBy: { open: 2, total: 3 },
@@ -4385,6 +4387,10 @@ describe("issue pages", () => {
 
     expect(page.issue).toMatchObject({
       ...metadata,
+      author: {
+        login: "octo-author",
+        avatarUrl: "https://avatars.githubusercontent.com/octo-author",
+      },
       state: "closed",
       labels,
       blockedBy: { open: 2, total: 3 },

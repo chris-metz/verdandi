@@ -88,6 +88,7 @@ function issueNode({
     state,
     url: `https://github.com/${repository}/issues/${String(number)}`,
     updatedAt: "2026-09-01T12:00:00Z",
+    author: null,
     repository: { nameWithOwner: repository },
     labels: { nodes: [] },
     parent: null,
@@ -875,6 +876,11 @@ describe("gh adapter: more reads", () => {
                         state: "OPEN",
                         url: "https://github.com/acme/api/issues/12",
                         updatedAt: "2026-09-20T08:15:00Z",
+                        author: {
+                          login: "octo-dev",
+                          avatarUrl:
+                            "https://avatars.githubusercontent.com/u/2",
+                        },
                         repository: { nameWithOwner: "acme/api" },
                         labels: {
                           nodes: [
@@ -922,6 +928,7 @@ describe("gh adapter: more reads", () => {
                         state: "OPEN",
                         url: "https://github.com/acme/api/issues/7",
                         updatedAt: "2026-09-18T17:40:12Z",
+                        author: null,
                         repository: { nameWithOwner: "acme/api" },
                         labels: { nodes: [] },
                         parent: null,
@@ -961,6 +968,10 @@ describe("gh adapter: more reads", () => {
             title: "Retry failed webhooks",
             state: "open",
             url: "https://github.com/acme/api/issues/12",
+            author: {
+              login: "octo-dev",
+              avatarUrl: "https://avatars.githubusercontent.com/u/2?s=40",
+            },
             updatedAt: "2026-09-20T08:15:00Z",
             labels: [
               { name: "bug", color: "d73a4a" },
@@ -1439,12 +1450,11 @@ describe("gh adapter: repository summaries", () => {
   });
 });
 
-it("reads issue page metadata, including nullable authors and milestones", async () => {
+it("reads issue page metadata, including nullable milestones", async () => {
   const node = {
     ...issueNode({ number: 7, state: "CLOSED" }),
     stateReason: "NOT_PLANNED",
     createdAt: "2026-08-01T12:00:00Z",
-    author: null,
     assignees: {
       nodes: [
         {
@@ -1478,7 +1488,6 @@ it("reads issue page metadata, including nullable authors and milestones", async
       state: "closed",
       stateReason: "not-planned",
       createdAt: "2026-08-01T12:00:00Z",
-      author: undefined,
       milestone: undefined,
       assignees: [
         {
@@ -2660,6 +2669,11 @@ describe("gh adapter: issue search", () => {
       title: `Issue ${String(number)}`,
       state: "open",
       labels: [{ name: "bug", color: "d73a4a", default: true }],
+      user: {
+        login: "octo-dev",
+        avatar_url: "https://avatars.githubusercontent.com/u/2?v=4",
+        type: "User",
+      },
       updated_at: "2026-09-15T03:26:56Z",
       sub_issues_summary: { total: 3, completed: 1, percent_completed: 33 },
       issue_dependencies_summary: {
@@ -2754,6 +2768,10 @@ describe("gh adapter: issue search", () => {
             title: "Issue 7",
             state: "open",
             url: "https://github.com/acme/api/issues/7",
+            author: {
+              login: "octo-dev",
+              avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4&s=40",
+            },
             updatedAt: "2026-09-15T03:26:56Z",
             labels: [{ name: "bug", color: "d73a4a" }],
             hasParent: false,
@@ -2816,6 +2834,29 @@ describe("gh adapter: issue search", () => {
       [7, true],
       [8, false],
       [9, false],
+    ]);
+  });
+
+  it("reads a match whose author's account has been deleted as having none", async () => {
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 0,
+      stdout: transcript(
+        "200 OK",
+        searchHeaders,
+        JSON.stringify({
+          total_count: 1,
+          incomplete_results: false,
+          items: [searchItem(7, { user: null })],
+        }),
+      ),
+      stderr: "",
+    });
+
+    const answer = await github.searchIssues("label:bug", 1);
+
+    expect(answer.ok && answer.value.issues).toEqual([
+      expect.objectContaining({ number: 7, author: undefined }),
     ]);
   });
 

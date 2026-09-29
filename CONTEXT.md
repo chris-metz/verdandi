@@ -28,6 +28,12 @@ _Avoid_: hit, result
 An issue shown in a view's tree only as an ancestor or sub-issue of a match, not because the search returned it. It is known not to match only when the view's search results are complete; otherwise its match status is unknown.
 _Avoid_: nonmatch, filler issue
 
+### Issues
+
+**Author**:
+The GitHub account that opened an issue, or wrote a comment. An issue whose account has been deleted has none.
+_Avoid_: creator, reporter, opener, owner
+
 ### Issue relationships
 
 **Sub-issue**:

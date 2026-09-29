@@ -1,6 +1,7 @@
 import type {
   AccessEvidence,
   BlockingSide,
+  IssueActor,
   IssueMetadata,
   Label,
   RateLimitPool,
@@ -39,6 +40,8 @@ export interface FakeIssue {
   title: string;
   /** Open unless said otherwise. */
   state?: "open" | "closed";
+  /** Its author's login, or none for a deleted account. */
+  author?: string;
   /** An ISO 8601 timestamp; the same for every issue unless said otherwise. */
   updatedAt?: string;
   labels?: Label[];
@@ -577,6 +580,7 @@ export function createFakeGitHub({
       title: issue.title,
       state: issue.state ?? "open",
       url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}`,
+      author: actorOf(issue.author),
       updatedAt: issue.updatedAt ?? defaultUpdatedAt,
       labels: issue.labels ?? [],
       parent,
@@ -746,7 +750,6 @@ export function createFakeGitHub({
             ...read(ref.split("#")[0] ?? "", issue),
             stateReason: issue.state === "closed" ? "completed" : undefined,
             createdAt: defaultUpdatedAt,
-            author: undefined,
             assignees: [],
             milestone: undefined,
             commentCount: 0,
@@ -817,13 +820,7 @@ export function createFakeGitHub({
                 const n = String(start + index + 1);
                 return {
                   id: `IC_${ref}/${n}`,
-                  author:
-                    comment.author === undefined
-                      ? undefined
-                      : {
-                          login: comment.author,
-                          avatarUrl: `https://avatars.githubusercontent.com/${comment.author}`,
-                        },
+                  author: actorOf(comment.author),
                   createdAt: comment.createdAt ?? defaultUpdatedAt,
                   url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}#issuecomment-${n}`,
                   bodyHTML: comment.bodyHTML,
@@ -1104,6 +1101,7 @@ export function createFakeGitHub({
                   title,
                   state,
                   url,
+                  author,
                   updatedAt,
                   labels,
                   subIssuesSummary,
@@ -1123,6 +1121,7 @@ export function createFakeGitHub({
                     title,
                     state,
                     url,
+                    author,
                     updatedAt,
                     labels,
                     hasParent,
@@ -1222,4 +1221,11 @@ function namesViewer(result: GitHubResult<unknown>): boolean {
 function addressOf(ref: string) {
   const [owner = "", name = ""] = ref.split("#")[0]?.split("/") ?? [];
   return { owner, name };
+}
+
+/** A GitHub account by its login, or none for a deleted account. */
+function actorOf(login: string | undefined): IssueActor | undefined {
+  return login === undefined
+    ? undefined
+    : { login, avatarUrl: `https://avatars.githubusercontent.com/${login}` };
 }

@@ -1,6 +1,7 @@
 import type {
   AccessEvidence,
   BlockingSide,
+  IssueActor,
   IssueComment,
   IssueMetadata,
   Label,
@@ -211,6 +212,8 @@ export interface Issue {
   state: "open" | "closed";
   /** Its page on github.com. */
   url: string;
+  /** Who opened it, unless their account has been deleted. */
+  author: IssueActor | undefined;
   /** When it last changed, as an ISO 8601 timestamp. */
   updatedAt: string;
   labels: Label[];

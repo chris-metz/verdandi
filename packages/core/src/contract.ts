@@ -398,6 +398,8 @@ export interface IssueIdentity {
 
 /** An issue as a list shows it. */
 export interface IssueSummary extends IssueIdentity {
+  /** Who opened it, unless their account has been deleted. */
+  author: IssueActor | undefined;
   /** Its labels, in GitHub's order. */
   labels: Label[];
   /** Sub-issue progress, from GitHub's `subIssuesSummary`. */
@@ -703,7 +705,6 @@ export interface IssueMetadata {
   stateReason:
     "completed" | "not-planned" | "reopened" | "duplicate" | undefined;
   createdAt: string;
-  author: IssueActor | undefined;
   assignees: IssueActor[];
   milestone: string | undefined;
   commentCount: number;

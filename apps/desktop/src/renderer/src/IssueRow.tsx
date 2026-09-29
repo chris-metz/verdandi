@@ -8,8 +8,9 @@ import type {
   ViewMark,
 } from "@verdandi/core/contract";
 import { LoaderCircle, Lock } from "lucide-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Avatar } from "./Avatar";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
 import type { ListRow } from "./list-navigation";
@@ -25,12 +26,54 @@ import {
   unreadCell,
 } from "./row-cells";
 
-/** The widths of the right-aligned columns, shared with their header. */
-export const columnClasses = {
-  progress: "w-24 shrink-0 justify-end",
-  blockedBy: "w-20 shrink-0 justify-end",
-  blocking: "w-16 shrink-0 justify-end",
-} as const;
+/** A column right of the title, with its header and its cell of an issue. */
+interface IssueColumn {
+  key: string;
+  header: string;
+  /** The header's tooltip, when the header says less. */
+  headerTitle?: string;
+  /** Its width and how its cell aligns, shared with its header. */
+  className: string;
+  /**
+   * Whether its cell dims with a closed issue outside views, as the title
+   * does. In a view, every cell of a context issue dims.
+   */
+  dimsClosed: boolean;
+  cell: (issue: IssueSummary) => ReactNode;
+}
+
+/** The columns right of the title, in order. */
+const issueColumns: readonly IssueColumn[] = [
+  {
+    key: "author",
+    header: "By",
+    headerTitle: "Author",
+    className: "w-7 justify-center",
+    dimsClosed: true,
+    cell: (issue) => <AuthorAvatar issue={issue} />,
+  },
+  {
+    key: "progress",
+    header: "Sub-issues",
+    className: "w-24 justify-end gap-1.5",
+    dimsClosed: true,
+    cell: (issue) => <Progress progress={issue.subIssueProgress} />,
+  },
+  {
+    key: "blockedBy",
+    header: "Blocked by",
+    className: "w-20 justify-end",
+    dimsClosed: false,
+    cell: (issue) => <Relationship issue={issue} kind="blockedBy" />,
+  },
+  {
+    key: "blocking",
+    header: "Blocks",
+    className: "w-16 justify-end",
+    dimsClosed: false,
+    cell: (issue) => <Relationship issue={issue} kind="blocking" />,
+  },
+];
 
 /** The same columns above both a scope's list and a page's sub-issues. */
 export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
@@ -43,17 +86,23 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
       )}
     >
       <span className="flex-1">Issue</span>
-      <span className={cn("flex", columnClasses.progress)}>Sub-issues</span>
-      <span className={cn("flex", columnClasses.blockedBy)}>Blocked by</span>
-      <span className={cn("flex", columnClasses.blocking)}>Blocks</span>
+      {issueColumns.map((column) => (
+        <span
+          key={column.key}
+          title={column.headerTitle}
+          className={cn("flex shrink-0", column.className)}
+        >
+          {column.header}
+        </span>
+      ))}
     </div>
   );
 }
 
 /**
  * One issue in a list: chevron, state, repository chip in All, reference,
- * title, labels and tags, then the sub-issue progress, "Blocked by" and
- * "Blocks" columns. An issue that has not been read shows as its parent issue
+ * title, labels and tags, then the author, sub-issue progress, "Blocked by"
+ * and "Blocks" columns. An issue that has not been read shows as its parent issue
  * names it, with why, and Retry and Open on GitHub once it failed; its
  * columns stay empty, as nothing is known of them.
  *
@@ -197,25 +246,18 @@ export const IssueRow = memo(function IssueRow({
         />
       )}
       <span className="flex-1" />
-      <span
-        className={cn(
-          "flex items-center gap-1.5",
-          columnClasses.progress,
-          (closedDimmed || context) && "opacity-55",
-        )}
-      >
-        {read && <Progress progress={read.subIssueProgress} />}
-      </span>
-      <span
-        className={cn("flex", columnClasses.blockedBy, context && "opacity-55")}
-      >
-        {read && <Relationship issue={read} kind="blockedBy" />}
-      </span>
-      <span
-        className={cn("flex", columnClasses.blocking, context && "opacity-55")}
-      >
-        {read && <Relationship issue={read} kind="blocking" />}
-      </span>
+      {issueColumns.map((column) => (
+        <span
+          key={column.key}
+          className={cn(
+            "flex shrink-0 items-center",
+            column.className,
+            (context || (column.dimsClosed && closedDimmed)) && "opacity-55",
+          )}
+        >
+          {read && column.cell(read)}
+        </span>
+      ))}
     </div>
   );
 });
@@ -442,6 +484,30 @@ function ParentChip({
       {parent.reference}
       {parent.external && " · external"}
     </button>
+  );
+}
+
+/**
+ * The avatar of who opened an issue, or a dashed circle when their account
+ * has been deleted.
+ */
+function AuthorAvatar({ issue: { author } }: { issue: IssueSummary }) {
+  if (!author) {
+    return (
+      <span
+        role="img"
+        aria-label="Deleted user"
+        title="Deleted user"
+        className="size-[18px] shrink-0 rounded-full border border-dashed border-muted-foreground/60"
+      />
+    );
+  }
+  return (
+    <Avatar
+      actor={author}
+      title={`Opened by @${author.login}`}
+      className="size-[18px]"
+    />
   );
 }
 

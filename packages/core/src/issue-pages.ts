@@ -403,7 +403,6 @@ export function createIssuePages({
     const {
       stateReason,
       createdAt,
-      author,
       assignees,
       milestone,
       commentCount,
@@ -415,7 +414,6 @@ export function createIssuePages({
       value: {
         stateReason,
         createdAt,
-        author,
         assignees,
         milestone,
         commentCount,

@@ -22,6 +22,7 @@ function issue(
       title: `Issue ${String(number)}`,
       state: "open",
       url: `https://github.com/acme/api/issues/${String(number)}`,
+      author: undefined,
       labels: [],
       external: false,
       subIssueProgress: { closed: 0, total: subIssues.length },

@@ -534,6 +534,29 @@ it("counts the pull requests a search also matches, which it does not list", asy
   expect(list.trees).toHaveLength(1);
 });
 
+it("shows who opened each match, from any repository", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("other/lib", [
+    { number: 5, title: "Upstream fix", author: "octo-dev" },
+  ]);
+  github.setSearch("is:open", { matches: ["other/lib#5"] });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "open", name: "Open", query: "is:open" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("open"));
+
+  expect(list.trees[0]?.issue).toMatchObject({
+    author: {
+      login: "octo-dev",
+      avatarUrl: "https://avatars.githubusercontent.com/octo-dev",
+    },
+  });
+});
+
 it("opens the page of a match outside every tracked repository without tracking it", async () => {
   const github = githubWithIssues();
   github.setSearch("label:upstream", { matches: ["other/lib#5"] });
