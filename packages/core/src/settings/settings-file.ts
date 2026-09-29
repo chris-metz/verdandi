@@ -130,7 +130,9 @@ export function createSettingsFile(
           watcher = watch(folder, { persistent: false }, (_event, name) => {
             if (name !== null && name !== "settings.json") return;
             void serial(async () => {
-              if (closed) return;
+              // Before the first signature is read, the folder may report a
+              // write from before watching began; that read sees any change.
+              if (closed || observed === undefined) return;
               const previous = observed;
               observed = await signature();
               if (observed !== previous) changed();
