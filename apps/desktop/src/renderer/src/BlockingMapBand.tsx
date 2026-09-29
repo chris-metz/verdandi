@@ -9,6 +9,7 @@ import { IssueStateIcon } from "./IssueStateIcon";
 import {
   edgeTitle,
   layoutBlockingMap,
+  minimumMapHeight,
   type MapLayout,
 } from "./blocking-layout";
 import type { IssueDestination } from "./issue-navigation";
@@ -159,8 +160,9 @@ export function BlockingMapBand({
         }}
       >
         {!layout ? (
-          <p className="px-6 py-8 text-muted-foreground">
-            Laying out blocking map…
+          // As tall as the smallest map, so nothing below it jumps.
+          <p role="status" style={{ height: minimumMapHeight }}>
+            <span className="sr-only">Laying out blocking map…</span>
           </p>
         ) : (
           <div

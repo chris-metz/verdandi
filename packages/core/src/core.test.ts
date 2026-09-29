@@ -5954,6 +5954,42 @@ describe("blocking maps through the contract", () => {
     expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
   });
 
+  it("shows no edge card while a chain that fits loads, and keeps each end through a refresh", async () => {
+    const github = createFakeGitHub({ login: "octo" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Centre", blockers: ["acme/api#2"] },
+      { number: 2, title: "Near", blockers: ["acme/api#3"] },
+      { number: 3, title: "Unreadable end" },
+      { number: 4, title: "Waiting", blockers: ["acme/api#1"] },
+    ]);
+    github.hide("acme/api#3");
+    const core = createTestCore(github);
+    const ends: unknown[] = [];
+    core.on("issuePageChanged", (page) => {
+      if (page.blockingMap) ends.push(page.blockingMap.ends);
+    });
+    await openPageUntilLoaded(core, "I_acme/api#1");
+    // Reads in flight are no unknown total: no edge card comes and goes.
+    const settled = {
+      blockedBy: { kind: "unknown" },
+      blocking: { kind: "none" },
+    };
+    const changes = ends.filter(
+      (end, index) =>
+        index === 0 || JSON.stringify(end) !== JSON.stringify(ends[index - 1]),
+    );
+    expect(changes).toEqual([
+      { blockedBy: { kind: "none" }, blocking: { kind: "none" } },
+      settled,
+    ]);
+    ends.length = 0;
+    await pageUntilSettled(core, "I_acme/api#1", () =>
+      core.refresh({ kind: "issue", issueId: "I_acme/api#1" }),
+    );
+    expect(ends.length).toBeGreaterThan(1);
+    for (const end of ends) expect(end).toEqual(settled);
+  });
+
   it("keeps an expanded chain unfolded when More reaches an inaccessible branch", async () => {
     const github = createFakeGitHub({ login: "octo" });
     github.addRepository("acme/api", [

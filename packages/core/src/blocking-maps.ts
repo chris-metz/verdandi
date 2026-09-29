@@ -37,6 +37,12 @@ export function createBlockingMaps(
   const key = (id: string, side: BlockingSide) => `${id}:${side}`;
   const list = (id: string, side: BlockingSide) => lists.get(key(id, side));
   const explorations = new Map<string, Exploration>();
+  // A side's end as of its last finished load, and the loads under way. While
+  // a map loads, its ends stay as they were rather than turn unknown for each
+  // read in flight, so edge cards do not come and go.
+  const settled = new Map<string, BlockingMap["ends"]>();
+  const loading = new Map<string, number>();
+  const finished = new Set<string>();
   function exploration(root: string, side: BlockingSide): Exploration {
     const id = key(root, side);
     let state = explorations.get(id);
@@ -278,6 +284,14 @@ export function createBlockingMaps(
                 : { kind: "none" };
     }
     map.cards = [...cards.values()];
+    if (finished.has(root) && !loading.get(root))
+      settled.set(root, { ...map.ends });
+    else
+      for (const side of sides) {
+        const state = exploration(root, side);
+        if (!state.run && !state.paused)
+          map.ends[side] = settled.get(root)?.[side] ?? { kind: "none" };
+      }
     return map;
   }
 
@@ -383,50 +397,57 @@ export function createBlockingMaps(
       urgency: () => Urgency | undefined,
       push: () => void,
     ) {
-      await Promise.all(
-        sides.map(async (side) => {
-          // Refresh every list already reached on this side. New traversal is
-          // bounded to the root and its open neighbours, even when cached
-          // relationships place a neighbour farther out by its longest route.
-          const loaded = [...reachable(root, side)].filter(
-            (id) =>
-              list(id, side) &&
-              (id === root || store.get(id)?.state === "open"),
-          );
-          // Refresh only the prefix already explored in a partial list.
-          // Continue owns the rest, even when another part of the page retries.
-          const extents = new Map(
-            loaded.map((id) => {
-              const known = list(id, side);
-              return [
-                id,
-                known && !known.complete && known.ids.length > 0
-                  ? known.ids.length
-                  : Infinity,
-              ];
-            }),
-          );
-          const revalidate = (id: string) =>
-            readList(
-              id,
-              side,
-              since,
-              urgency,
-              push,
-              undefined,
-              extents.get(id),
-            );
-          await revalidate(root);
-          const neighbours = (list(root, side)?.ids ?? []).filter(
-            (id) => id !== root && store.get(id)?.state === "open",
-          );
-          await Promise.all(
-            [...new Set([...neighbours, ...loaded])]
-              .filter((id) => id !== root && store.get(id)?.state === "open")
-              .map(revalidate),
-          );
-        }),
-      );
+      loading.set(root, (loading.get(root) ?? 0) + 1);
+      try {
+        await loadSides(root, since, urgency, push);
+      } finally {
+        loading.set(root, (loading.get(root) ?? 1) - 1);
+        finished.add(root);
+        push();
+      }
     },
   };
+
+  async function loadSides(
+    root: string,
+    since: Moment,
+    urgency: () => Urgency | undefined,
+    push: () => void,
+  ) {
+    await Promise.all(
+      sides.map(async (side) => {
+        // Refresh every list already reached on this side. New traversal is
+        // bounded to the root and its open neighbours, even when cached
+        // relationships place a neighbour farther out by its longest route.
+        const loaded = [...reachable(root, side)].filter(
+          (id) =>
+            list(id, side) && (id === root || store.get(id)?.state === "open"),
+        );
+        // Refresh only the prefix already explored in a partial list.
+        // Continue owns the rest, even when another part of the page retries.
+        const extents = new Map(
+          loaded.map((id) => {
+            const known = list(id, side);
+            return [
+              id,
+              known && !known.complete && known.ids.length > 0
+                ? known.ids.length
+                : Infinity,
+            ];
+          }),
+        );
+        const revalidate = (id: string) =>
+          readList(id, side, since, urgency, push, undefined, extents.get(id));
+        await revalidate(root);
+        const neighbours = (list(root, side)?.ids ?? []).filter(
+          (id) => id !== root && store.get(id)?.state === "open",
+        );
+        await Promise.all(
+          [...new Set([...neighbours, ...loaded])]
+            .filter((id) => id !== root && store.get(id)?.state === "open")
+            .map(revalidate),
+        );
+      }),
+    );
+  }
 }

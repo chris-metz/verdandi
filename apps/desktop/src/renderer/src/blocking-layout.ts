@@ -11,6 +11,8 @@ const cardWidth = 216;
 const cardHeight = 112;
 const columnWidth = 280;
 const padding = 28;
+/** The smallest map, which the band keeps free while it is first laid out. */
+export const minimumMapHeight = 224;
 
 export interface MapLayout {
   cards: MapTarget[];
@@ -158,7 +160,7 @@ export async function layoutBlockingMap(
     arrows,
     width: padding * 2 + (max - min) * columnWidth + cardWidth,
     height: Math.max(
-      224,
+      minimumMapHeight,
       ...cards.map((card) => card.y + card.height + padding),
     ),
     columns: Array.from(
