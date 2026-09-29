@@ -1,7 +1,7 @@
 {
   "name": "@verdandi/desktop",
   "productName": "Verdandi",
-  "description": "A read-only desktop client for GitHub issues across many repositories.",
+  "description": "A desktop client for GitHub issues across many repositories.",
   "version": "0.0.0",
   "private": true,
   "main": "./out/main/index.js",

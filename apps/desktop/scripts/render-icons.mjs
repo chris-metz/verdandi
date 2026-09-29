@@ -35,7 +35,7 @@ function socialPreview() {
 ${icon}
 <div>
   <h1>Verdandi</h1>
-  <p>A read-only, keyboard-first desktop client for GitHub issues across many repositories.</p>
+  <p>A keyboard-first desktop client for GitHub issues across many repositories.</p>
 </div>`;
 }
 
