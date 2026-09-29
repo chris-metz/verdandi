@@ -39,6 +39,7 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | `text [css]`                          | Prints the text shown by the first match, or the whole window                                          |
 | `eval <js>`                           | Evaluates an expression in the window, prints it as JSON                                               |
 | `theme <light \| dark>`               | Switches the colour scheme                                                                             |
+| `size <width> <height>`               | Resizes the page, 1200 × 800 at launch                                                                 |
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
 | `opened`                              | The links the app opened in the browser                                                                |
 | `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                       |

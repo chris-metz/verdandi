@@ -215,6 +215,14 @@ const commands = {
     return `theme ${scheme}`;
   },
 
+  /** Resizes the window's page, 1200 × 800 at launch. */
+  async size(args) {
+    const [width, height] = args.split(/\s+/).map(Number);
+    if (!width || !height) throw new Error("size <width> <height>");
+    await window().setViewportSize({ width, height });
+    return `size ${String(width)} × ${String(height)}`;
+  },
+
   async ss(name) {
     mkdirSync(shots, { recursive: true });
     const file = join(shots, `${name || `ss-${String(Date.now())}`}.png`);

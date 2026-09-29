@@ -4,6 +4,11 @@
 
 A keyboard-first desktop client for GitHub issues across many repositories, focused on how issues relate: sub-issue hierarchies and blocking relationships that cross repository boundaries. Vocabulary is in [`CONTEXT.md`](CONTEXT.md), decisions in [`docs/adr/`](docs/adr/).
 
+<p align="center">
+  <img src="docs/screenshots/issue-light.png" width="49%" alt="An issue page in Verdandi, light: the issues that block it and those it blocks, as a map">
+  <img src="docs/screenshots/issue-dark.png" width="49%" alt="The same issue page, dark">
+</p>
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) and [pnpm](https://pnpm.io/) in the versions pinned in `mise.toml`. Node stays on the major bundled with the Electron version in use.
