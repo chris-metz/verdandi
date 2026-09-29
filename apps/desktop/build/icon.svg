@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Verdandi's icon: two issues blocking a third. The flat rendering of
+       icon.icon, for Linux, Windows, dev mode and the README. -->
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22345a"/>
+      <stop offset="1" stop-color="#0f1a2f"/>
+    </linearGradient>
+    <radialGradient id="gold" cx=".38" cy=".32" r=".75">
+      <stop offset="0" stop-color="#f6cc6e"/>
+      <stop offset="1" stop-color="#d6912a"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#background)"/>
+  <g filter="url(#shadow)">
+    <path d="M322 330 L512 675 L702 330" fill="none" stroke="#efe9da" stroke-width="84" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="322" cy="330" r="94" fill="#efe9da"/>
+    <circle cx="702" cy="330" r="94" fill="#efe9da"/>
+    <circle cx="512" cy="675" r="116" fill="url(#gold)"/>
+  </g>
+</svg>

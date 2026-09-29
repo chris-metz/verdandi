@@ -31,6 +31,7 @@ import {
   rendererRequestNames,
   type DesktopApi,
 } from "../shared/ipc";
+import icon from "../../build/icon.png?asset";
 import { loadImage } from "./load-image";
 
 const host: HostEnvironment = {
@@ -101,6 +102,10 @@ function start() {
   );
 
   void app.whenReady().then(() => {
+    // A packaged app shows its bundle's icon; `pnpm dev` runs Electron's own.
+    if (process.platform === "darwin" && !app.isPackaged) {
+      app.dock?.setIcon(icon);
+    }
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
         ...(process.platform === "darwin"
@@ -204,6 +209,8 @@ async function createWindow(core: Contract, afterClose: () => void) {
       : { width: 1200, height: 800 }),
     show: false,
     title: "Verdandi",
+    // macOS shows the app's icon instead; Linux shows no icon without it.
+    ...(process.platform === "darwin" ? {} : { icon }),
     // Matches the page background, so the window does not flash on opening.
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
     webPreferences: {

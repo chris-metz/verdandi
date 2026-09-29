@@ -23,8 +23,9 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
-    // Agent skills' scripts run on Node, and may pass functions to a page.
-    files: [".agents/**/*.mjs"],
+    // Agent skills' and the desktop app's scripts run on Node (or Electron),
+    // and may pass functions to a page.
+    files: [".agents/**/*.mjs", "apps/desktop/scripts/**/*.mjs"],
     languageOptions: {
       globals: {
         console: "readonly",

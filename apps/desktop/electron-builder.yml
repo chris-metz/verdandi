@@ -13,5 +13,9 @@ files:
 mac:
   # Unsigned: runs on the computer that built it.
   identity: null
+  # Icon Composer's format, so macOS renders its depth and its dark, tinted
+  # and clear appearances. Compiling it needs Xcode 26 or later. Linux and
+  # Windows take `build/icon.png`.
+  icon: build/icon.icon
 linux:
   executableName: verdandi

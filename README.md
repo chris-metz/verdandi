@@ -1,4 +1,6 @@
-# Verdandi
+<p align="center"><img src="apps/desktop/build/icon.png" width="128" height="128" alt=""></p>
+
+<h1 align="center">Verdandi</h1>
 
 A read-only, keyboard-first desktop client for GitHub issues across many repositories, focused on how issues relate: sub-issue hierarchies and blocking relationships that cross repository boundaries. Vocabulary is in [`CONTEXT.md`](CONTEXT.md), decisions in [`docs/adr/`](docs/adr/).
 
@@ -32,7 +34,17 @@ It builds an unsigned app for the operating system you run it on, in `apps/deskt
 - Windows: `win-unpacked/Verdandi.exe`.
 - Linux: `linux-unpacked/verdandi`.
 
-There are no installers, signing or updates yet. The first build downloads Electron.
+There are no installers, signing or updates yet. The first build downloads Electron. On macOS, packaging needs [Xcode](https://developer.apple.com/xcode/) 26 or later, which compiles the app icon; `pnpm dev` does not.
+
+## App icon
+
+The icon is drawn in `apps/desktop/build/icon.svg`. `apps/desktop/build/icon.icon` is the same drawing split into layers, in the format of Apple's Icon Composer, so that macOS renders its depth and its dark and tinted appearances; open it with Icon Composer, which comes with Xcode. After changing the drawing, change both, then run
+
+```sh
+pnpm icons
+```
+
+to render `apps/desktop/build/icon.png` (Linux, Windows, `pnpm dev` and this README) and `docs/social-preview.png` again, and commit them. The social preview is uploaded by hand, under the repository's Settings → General → Social preview.
 
 ## GitHub CLI
 

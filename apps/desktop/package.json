@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "start": "install-electron && electron-vite preview",
     "package": "electron-vite build && electron-builder --dir",
-    "typecheck": "tsc -p tsconfig.json && tsc -p src/renderer/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/renderer/tsconfig.json",
+    "icons": "install-electron && electron scripts/render-icons.mjs"
   },
   "devDependencies": {
     "@base-ui/react": "^1.8.0",
