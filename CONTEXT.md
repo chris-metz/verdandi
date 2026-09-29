@@ -1,6 +1,6 @@
 # Verdandi
 
-A desktop client for reading GitHub issues across many repositories at once, focused on how issues relate to each other: sub-issue hierarchies and blocking relationships that cross repository boundaries.
+A desktop client for GitHub issues across many repositories at once, focused on how issues relate to each other: sub-issue hierarchies and blocking relationships that cross repository boundaries.
 
 ## Language
 
