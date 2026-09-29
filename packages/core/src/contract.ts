@@ -422,6 +422,12 @@ export interface UnreadIssueNode {
 export interface ViewMark {
   match: boolean;
   /**
+   * Whether a context issue may match too: the search's results are not
+   * complete, so that it did not return the issue proves nothing. Never for
+   * a match.
+   */
+  mayMatch: boolean;
+  /**
    * How many matches lie below it, at any depth, collapsed away or not. An
    * issue with matches below it is on a path to a match.
    */
@@ -621,15 +627,45 @@ export interface ViewList {
    * are not listed; a search says `is:issue` to leave them out.
    */
   pullRequests: number;
-  /** GitHub's message, when it rejected the search, which it is not run again for. */
-  rejected: string | undefined;
   /**
-   * How far the search has run, and how current its matches are. It failed
-   * when GitHub rejected the search or it could not be run, with nothing to
-   * show from before.
+   * Whether the matches are all the search's matches: every page was read,
+   * GitHub counts at most 1,000, the most its search returns, and it did not
+   * report its results incomplete. Only then are context issues known not
+   * to match.
+   */
+  complete: boolean;
+  /** Whether GitHub reported that it did not return all matches. */
+  incomplete: boolean;
+  /**
+   * The page of up to 100 matches being read, while the search runs, and
+   * how many pages it reads, once the first has told GitHub's total: as many
+   * as hold it, up to 10, the 1,000-match ceiling.
+   */
+  searching: { page: number; pages: number | undefined } | undefined;
+  /** Why GitHub failed the search, when that says more than `loading`. */
+  searchProblem: SearchProblem | undefined;
+  /**
+   * How far the search has run, and how current its matches are. It is
+   * loading until every page of the first run has been read, the matches
+   * of those read so far showing meanwhile. It failed when GitHub rejected
+   * the search or it could not be run, with nothing to show from before.
    */
   loading: LoadingState;
 }
+
+/**
+ * Why GitHub failed a view's search, beyond failing to answer:
+ *
+ * - `invalid`: it rejected the search (HTTP 422), with its message. The
+ *   search is not run again on its own until it changes.
+ * - `unsearchable`: it cannot search a repository or user the search names,
+ *   e.g. one that does not exist or this account cannot read, with its
+ *   message; likewise not run again.
+ * - `too-large`: it failed with an empty HTTP 500, as it does a very long
+ *   search. The search runs again on Retry.
+ */
+export type SearchProblem =
+  { kind: "invalid" | "unsearchable"; message: string } | { kind: "too-large" };
 
 /** Metadata read when an issue page is opened. */
 export interface IssueMetadata {

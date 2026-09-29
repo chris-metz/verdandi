@@ -11,6 +11,7 @@ import { parseRepositoryAddress } from "../repository-address.ts";
 import type { CommandResult, CommandRunner } from "./command-runner.ts";
 import {
   rateLimitPools,
+  searchPageSize,
   type AuthStatus,
   type CommentPage,
   type GitHubAccess,
@@ -44,8 +45,13 @@ const issuesPerPage = 100;
 /** The most comments GitHub returns in one page. */
 const commentsPerPage = 100;
 
-/** The most matches GitHub's search returns in one page. */
-const matchesPerPage = 100;
+/**
+ * How GitHub rejects a search naming repositories or users it cannot
+ * search, rather than its syntax: "The listed users and repositories cannot
+ * be searched either because the resources do not exist or you do not have
+ * permission to view them."
+ */
+const unsearchable = /\busers and repositories cannot be searched\b/i;
 
 /**
  * An issue GitHub left out of its answer without saying why, as it may for
@@ -209,7 +215,7 @@ export function createGhAdapter({
         "-f",
         "advanced_search=true",
         "-f",
-        `per_page=${String(matchesPerPage)}`,
+        `per_page=${String(searchPageSize)}`,
         "-f",
         `page=${String(page)}`,
       ]);
@@ -219,10 +225,22 @@ export function createGhAdapter({
       const { status, headers, body } = response;
       const budget = budgetFromHeaders(headers, "search");
       if (status === 422) {
+        const message = readValidationMessage(body) ?? "Validation Failed";
         return failed(
           {
             kind: "invalid-search",
-            message: readValidationMessage(body) ?? "Validation Failed",
+            message,
+            unsearchable: unsearchable.test(message),
+          },
+          budget,
+        );
+      }
+      if (status >= 500 && body.trim() === "") {
+        return failed(
+          {
+            kind: "server-error",
+            message: `HTTP ${String(status)}`,
+            emptyBody: true,
           },
           budget,
         );

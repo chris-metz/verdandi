@@ -469,7 +469,10 @@ it("marks a view whose search GitHub rejected, and runs it again only when refre
       message: "GitHub rejected the search: The search is invalid.",
     },
   });
-  expect(list.rejected).toBe("The search is invalid.");
+  expect(list.searchProblem).toEqual({
+    kind: "invalid",
+    message: "The search is invalid.",
+  });
   expect(viewsOf(await core.getSidebar())[0]?.matches).toEqual({
     status: "rejected",
     message: "The search is invalid.",
@@ -570,7 +573,8 @@ function settled(list: ViewList): boolean {
 
 /**
  * The rows a view's trees show, top to bottom, each indented by its depth:
- * `owner/name#12`, whether it is a match or a context issue, ▾ when
+ * `owner/name#12`, whether it is a match or a context issue, which may
+ * match too (`context?`) when the results are incomplete, ▾ when
  * expanded and ▸ when collapsed, the matches inside a collapsed issue, and
  * a tree's missing parent issue above it.
  */
@@ -583,7 +587,11 @@ function outline(trees: readonly ViewTree[]): string[] {
     rows.push(
       [
         `${"  ".repeat(depth)}${owner}/${name}${node.issue.reference}`,
-        node.view?.match ? "match" : "context",
+        node.view?.match
+          ? "match"
+          : node.view?.mayMatch
+            ? "context?"
+            : "context",
         ...(hasSubIssues ? [node.expanded ? "▾" : "▸"] : []),
         ...(hasSubIssues && !node.expanded && inside > 0
           ? [`(${String(inside)} inside)`]
@@ -1004,4 +1012,279 @@ it("reads again a match another screen read before its search, before saying its
     "other/lib#20 context ▾",
     "  other/lib#21 match",
   ]);
+});
+
+/** A fake GitHub whose `big/repo` has issues #1 to #`count`. */
+function githubWithManyIssues(count: number): FakeGitHub {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository(
+    "big/repo",
+    Array.from({ length: count }, (_, index) => ({
+      number: index + 1,
+      title: `Issue ${String(index + 1)}`,
+    })),
+  );
+  return github;
+}
+
+it("reads up to ten pages of a search, the 1,000-match ceiling, saying which page it reads", async () => {
+  const github = githubWithManyIssues(1200);
+  github.setSearch("is:open", {
+    matches: Array.from(
+      { length: 1200 },
+      (_, index) => `big/repo#${String(index + 1)}`,
+    ),
+    total: 4209,
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "open", name: "Open", query: "is:open" }],
+  });
+  const core = createTestCore(github);
+  const pushed: ViewList[] = [];
+  core.on("viewChanged", (list) => pushed.push(list));
+
+  const list = await nextView(core, () => core.openView("open"));
+
+  expect(searches(github)).toEqual(
+    Array.from(
+      { length: 10 },
+      (_, index) => `searchIssues page ${String(index + 1)} is:open`,
+    ),
+  );
+  expect(list).toMatchObject({
+    matchCount: 4209,
+    matchesShown: 1000,
+    complete: false,
+    incomplete: false,
+    searching: undefined,
+    loading: { status: "current" },
+  });
+  // The first pages show while the next are read.
+  expect(pushed).toContainEqual(
+    expect.objectContaining({
+      searching: { page: 2, pages: 10 },
+      matchesShown: 100,
+      loading: { status: "loading" },
+    }),
+  );
+  expect(pushed[0]).toMatchObject({
+    searching: { page: 1, pages: undefined },
+  });
+});
+
+it("reads as many pages as hold GitHub's total, and then knows the results are complete", async () => {
+  const github = githubWithManyIssues(250);
+  github.setSearch("is:open", {
+    matches: Array.from(
+      { length: 250 },
+      (_, index) => `big/repo#${String(index + 1)}`,
+    ),
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "open", name: "Open", query: "is:open" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("open"));
+
+  expect(searches(github)).toHaveLength(3);
+  expect(list).toMatchObject({
+    matchCount: 250,
+    matchesShown: 250,
+    complete: true,
+  });
+});
+
+it("reads the remaining pages of a search Save ran as the view opens", async () => {
+  const github = githubWithManyIssues(250);
+  github.setSearch("is:open", {
+    matches: Array.from(
+      { length: 250 },
+      (_, index) => `big/repo#${String(index + 1)}`,
+    ),
+  });
+  await writeSettings({ version: 1, repositories: [], views: [] });
+  const core = createTestCore(github);
+
+  const saved = await core.saveView({ name: "Open", query: "is:open" });
+  const id = saved.status === "saved" ? saved.view.id : "";
+  const list = await nextView(core, () => core.openView(id));
+
+  expect(searches(github)).toEqual([
+    "searchIssues page 1 is:open",
+    "searchIssues page 2 is:open",
+    "searchIssues page 3 is:open",
+  ]);
+  expect(list).toMatchObject({ matchesShown: 250, complete: true });
+});
+
+it("knows a context issue does not match only while the search results are complete", async () => {
+  const github = githubWithBilling();
+  github.setSearch("label:invoices", { matches: ["acme/api#11"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "inv", name: "Invoices", query: "label:invoices" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "inv" } as const;
+
+  const complete = await nextView(core, () => core.openView("inv"), settled);
+
+  expect(complete.complete).toBe(true);
+  expect(outline(complete.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+  ]);
+
+  github.setSearch("label:invoices", {
+    matches: ["acme/api#11"],
+    incomplete: true,
+  });
+  const incomplete = await nextView(core, () => core.refresh(view), settled);
+
+  expect(incomplete).toMatchObject({ complete: false, incomplete: true });
+  expect(outline(incomplete.trees)).toEqual([
+    "acme/api#10 context? ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 context?",
+    "  other/lib#20 context?",
+  ]);
+
+  github.setSearch("label:invoices", { matches: ["acme/api#11"], total: 1001 });
+  const limited = await nextView(core, () => core.refresh(view), settled);
+
+  expect(limited).toMatchObject({ complete: false, incomplete: false });
+  expect(outline(limited.trees)[0]).toBe("acme/api#10 context? ▾");
+  // Nothing but the view's search is run to settle whether they match.
+  expect(new Set(searches(github).map((read) => read.split(" ")[3]))).toEqual(
+    new Set(["label:invoices"]),
+  );
+});
+
+it("runs a search GitHub answered in part again on Retry", async () => {
+  const github = githubWithIssues();
+  github.setSearch("label:bug", { matches: ["acme/api#3"], incomplete: true });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "bugs", name: "Bugs", query: "label:bug" }],
+  });
+  const core = createTestCore(github);
+  const list = await nextView(core, () => core.openView("bugs"));
+  expect(list).toMatchObject({ incomplete: true, complete: false });
+
+  github.setSearch("label:bug", { matches: ["acme/api#3"] });
+  const retried = await nextView(
+    core,
+    () => core.retry({ kind: "view", viewId: "bugs" }),
+    (pushed) => !pushed.incomplete,
+  );
+
+  expect(searches(github)).toHaveLength(2);
+  expect(retried).toMatchObject({ incomplete: false, complete: true });
+});
+
+it("tells a search naming a repository GitHub cannot search, and does not run it again on its own", async () => {
+  const github = githubWithIssues();
+  const message =
+    "The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.";
+  github.setSearch("repo:acme/secret", {
+    rejected: message,
+    unsearchable: true,
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "secret", name: "Secret", query: "repo:acme/secret" }],
+  });
+  const core = createTestCore(github);
+
+  const list = await nextView(core, () => core.openView("secret"));
+
+  expect(list.searchProblem).toEqual({ kind: "unsearchable", message });
+  expect(list.loading.status).toBe("failed");
+  expect(viewsOf(await core.getSidebar())[0]?.matches).toEqual({
+    status: "rejected",
+    message,
+  });
+  await core.retry({ kind: "view", viewId: "secret" });
+  await nextView(
+    core,
+    () => core.openView("secret"),
+    () => true,
+  );
+  expect(searches(github)).toHaveLength(1);
+});
+
+it("says a search GitHub failed with an empty HTTP 500 may be too large, and runs it again on Retry", async () => {
+  const github = githubWithIssues();
+  github.setSearch("label:bug", { matches: ["acme/api#3"] });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "bugs", name: "Bugs", query: "label:bug" }],
+  });
+  const core = createTestCore(github);
+  // GitHub fails it again as it is retried on its own.
+  github.failNextWith(
+    { kind: "server-error", message: "HTTP 500", emptyBody: true },
+    3,
+  );
+
+  const list = await nextView(core, () => core.openView("bugs"));
+
+  expect(list.searchProblem).toEqual({ kind: "too-large" });
+  expect(list.loading.status).toBe("failed");
+  expect(viewsOf(await core.getSidebar())[0]?.matches).toEqual({
+    status: "unknown",
+  });
+
+  const retried = await nextView(core, () =>
+    core.retry({ kind: "view", viewId: "bugs" }),
+  );
+  expect(retried).toMatchObject({
+    searchProblem: undefined,
+    matchCount: 1,
+    loading: { status: "current" },
+  });
+});
+
+it("does not run a search GitHub rejected again on its own, even once what it showed before grew old", async () => {
+  const clock = createClock();
+  const github = githubWithIssues();
+  github.setSearch("label:bug", { matches: ["acme/api#3"] });
+  await writeSettings({
+    version: 1,
+    repositories: [],
+    views: [{ id: "bugs", name: "Bugs", query: "label:bug" }],
+  });
+  const core = createTestCore(github, { now: clock.now });
+  const view = { kind: "view", viewId: "bugs" } as const;
+  await nextView(core, () => core.openView("bugs"));
+  github.setSearch("label:bug", { rejected: "The search is invalid." });
+  const rejected = await nextView(
+    core,
+    () => core.refresh(view),
+    (list) => list.searchProblem !== undefined,
+  );
+  expect(rejected.searchProblem).toEqual({
+    kind: "invalid",
+    message: "The search is invalid.",
+  });
+
+  clock.advance(6 * minute);
+  await nextView(
+    core,
+    () => core.openView("bugs"),
+    () => true,
+  );
+
+  expect(searches(github)).toHaveLength(2);
 });

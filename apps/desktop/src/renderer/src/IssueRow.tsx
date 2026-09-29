@@ -5,6 +5,7 @@ import type {
   ParentIssue,
   SubIssueProgress,
   UnreadIssue,
+  ViewMark,
 } from "@verdandi/core/contract";
 import { LoaderCircle, Lock } from "lucide-react";
 import { memo } from "react";
@@ -58,7 +59,9 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  *
  * In a view, only context issues are dimmed, as whole rows, counts
  * included; a closed match is not, and only its state icon says closed. A
- * collapsed issue with matches below it says how many.
+ * context issue that may match too, as the results are incomplete, has a
+ * "?" after its number. A collapsed issue with matches below it says how
+ * many.
  */
 export const IssueRow = memo(function IssueRow({
   row,
@@ -98,7 +101,7 @@ export const IssueRow = memo(function IssueRow({
       aria-selected={selected}
       aria-expanded={hasSubIssues ? node.expanded : undefined}
       data-issue-id={issue.id}
-      title={view && viewRoleTitle(view.match)}
+      title={view && viewRoleTitle(view)}
       onClick={() => {
         onSelect(issue.id);
         onOpen(issue);
@@ -145,6 +148,11 @@ export const IssueRow = memo(function IssueRow({
         {withRepository && <RepositoryChip issue={issue} />}
         <span className="shrink-0 text-muted-foreground tabular-nums">
           {issue.reference}
+          {view?.mayMatch && (
+            <span aria-label="may match" className="ml-0.5 font-medium">
+              ?
+            </span>
+          )}
         </span>
         <span className="min-w-0 truncate">{issue.title}</span>
         {read && <Labels labels={read.labels} />}
@@ -213,9 +221,10 @@ export const IssueRow = memo(function IssueRow({
 });
 
 /** What a view's row is, in its tooltip. */
-function viewRoleTitle(match: boolean): string {
-  return match
-    ? "Match: the search returned this issue"
+function viewRoleTitle({ match, mayMatch }: ViewMark): string {
+  if (match) return "Match: the search returned this issue";
+  return mayMatch
+    ? "Context issue: the search results are incomplete, so it may match too"
     : "Context issue: shown for its place in the tree; the search did not return it";
 }
 

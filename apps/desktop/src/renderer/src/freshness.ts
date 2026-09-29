@@ -57,13 +57,24 @@ export function listFreshness(list: IssueList, now: number): Freshness {
 }
 
 /**
- * A view's freshness: while the matches' parent issues and sub-issues load
- * after the search answered, that they do; otherwise the age of its search,
- * and what of its trees could not be read, the parent issues above them
- * included.
+ * A view's freshness: while its first run reads its pages, which one; while
+ * the matches' parent issues and sub-issues load after the search answered,
+ * that they do; otherwise the age of its search, and what of its trees
+ * could not be read, counting the parent issues above them separately.
  */
 export function viewFreshness(list: ViewList, now: number): Freshness {
-  const { loading } = list;
+  const { loading, searching } = list;
+  if (loading.status === "loading" && searching) {
+    const { page, pages } = searching;
+    return {
+      text:
+        pages === undefined || pages === 1
+          ? "Searching…"
+          : `Searching… page ${String(page)} of ${String(pages)}`,
+      busy: true,
+      retry: false,
+    };
+  }
   if (
     list.readingContext &&
     loading.status !== "loading" &&
@@ -75,10 +86,16 @@ export function viewFreshness(list: ViewList, now: number): Freshness {
       retry: false,
     };
   }
-  const missing = missingIssues(
-    list.trees,
-    list.trees.flatMap((tree) => tree.missingParent ?? []),
-  );
+  const missing = [
+    ...missingIssues(list.trees, []),
+    ...countFailures(
+      list.trees.flatMap(({ missingParent }) =>
+        missingParent?.status === "failed" ? [missingParent.problem] : [],
+      ),
+      "parent issue",
+      "parent issues",
+    ),
+  ];
   return withMissing(loadingFreshness(loading, now), missing);
 }
 

@@ -1,5 +1,6 @@
-import { expect, it } from "vitest";
-import { matchesLabel } from "./view-screen";
+import { describe, expect, it } from "vitest";
+import type { ViewList } from "@verdandi/core/contract";
+import { matchesLabel, viewStrips } from "./view-screen";
 
 it("counts a view's matches as GitHub does", () => {
   expect(matchesLabel({ matchCount: 7, pullRequests: 0 }, 7)).toBe("7 matches");
@@ -23,4 +24,72 @@ it("names the pull requests a search also matches, which are not listed", () => 
   expect(matchesLabel({ matchCount: 3, pullRequests: 1 }, 2)).toBe(
     "3 matches · 1 pull request not listed",
   );
+});
+
+describe("a view's strips", () => {
+  function list(changes: Partial<ViewList>): ViewList {
+    return {
+      view: { id: "v", name: "Bugs", query: "label:bug" },
+      trees: [],
+      matchesShown: 7,
+      readingContext: false,
+      matchCount: 7,
+      pullRequests: 0,
+      complete: true,
+      incomplete: false,
+      searching: undefined,
+      searchProblem: undefined,
+      loading: { status: "current", updatedAt: 0 },
+      ...changes,
+    };
+  }
+
+  it("shows none while the search results are complete", () => {
+    expect(viewStrips(list({}))).toEqual([]);
+  });
+
+  it("asks to narrow a search beyond the 1,000-match ceiling, naming what decides which 1,000", () => {
+    const limited = { matchCount: 4209, matchesShown: 1000, complete: false };
+
+    expect(viewStrips(list(limited))).toEqual([
+      {
+        text: "1,000 of 4,209 matches shown · narrow the search",
+        hint: "without sort: in the search, GitHub returns the newest-created 1,000; context issues may match too",
+        retry: false,
+      },
+    ]);
+    expect(
+      viewStrips(
+        list({
+          ...limited,
+          view: { id: "v", name: "Bugs", query: "label:bug sort:updated-desc" },
+        }),
+      )[0]?.hint,
+    ).toBe(
+      "sort:updated-desc in the search decides which 1,000; context issues may match too",
+    );
+  });
+
+  it("offers to retry a search GitHub did not answer in full", () => {
+    expect(viewStrips(list({ incomplete: true, complete: false }))).toEqual([
+      {
+        text: "GitHub did not return all matches",
+        hint: "context issues may match too",
+        retry: true,
+      },
+    ]);
+  });
+
+  it("waits until the first run has read every page", () => {
+    expect(
+      viewStrips(
+        list({
+          matchCount: 4209,
+          matchesShown: 100,
+          complete: false,
+          loading: { status: "loading" },
+        }),
+      ),
+    ).toEqual([]);
+  });
 });

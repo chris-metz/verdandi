@@ -3,11 +3,18 @@ import type {
   Problem,
   SavedView,
   Screen,
+  SearchProblem,
   UnreadIssue,
   ViewList,
   ViewMatchCount,
 } from "./contract.ts";
-import type { IssueReference, SearchPage } from "./github/port.ts";
+import {
+  searchCeiling,
+  searchPageSize,
+  type IssueReference,
+  type SearchMatch,
+  type SearchPage,
+} from "./github/port.ts";
 import { createIssueLoader } from "./issue-loader.ts";
 import type { IssueStore } from "./issue-store.ts";
 import {
@@ -21,6 +28,7 @@ import { problemOf } from "./problems.ts";
 import { repositoryKey } from "./repository-address.ts";
 import {
   screenUrgency,
+  type RequestError,
   type RequestResult,
   type ScreenPart,
   type SendRequest,
@@ -32,9 +40,12 @@ import { buildViewForest } from "./view-forest.ts";
 /**
  * The views' screens, one per saved view, and what their searches last
  * answered. A view's search runs when it is first opened, or is handed the
- * answer of the search Save ran; it then runs again as the view is
- * refreshed, has grown old or failed, but never on its own once GitHub
- * rejected it, until its search changes. Once it answers, the matches are
+ * first page of the search Save ran and reads the rest as it opens; it then
+ * runs again as the view is refreshed, has grown old or failed, or GitHub
+ * answered it in part, but never on its own once GitHub rejected it, until
+ * its search changes. It reads as many pages as hold GitHub's total, up to
+ * the 1,000-match ceiling; the first run shows each page as it arrives, a
+ * later one only once it has read them all. As it answers, the matches are
  * read by ID into the one issue store, for their parent issues and
  * sub-issues, then their ancestors and the sub-issues the view shows, 100
  * at a time; what would show only below collapsed issues after the rest.
@@ -58,11 +69,12 @@ export interface ViewLists {
   check(
     query: string,
   ): Promise<{ result: RequestResult<SearchPage>; readAt: Moment }>;
-  /** Hands a view the answer of a search Save ran for it. */
+  /** Hands a view the first page of a search Save ran for it. */
   take(view: SavedView, answer: SearchPage, readAt: Moment): void;
   /**
    * Pushes a view at once. Runs its search if it has not run, or failed,
-   * and again in the background if it is older than five minutes, unless the
+   * reads the rest of a run that has not read every page, and runs it again
+   * in the background if it is older than five minutes, unless the
    * rate-limit budget is low.
    */
   open(viewId: string): void;
@@ -72,8 +84,8 @@ export interface ViewLists {
   revalidate(viewId: string): void;
   /**
    * Runs an opened view's search again if it failed, unless GitHub rejected
-   * it, and reads again the issues it shows that failed or GitHub answered
-   * in part.
+   * it, or GitHub answered it in part, and reads again the issues it shows
+   * that failed or GitHub answered in part.
    */
   retry(viewId: string): void;
   /** Expands or collapses one issue in an opened view, and pushes it. */
@@ -101,12 +113,23 @@ export interface ViewListsOptions {
   matchesChanged: () => void;
 }
 
-/** A view's search as it last answered, for the search text it ran. */
+/**
+ * A view's search as it last answered, for the search text it ran, as far
+ * as its pages have been read.
+ */
 interface Run {
   query: string;
-  /** When GitHub was asked. */
+  /** When GitHub was asked for its first page. */
   readAt: Moment;
-  page: SearchPage;
+  /** GitHub's total, as the latest page counted it. */
+  total: number;
+  /** Whether GitHub reported any page incomplete. */
+  incomplete: boolean;
+  /** The matches of every page read, in the search's order. */
+  matches: SearchMatch[];
+  /** How many pull requests those pages matched besides. */
+  pullRequests: number;
+  pagesRead: number;
 }
 
 /** Why a view's search last failed, for the search text it ran. */
@@ -114,16 +137,30 @@ interface Failure {
   query: string;
   at: Moment;
   problem: Problem;
-  /** GitHub's message, when it rejected the search. */
-  rejected: string | undefined;
+  /** Why GitHub failed the search, when that says more than `problem`. */
+  searchProblem: SearchProblem | undefined;
+}
+
+/** A view's search while it runs. */
+interface Search {
+  query: string;
+  /** The page being read. */
+  page: number;
+  /** How many pages it reads, once the first has told GitHub's total. */
+  pages: number | undefined;
+  /**
+   * Whether its pages show as they are read, as those of the view's first
+   * run, or of one it goes on with, do.
+   */
+  filling: boolean;
 }
 
 interface ViewState {
   run: Run | undefined;
   /** The last failure, unless the search has answered since. */
   failure: Failure | undefined;
-  /** The search text being run, while it is. */
-  searching: string | undefined;
+  /** The search being run, while it is. */
+  searching: Search | undefined;
   /**
    * Whether it runs again on its own, because it grew old, rather than
    * because it was asked for.
@@ -222,14 +259,15 @@ export function createViewLists({
     return {
       run,
       failure,
-      searching: state?.searching === view.query,
+      searching:
+        state?.searching?.query === view.query ? state.searching : undefined,
     };
   }
 
   function loadingOf(view: SavedView): LoadingState {
     const { run, failure, searching } = currentOf(view);
     if (searching) {
-      return run
+      return run && !searching.filling
         ? { status: "refreshing", updatedAt: run.readAt.time }
         : { status: "loading" };
     }
@@ -277,16 +315,18 @@ export function createViewLists({
    */
   function listOf(view: SavedView): ViewList {
     const state = stateOf(view.id);
-    const { run, failure } = currentOf(view);
+    const { run, failure, searching } = currentOf(view);
+    const complete = run !== undefined && isComplete(run);
     const tracked = new Set(
       (settings?.repositories ?? []).map((repository) =>
         repositoryKey(repository),
       ),
     );
     const { expansion } = state;
-    const matches = run?.page.issues ?? [];
+    const matches = run?.matches ?? [];
     const forest = buildViewForest({
       matches,
+      complete,
       lookup: (id) => store.get(id),
       readSinceSearch: (id) => {
         const readAt = store.readAt(id);
@@ -333,9 +373,12 @@ export function createViewLists({
     }
     return {
       view,
-      matchCount: run?.page.total,
-      pullRequests: run?.page.pullRequests ?? 0,
-      rejected: failure?.rejected,
+      matchCount: run?.total,
+      pullRequests: run?.pullRequests ?? 0,
+      complete,
+      incomplete: run?.incomplete ?? false,
+      searching: searching && { page: searching.page, pages: searching.pages },
+      searchProblem: failure?.searchProblem,
       loading: loadingOf(view),
       trees: forest.trees,
       matchesShown: forest.matchesShown,
@@ -384,52 +427,83 @@ export function createViewLists({
     if (view) push(listOf(view));
   }
 
-  function record(
+  /** Shows a new run from now on, in place of any before it. */
+  function begin(state: ViewState, run: Run) {
+    // What the first run shows may have been read by other screens in the
+    // last five minutes; a run after it needs it newer.
+    state.validFrom = state.run ? run.readAt : fiveMinutesAgo(clock);
+    state.requested.clear();
+    state.run = run;
+    state.failure = undefined;
+  }
+
+  function fail(
     state: ViewState,
     query: string,
-    result: RequestResult<SearchPage>,
-    readAt: Moment,
+    error: RequestError,
+    at: Moment,
   ) {
-    if (result.ok) {
-      // What the first run shows may have been read by other screens in
-      // the last five minutes; a run after it needs it newer.
-      state.validFrom = state.run ? readAt : fiveMinutesAgo(clock);
-      state.requested.clear();
-      state.run = { query, readAt, page: result.value };
-      state.failure = undefined;
-      return;
-    }
     state.failure = {
       query,
-      at: readAt,
-      problem: problemOf(result.error),
-      rejected:
-        result.error.kind === "invalid-search"
-          ? result.error.message
-          : undefined,
+      at,
+      problem: problemOf(error),
+      searchProblem: searchProblemOf(error),
     };
   }
 
-  /** Runs a view's search, pushing the view as it starts and answers. */
-  async function search(view: SavedView, background: boolean) {
+  /**
+   * Runs a view's search, pushing the view as it starts and as each page
+   * answers: from its first page, or on from the pages of a run read so far.
+   */
+  async function search(view: SavedView, background: boolean, from?: Run) {
     const state = stateOf(view.id);
-    if (state.searching === view.query) return;
-    state.searching = view.query;
+    if (state.searching?.query === view.query) return;
+    const searching: Search = {
+      query: view.query,
+      page: from ? from.pagesRead + 1 : 1,
+      pages: from && pagesOf(from.total),
+      filling: from !== undefined || currentOf(view).run === undefined,
+    };
+    state.searching = searching;
     state.background = background;
     update(view.id);
-    const readAt = clock();
-    const result = await request(
-      "searchIssues",
-      [view.query, 1],
-      (): Urgency | undefined =>
-        screenUrgency(
-          { shown: isShown(view.id), background: state.background },
-          "visible",
-        ),
-    );
-    if (states.get(view.id) !== state) return;
-    if (state.searching === view.query) state.searching = undefined;
-    record(state, view.query, result, readAt);
+    const readAt = from?.readAt ?? clock();
+    let read = from;
+    for (;;) {
+      const result = await request(
+        "searchIssues",
+        [view.query, searching.page],
+        (): Urgency | undefined =>
+          screenUrgency(
+            { shown: isShown(view.id), background: state.background },
+            "visible",
+          ),
+      );
+      // A search of other text, or a view removed, took its place.
+      if (states.get(view.id) !== state || state.searching !== searching) {
+        return;
+      }
+      if (!result.ok) {
+        state.searching = undefined;
+        fail(state, view.query, result.error, readAt);
+        break;
+      }
+      const first = read === undefined;
+      read = withPage(read, view.query, readAt, result.value);
+      const pages = pagesOf(read.total);
+      const done = read.pagesRead >= pages;
+      if (done) state.searching = undefined;
+      // A refresh shows its pages only once it has read them all.
+      if (searching.filling || done) {
+        if (first || !searching.filling) begin(state, read);
+        else state.run = read;
+      }
+      if (done) break;
+      if (searching.filling && first) matchesChanged();
+      searching.page = read.pagesRead + 1;
+      searching.pages = pages;
+      update(view.id);
+    }
     update(view.id);
     matchesChanged();
   }
@@ -437,17 +511,23 @@ export function createViewLists({
   /** Whether a view's search runs again on its own after it failed. */
   function failedRetriably(view: SavedView): boolean {
     const { failure } = currentOf(view);
-    return failure !== undefined && failure.rejected === undefined;
+    return failure !== undefined && !rejects(failure.searchProblem);
   }
 
   /**
-   * Runs a view's search if it never ran or failed, and in the background
-   * if it grew old; otherwise pushes it as it is.
+   * Runs a view's search if it never ran or failed, reads the rest of a run
+   * that has not read every page, and runs it in the background if it grew
+   * old; otherwise pushes it as it is.
    */
   function revalidate(view: SavedView) {
     const { run, failure } = currentOf(view);
     if ((!run && !failure) || failedRetriably(view)) {
       void search(view, false);
+    } else if (run && !failure && run.pagesRead < pagesOf(run.total)) {
+      void search(view, false, run);
+    } else if (rejects(failure?.searchProblem)) {
+      // GitHub would reject it again until it changes, however old.
+      update(view.id);
     } else if (isOutdated(loadingOf(view), clock) && mayRevalidate()) {
       void search(view, true);
     } else update(view.id);
@@ -476,11 +556,12 @@ export function createViewLists({
     },
     matchesOf(view) {
       const { run, failure } = currentOf(view);
-      if (failure?.rejected !== undefined) {
-        return { status: "rejected", message: failure.rejected };
+      const problem = failure?.searchProblem;
+      if (problem && rejects(problem)) {
+        return { status: "rejected", message: problem.message };
       }
       return run
-        ? { status: "known", count: run.page.total }
+        ? { status: "known", count: run.total }
         : { status: "unknown" };
     },
     async check(query) {
@@ -490,8 +571,7 @@ export function createViewLists({
       return { result, readAt };
     },
     take(view, answer, readAt) {
-      const state = stateOf(view.id);
-      record(state, view.query, { ok: true, value: answer }, readAt);
+      begin(stateOf(view.id), withPage(undefined, view.query, readAt, answer));
       matchesChanged();
     },
     open(viewId) {
@@ -509,7 +589,9 @@ export function createViewLists({
       withView(viewId, (view) => {
         const state = stateOf(view.id);
         state.background = false;
-        if (failedRetriably(view)) void search(view, false);
+        if (failedRetriably(view) || currentOf(view).run?.incomplete) {
+          void search(view, false);
+        }
         // Issues that failed are asked for again as the view is arranged;
         // those GitHub answered in part are neither missing nor outdated.
         const failed = [...state.requested].filter((id) =>
@@ -545,4 +627,70 @@ export function createViewLists({
       update(viewId);
     },
   };
+}
+
+/**
+ * How many pages a search reads: as many as hold GitHub's total, up to the
+ * 1,000-match ceiling, and at least the first, which tells the total.
+ */
+function pagesOf(total: number): number {
+  return Math.max(
+    1,
+    Math.ceil(Math.min(total, searchCeiling) / searchPageSize),
+  );
+}
+
+/** A run with one more page read: the first page of a new one without a run. */
+function withPage(
+  run: Run | undefined,
+  query: string,
+  readAt: Moment,
+  page: SearchPage,
+): Run {
+  return {
+    query,
+    readAt,
+    total: page.total,
+    incomplete: (run?.incomplete ?? false) || page.incomplete,
+    matches: [...(run?.matches ?? []), ...page.issues],
+    pullRequests: (run?.pullRequests ?? 0) + page.pullRequests,
+    pagesRead: (run?.pagesRead ?? 0) + 1,
+  };
+}
+
+/**
+ * Whether a run has every match of its search: it read every page, GitHub
+ * counts no more than its search returns, and none was reported
+ * incomplete.
+ */
+function isComplete(run: Run): boolean {
+  return (
+    run.pagesRead >= pagesOf(run.total) &&
+    run.total <= searchCeiling &&
+    !run.incomplete
+  );
+}
+
+/** Why GitHub failed a search, when that says more than the problem. */
+function searchProblemOf(error: RequestError): SearchProblem | undefined {
+  if (error.kind === "invalid-search") {
+    return {
+      kind: error.unsearchable ? "unsearchable" : "invalid",
+      message: error.message,
+    };
+  }
+  if (error.kind === "server-error" && error.emptyBody) {
+    return { kind: "too-large" };
+  }
+  return undefined;
+}
+
+/**
+ * Whether GitHub rejected a search, which it would again until the search
+ * changes.
+ */
+function rejects(
+  problem: SearchProblem | undefined,
+): problem is Extract<SearchProblem, { message: string }> {
+  return problem?.kind === "invalid" || problem?.kind === "unsearchable";
 }

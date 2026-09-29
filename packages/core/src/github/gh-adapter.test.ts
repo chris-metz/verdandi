@@ -2848,8 +2848,65 @@ describe("gh adapter: issue search", () => {
       error: {
         kind: "invalid-search",
         message: "The search query contains invalid syntax.",
+        unsearchable: false,
       },
     });
+  });
+
+  it("tells a search naming a repository or user GitHub cannot search from invalid syntax", async () => {
+    const message =
+      "The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.";
+    const github = ghSearching({
+      kind: "exited",
+      exitCode: 1,
+      stdout: transcript(
+        "422 Unprocessable Entity",
+        searchHeaders,
+        JSON.stringify({
+          message: "Validation Failed",
+          errors: [
+            {
+              message,
+              resource: "Search",
+              field: "q",
+              code: "invalid",
+            },
+          ],
+          status: "422",
+        }),
+      ),
+      stderr: "gh: Validation Failed (HTTP 422)",
+    });
+
+    expect(await github.searchIssues("repo:acme/secret", 1)).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-search", message, unsearchable: true },
+    });
+  });
+
+  it("tells an empty HTTP 500, as GitHub answers a very long search, from other server errors", async () => {
+    const answeringWith = (body: string) =>
+      ghSearching({
+        kind: "exited",
+        exitCode: 1,
+        stdout: transcript("500 Internal Server Error", searchHeaders, body),
+        stderr: "gh: HTTP 500",
+      });
+
+    expect(
+      await answeringWith("").searchIssues("x".repeat(2314), 1),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "server-error", message: "HTTP 500", emptyBody: true },
+    });
+    const other = await answeringWith(
+      JSON.stringify({ message: "Server Error" }),
+    ).searchIssues("is:open", 1);
+    expect(other).toMatchObject({
+      ok: false,
+      error: { kind: "server-error", message: "Server Error" },
+    });
+    expect(!other.ok && "emptyBody" in other.error).toBe(false);
   });
 
   it("reports other failures as any other read's", async () => {

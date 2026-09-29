@@ -1,7 +1,19 @@
-import type { SavedView, ViewList } from "@verdandi/core/contract";
-import { Pencil } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  SavedView,
+  SearchProblem,
+  ViewList,
+} from "@verdandi/core/contract";
+import { Info, Pencil, RotateCw, TriangleAlert } from "lucide-react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { viewFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow, MissingParentRow } from "./IssueRow";
@@ -9,7 +21,7 @@ import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { useListPane } from "./use-list-pane";
-import { matchesLabel } from "./view-screen";
+import { matchesLabel, viewStrips, type ViewStrip } from "./view-screen";
 
 /**
  * A view's screen: its name and search, how many issues match, and the
@@ -19,6 +31,10 @@ import { matchesLabel } from "./view-screen";
  * expands and collapses as a list does, and keeps its place as a list does:
  * as matches move under their parent issues, the selection stays on its
  * issue.
+ *
+ * Strips under the header say what the matches leave out: more than the
+ * 1,000 GitHub returns, or what GitHub did not return. A search GitHub
+ * failed says why in place of the matches, with **Edit view**.
  */
 export function ViewPane({
   view,
@@ -119,6 +135,10 @@ export function ViewPane({
             <kbd className="font-mono text-[11px] text-muted-foreground">E</kbd>
           </Button>
         </div>
+        {list &&
+          viewStrips(list).map((strip) => (
+            <Strip key={strip.text} strip={strip} onRetry={retry} />
+          ))}
       </header>
       <div
         ref={scroller}
@@ -130,17 +150,14 @@ export function ViewPane({
         onScroll={onScroll}
         className="group min-h-0 flex-1 overflow-y-auto outline-none"
       >
-        {list?.rejected !== undefined ? (
-          // GitHub will reject the search again until it changes.
-          <div role="alert" className="space-y-2 px-4 py-6">
-            <p className="font-medium">GitHub rejected this search</p>
-            <pre className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-              {list.rejected}
-            </pre>
-            <Button variant="outline" size="sm" onClick={onEdit}>
-              Edit view
-            </Button>
-          </div>
+        {list?.searchProblem &&
+        // GitHub rejects the search whatever it matched before.
+        (list.searchProblem.kind !== "too-large" || rows.length === 0) ? (
+          <SearchFailure
+            problem={list.searchProblem}
+            onEdit={onEdit}
+            onRetry={retry}
+          />
         ) : failure && rows.length === 0 ? (
           // Nothing to show, so why stands in place of the matches.
           <ProblemNotice
@@ -175,15 +192,176 @@ export function ViewPane({
                 </Fragment>
               ))}
               {list.loading.status !== "loading" && rows.length === 0 && (
-                <p role="status" className="px-4 py-6 text-muted-foreground">
-                  No matching issues
-                </p>
+                <BodyState title="No matching issues" role="status">
+                  <p>GitHub found nothing for this search.</p>
+                  <ul className="list-disc space-y-1 pl-5">
+                    <li>
+                      GitHub silently ignores qualifiers it doesn&apos;t know: a
+                      typo such as <code>lable:bug</code> returns nothing,
+                      without an error.
+                    </li>
+                    <li>
+                      Inside an <code>OR</code> group, repositories you
+                      can&apos;t read are dropped without notice.
+                    </li>
+                  </ul>
+                  <EditViewButton onEdit={onEdit} />
+                </BodyState>
               )}
             </>
           )
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * A strip under a view's header: what its matches leave out, with Retry
+ * when running the search again may help.
+ */
+function Strip({ strip, onRetry }: { strip: ViewStrip; onRetry: () => void }) {
+  const Icon = strip.retry ? TriangleAlert : Info;
+  return (
+    <div
+      role="status"
+      title={`${strip.text} · ${strip.hint}`}
+      className={cn(
+        "flex h-7 items-center gap-2 border-t px-4 text-xs whitespace-nowrap",
+        strip.retry ? "bg-warning/10" : "bg-muted/50",
+      )}
+    >
+      <Icon
+        aria-hidden
+        className={cn(
+          "size-3.5 shrink-0",
+          strip.retry ? "text-warning" : "text-muted-foreground",
+        )}
+      />
+      <span className="shrink-0 font-medium">{strip.text}</span>
+      {strip.retry && (
+        <button
+          type="button"
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          onClick={onRetry}
+          className="shrink-0 underline underline-offset-2 hover:text-foreground"
+        >
+          Retry
+        </button>
+      )}
+      <span className="min-w-0 truncate text-muted-foreground">
+        · {strip.hint}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Why GitHub failed a view's search, in place of the matches: GitHub's own
+ * message when it rejected the search or cannot search what it names,
+ * which only editing the search mends, and a hint that it may be too large
+ * when GitHub failed it with an empty HTTP 500.
+ */
+function SearchFailure({
+  problem,
+  onEdit,
+  onRetry,
+}: {
+  problem: SearchProblem;
+  onEdit: () => void;
+  onRetry: () => void;
+}) {
+  switch (problem.kind) {
+    case "invalid":
+      return (
+        <BodyState title="GitHub rejected this search" role="alert">
+          <GitHubMessage message={problem.message} />
+          <p>It is not run again until the search changes.</p>
+          <EditViewButton onEdit={onEdit} />
+        </BodyState>
+      );
+    case "unsearchable":
+      return (
+        <BodyState
+          title="GitHub can't search a repository or user in this view"
+          role="alert"
+        >
+          <GitHubMessage message={problem.message} />
+          <p>
+            Check the <code>repo:</code>, <code>org:</code> and{" "}
+            <code>user:</code> qualifiers.
+          </p>
+          <EditViewButton onEdit={onEdit} />
+        </BodyState>
+      );
+    case "too-large":
+      return (
+        <BodyState title="GitHub returned an error" role="alert">
+          <p>
+            HTTP 500 with an empty body. GitHub answers very long searches this
+            way, so the search may be too large.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRetry}
+              className="text-foreground"
+            >
+              <RotateCw aria-hidden />
+              Retry
+            </Button>
+            <EditViewButton onEdit={onEdit} />
+          </div>
+        </BodyState>
+      );
+  }
+}
+
+/** What stands in place of a view's matches, with what to do about it. */
+function BodyState({
+  title,
+  role,
+  children,
+}: {
+  title: string;
+  role: "alert" | "status";
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role={role}
+      className="max-w-xl space-y-3 px-4 py-6 text-muted-foreground [&_code]:font-mono [&_code]:text-xs"
+    >
+      <p className="font-medium text-foreground">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+/** GitHub's own words, as it said them. */
+function GitHubMessage({ message }: { message: string }) {
+  return (
+    <pre className="rounded-md border bg-muted/50 px-2.5 py-2 font-mono text-xs whitespace-pre-wrap text-foreground">
+      {message}
+    </pre>
+  );
+}
+
+/** Opens the view dialog, to mend the search. */
+function EditViewButton({ onEdit }: { onEdit: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onEdit}
+      className="text-foreground"
+    >
+      <Pencil aria-hidden />
+      Edit view
+    </Button>
   );
 }
 
@@ -207,7 +385,10 @@ function useViewList(view: SavedView): ViewList | undefined {
           readingContext: false,
           matchCount: undefined,
           pullRequests: 0,
-          rejected: undefined,
+          complete: false,
+          incomplete: false,
+          searching: undefined,
+          searchProblem: undefined,
           loading: { status: "failed", problem: { kind: "error", message } },
         });
       }

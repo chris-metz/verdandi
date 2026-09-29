@@ -9,6 +9,7 @@ import type {
 } from "../contract.ts";
 import {
   readPools,
+  searchPageSize,
   type AuthStatus,
   type CommentPage,
   type GitHubAccess,
@@ -83,7 +84,7 @@ export type FakeSearch =
       incomplete?: boolean;
       pullRequests?: number;
     }
-  | { rejected: string };
+  | { rejected: string; unsearchable?: boolean };
 
 /** A synthetic comment as a test declares it. */
 export interface FakeComment {
@@ -157,7 +158,8 @@ export interface FakeGitHub extends GitHubAccess {
    * to 100 a page, with GitHub's total (their number unless said otherwise)
    * and whether it reports the results incomplete, and how many pull
    * requests each page also matches; or its rejection (HTTP 422) with
-   * GitHub's message. Any other search matches nothing.
+   * GitHub's message, for a repository or user it cannot search when
+   * `unsearchable`. Any other search matches nothing.
    */
   setSearch(query: string, answer: FakeSearch): void;
   /** Every read fails with this error from now on, or succeeds again. */
@@ -1001,10 +1003,17 @@ export function createFakeGitHub({
           if ("rejected" in searched) {
             return {
               ok: false,
-              error: { kind: "invalid-search", message: searched.rejected },
+              error: {
+                kind: "invalid-search",
+                message: searched.rejected,
+                unsearchable: searched.unsearchable ?? false,
+              },
             };
           }
-          const shown = searched.matches.slice((page - 1) * 100, page * 100);
+          const shown = searched.matches.slice(
+            (page - 1) * searchPageSize,
+            page * searchPageSize,
+          );
           return {
             ok: true,
             value: {

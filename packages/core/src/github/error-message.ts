@@ -16,7 +16,9 @@ export function describeGitHubError(error: GitHubError): string {
     case "rate-limited":
       return `GitHub rate limit reached: ${error.message}`;
     case "server-error":
-      return `GitHub failed to answer: ${error.message}`;
+      return error.emptyBody
+        ? "GitHub failed the search without saying why; the search may be too large."
+        : `GitHub failed to answer: ${error.message}`;
     case "invalid-search":
       return `GitHub rejected the search: ${error.message}`;
     case "http":

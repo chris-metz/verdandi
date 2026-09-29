@@ -104,13 +104,24 @@ export interface GitHubAccess {
   /**
    * Runs an issue search, its text exactly as given, through GitHub's
    * advanced REST search: one page of up to 100 matches, counted from 1.
-   * GitHub rejects a search it cannot read (HTTP 422) with its own message.
+   * GitHub rejects a search it cannot read or whose repositories or users it
+   * cannot search (HTTP 422) with its own message, and fails a very long one
+   * with an empty HTTP 500.
    */
   searchIssues(
     query: string,
     page: number,
   ): Promise<GitHubResponse<SearchPage>>;
 }
+
+/** How many matches a page of an issue search holds: the most GitHub allows. */
+export const searchPageSize = 100;
+
+/**
+ * The most matches GitHub's issue search returns, however many it counts:
+ * a page beyond them is rejected (HTTP 422).
+ */
+export const searchCeiling = 1000;
 
 /** Every rate-limit pool, in the order they are listed. */
 export const rateLimitPools: readonly RateLimitPool[] = [
@@ -369,11 +380,16 @@ export type GitHubError =
     }
   /**
    * GitHub failed to answer: a server error (HTTP 5xx), or a GraphQL query
-   * that timed out. Asking again may succeed.
+   * that timed out. Asking again may succeed. GitHub answers a very long
+   * search with an empty HTTP 500, `emptyBody`.
    */
-  | { kind: "server-error"; message: string }
-  /** GitHub rejected a search it cannot read (HTTP 422), saying why. */
-  | { kind: "invalid-search"; message: string }
+  | { kind: "server-error"; message: string; emptyBody?: true }
+  /**
+   * GitHub rejected a search (HTTP 422), saying why: it cannot read it, or,
+   * `unsearchable`, cannot search a repository or user it names, e.g. one
+   * that does not exist or this account cannot read.
+   */
+  | { kind: "invalid-search"; message: string; unsearchable: boolean }
   /** GitHub answered with any other HTTP error status, e.g. 401. */
   | { kind: "http"; status: number; message: string }
   /** GitHub answered a GraphQL query with any other errors. */

@@ -390,6 +390,7 @@ describe("a view's freshness", () => {
     loading: LoadingState,
     readingContext: boolean,
     trees: ViewTree[] = [],
+    searching?: ViewList["searching"],
   ): ViewList {
     return {
       view: { id: "v", name: "V", query: "is:open" },
@@ -398,7 +399,10 @@ describe("a view's freshness", () => {
       readingContext,
       matchCount: trees.length,
       pullRequests: 0,
-      rejected: undefined,
+      complete: true,
+      incomplete: false,
+      searching,
+      searchProblem: undefined,
       loading,
     };
   }
@@ -439,6 +443,31 @@ describe("a view's freshness", () => {
     });
   });
 
+  it("says which page of the search it reads while the first run loads", () => {
+    expect(
+      viewFreshness(
+        view({ status: "loading" }, false, [], { page: 1, pages: undefined }),
+        now,
+      ),
+    ).toEqual({ text: "Searching…", busy: true, retry: false });
+    expect(
+      viewFreshness(
+        view({ status: "loading" }, true, [], { page: 2, pages: 10 }),
+        now,
+      ),
+    ).toEqual({ text: "Searching… page 2 of 10", busy: true, retry: false });
+    // A refresh keeps saying how old what it shows is.
+    expect(
+      viewFreshness(
+        view({ status: "refreshing", updatedAt: now }, false, [], {
+          page: 2,
+          pages: 10,
+        }),
+        now,
+      ),
+    ).toEqual({ text: "Updated just now", busy: true, retry: false });
+  });
+
   it("counts the parent issues that could not be loaded, and offers to retry", () => {
     expect(
       viewFreshness(
@@ -448,7 +477,7 @@ describe("a view's freshness", () => {
         now,
       ),
     ).toEqual({
-      text: "Updated 3 min ago · 1 issue could not be loaded",
+      text: "Updated 3 min ago · 1 parent issue could not be loaded",
       busy: false,
       retry: true,
     });

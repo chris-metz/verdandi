@@ -33,6 +33,11 @@ export interface ViewForest {
 export interface ViewForestOptions {
   /** The matches, in the search's order. */
   matches: readonly SearchMatch[];
+  /**
+   * Whether the matches are all the search's matches, so that the context
+   * issues are known not to match.
+   */
+  complete: boolean;
   /** An issue read earlier, with its relationships. */
   lookup: (id: string) => Issue | undefined;
   /**
@@ -68,6 +73,7 @@ const notVisible: UnreadIssue = {
  */
 export function buildViewForest({
   matches,
+  complete,
   lookup,
   readSinceSearch,
   unread,
@@ -174,7 +180,7 @@ export function buildViewForest({
           subIssues: [],
           expanded: false,
           unread: unread(reference),
-          view: { match: false, matchesInside: 0 },
+          view: { match: false, mayMatch: !complete, matchesInside: 0 },
         },
         firstRank: rank,
       };
@@ -205,7 +211,11 @@ export function buildViewForest({
         ),
         subIssues,
         expanded: isExpanded(id, matchesInside > 0),
-        view: { match: match !== undefined, matchesInside },
+        view: {
+          match: match !== undefined,
+          mayMatch: match === undefined && !complete,
+          matchesInside,
+        },
       },
       firstRank,
     };
