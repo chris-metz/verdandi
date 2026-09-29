@@ -25,6 +25,14 @@ export function rememberPlace(scope: Scope, place: ListPlace): void {
   places.set(scopeLabel(scope), place);
 }
 
+/** A renamed repository's entry keeps its place under its new name. */
+export function movePlace(from: Scope, to: Scope): void {
+  const place = places.get(scopeLabel(from));
+  if (!place) return;
+  places.delete(scopeLabel(from));
+  places.set(scopeLabel(to), place);
+}
+
 /** Removing an entry discards its cursor and scroll position. */
 export function forgetPlace(scope: Scope): void {
   places.delete(scopeLabel(scope));

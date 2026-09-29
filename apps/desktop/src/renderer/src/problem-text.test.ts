@@ -89,3 +89,19 @@ describe("how a problem reads", () => {
     });
   });
 });
+
+describe("a tracked repository whose name another repository took over", () => {
+  it("says so, naming the repository, rather than guessing why the tracked one is unavailable", () => {
+    expect(
+      problemText(
+        { kind: "unavailable", access: undefined, nameTakenOver: true },
+        "octo-reader",
+        { owner: "acme", name: "api" },
+      ),
+    ).toEqual({
+      text: "acme/api now names a different repository. The one you tracked is unavailable or not accessible with this account.",
+      detail: undefined,
+      link: undefined,
+    });
+  });
+});

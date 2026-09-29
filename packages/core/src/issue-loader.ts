@@ -43,6 +43,11 @@ export interface IssueLoader {
   ): Promise<void>[];
   /** Whether an issue is being read by ID. */
   isReading(id: string): boolean;
+  /**
+   * Keeps what was read of a repository's open issues under its new
+   * address, as it was renamed or transferred.
+   */
+  renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
 }
 
 /**
@@ -281,6 +286,12 @@ export function createIssueLoader({
     },
     isReading(id) {
       return reading.has(id);
+    },
+    renameRepository(from, to) {
+      const reads = repositories.get(repositoryKey(from));
+      if (!reads || repositories.has(repositoryKey(to))) return;
+      repositories.delete(repositoryKey(from));
+      repositories.set(repositoryKey(to), reads);
     },
   };
 }

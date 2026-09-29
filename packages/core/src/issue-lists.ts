@@ -54,6 +54,11 @@ export interface IssueLists {
   /** Applies hand-edited tracking to cached lists, loading only the shown one. */
   settingsChanged(): Promise<void>;
   /**
+   * Keeps a repository's list, what was read of its open issues and its
+   * expansion, under its new address, as it was renamed or transferred.
+   */
+  renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
+  /**
    * Pushes a scope's list at once. If it has not loaded, loads it, pushing
    * the list after each response; if it is older than five minutes, reads it
    * again the same way while it shows what it has; otherwise reads again
@@ -653,6 +658,17 @@ export function createIssueLists({
         update(list);
         if (isShown(list)) void start(list);
       }
+    },
+    renameRepository(from, to) {
+      loader.renameRepository(from, to);
+      const scope: Scope = { kind: "repository", repository: { ...to } };
+      const list = lists.get(
+        scopeKey({ kind: "repository", repository: from }),
+      );
+      if (!list || lists.has(scopeKey(scope))) return;
+      lists.delete(scopeKey(list.scope));
+      list.scope = scope;
+      lists.set(scopeKey(scope), list);
     },
     open(scope) {
       const known = lists.get(scopeKey(scope));

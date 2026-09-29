@@ -1,7 +1,8 @@
-import type { Problem } from "./contract.ts";
-import type { GitHubResult, Issue } from "./github/port.ts";
+import type { Problem, RepositoryAddress } from "./contract.ts";
+import type { GitHubResult, Issue, IssueReference } from "./github/port.ts";
 import { atOrAfter, type Moment } from "./moments.ts";
 import { problemOf } from "./problems.ts";
+import { sameRepository } from "./repository-address.ts";
 import type { RequestResult } from "./request-queue.ts";
 
 /**
@@ -29,6 +30,11 @@ export interface IssueStore {
   readAt(id: string): Moment | undefined;
   /** Why the latest read of an issue failed, if it failed after the last one that did not. */
   failure(id: string): Failure | undefined;
+  /**
+   * Moves the issues read of a repository, and those naming its issues, to
+   * its new address, as it was renamed or transferred.
+   */
+  renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
 }
 
 /** Why reading an issue failed, and when GitHub was asked. */
@@ -86,6 +92,26 @@ export function createIssueStore(): IssueStore {
     },
     failure(id) {
       return entries.get(id)?.failure;
+    },
+    renameRepository(from, to) {
+      const moved = <T extends Pick<IssueReference, "repository">>(
+        issue: T,
+      ): T =>
+        sameRepository(issue.repository, from)
+          ? { ...issue, repository: { ...to } }
+          : issue;
+      for (const known of entries.values()) {
+        if (!known.read) continue;
+        const { issue } = known.read;
+        known.read = {
+          ...known.read,
+          issue: {
+            ...moved(issue),
+            parent: issue.parent && moved(issue.parent),
+            subIssues: issue.subIssues.map(moved),
+          },
+        };
+      }
     },
   };
 }

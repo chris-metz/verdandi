@@ -2926,3 +2926,99 @@ describe("gh adapter: issue search", () => {
     });
   });
 });
+
+describe("gh adapter: looking up a repository by its ID", () => {
+  const restHeaders = [
+    "Content-Type: application/json; charset=utf-8",
+    "X-Ratelimit-Limit: 5000",
+    "X-Ratelimit-Remaining: 4999",
+    "X-Ratelimit-Reset: 1790510601",
+    "X-Ratelimit-Resource: core",
+  ];
+
+  /** A `gh` that answers REST calls with a result, recording their arguments. */
+  function ghAnsweringRest(result: CommandResult, calls: string[][] = []) {
+    return createGhAdapter({
+      gh: ghPath,
+      runCommand: (command, args, options) => {
+        if (command !== ghPath || options?.input !== undefined) {
+          throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        }
+        calls.push([...args]);
+        return Promise.resolve(result);
+      },
+    });
+  }
+
+  it("asks REST for repositories/{id} on github.com, and reads its current address and the core pool's budget", async () => {
+    const calls: string[][] = [];
+    const github = ghAnsweringRest(
+      {
+        kind: "exited",
+        exitCode: 0,
+        stdout: transcript(
+          "200 OK",
+          restHeaders,
+          JSON.stringify({ id: 1296269, full_name: "newco/api", name: "api" }),
+        ),
+        stderr: "",
+      },
+      calls,
+    );
+
+    expect(await github.fetchRepositoryById(1296269)).toEqual({
+      ok: true,
+      value: { id: 1296269, repository: { owner: "newco", name: "api" } },
+      budget: {
+        pool: "core",
+        limit: 5000,
+        remaining: 4999,
+        resetAt: Date.parse("2026-09-27T12:03:21Z"),
+      },
+      viewerLogin: undefined,
+    });
+    expect(calls).toEqual([
+      [
+        "api",
+        "--method",
+        "GET",
+        "--hostname",
+        "github.com",
+        "--include",
+        "repositories/1296269",
+      ],
+    ]);
+  });
+
+  it("reports a repository GitHub does not show as unavailable", async () => {
+    const github = ghAnsweringRest({
+      kind: "exited",
+      exitCode: 1,
+      stdout: transcript(
+        "404 Not Found",
+        restHeaders,
+        JSON.stringify({ message: "Not Found", status: "404" }),
+      ),
+      stderr: "gh: Not Found (HTTP 404)",
+    });
+
+    expect(await github.fetchRepositoryById(1296269)).toMatchObject({
+      ok: false,
+      error: { kind: "unavailable", message: "Not Found", access: undefined },
+    });
+  });
+
+  it("reports an answer that is not a repository as unexpected", async () => {
+    const github = ghAnsweringRest({
+      kind: "exited",
+      exitCode: 0,
+      stdout: transcript("200 OK", restHeaders, JSON.stringify({ id: 1 })),
+      stderr: "",
+    });
+
+    expect(await github.fetchRepositoryById(1)).toMatchObject({
+      ok: false,
+      error: { kind: "unexpected-response" },
+    });
+  });
+});

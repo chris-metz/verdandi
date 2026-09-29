@@ -24,6 +24,7 @@ import {
   type NumberedItem,
   type RateLimitBudget,
   type RepositoryAccess,
+  type RepositoryIdentity,
   type RepositorySummary,
   type SearchMatch,
   type SearchPage,
@@ -252,6 +253,30 @@ export function createGhAdapter({
       const matches = readSearchPage(parseJson(body));
       return matches
         ? { ok: true, value: matches, budget, viewerLogin: undefined }
+        : failed({ kind: "unexpected-response" }, budget);
+    },
+    async fetchRepositoryById(id) {
+      const result = await runCommand(gh, [
+        "api",
+        "--method",
+        "GET",
+        "--hostname",
+        "github.com",
+        "--include",
+        `repositories/${String(id)}`,
+      ]);
+      if (result.kind !== "exited") return failed(runFailure(result));
+      const response = parseTranscript(result.stdout);
+      if (!response) return failed(exitFailure(result));
+      const { status, headers, body } = response;
+      const budget = budgetFromHeaders(headers, "core");
+      if (status >= 400) {
+        const message = readMessage(body) ?? `HTTP ${String(status)}`;
+        return failed(httpError(status, message, headers), budget);
+      }
+      const identity = readRepositoryIdentity(parseJson(body));
+      return identity
+        ? { ok: true, value: identity, budget, viewerLogin: undefined }
         : failed({ kind: "unexpected-response" }, budget);
     },
     async fetchAuthStatus() {
@@ -853,6 +878,18 @@ function readAuthStatus(json: unknown): GitHubResult<AuthStatus> {
 
 /** GraphQL variables by name, each with its GraphQL type. */
 type Variables = Record<string, { type: string; value: unknown }>;
+
+/** Reads a repository as REST returns it, or `undefined` if it is not one. */
+function readRepositoryIdentity(body: unknown): RepositoryIdentity | undefined {
+  if (!isObject(body)) return undefined;
+  const { id, full_name } = body;
+  const repository =
+    typeof full_name === "string"
+      ? parseRepositoryAddress(full_name)
+      : undefined;
+  if (typeof id !== "number" || !repository) return undefined;
+  return { id, repository };
+}
 
 /** Reads a repository's summary, or `undefined` if it is not one. */
 function readRepositorySummary(node: unknown): RepositorySummary | undefined {

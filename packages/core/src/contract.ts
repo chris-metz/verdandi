@@ -95,7 +95,33 @@ export type Notice =
    * switch`: everything read as the previous one was dropped, and what is on
    * screen is read again. The tracked repositories stay as they are.
    */
-  | { kind: "account-changed"; previous: Account; account: Account };
+  | { kind: "account-changed"; previous: Account; account: Account }
+  /**
+   * Tracked repositories were renamed or transferred, so their entries now
+   * carry their new addresses; several found at once come together. A
+   * change only in case is corrected without a notice.
+   */
+  | { kind: "repositories-renamed"; renamed: RepositoryRename[] }
+  /**
+   * `settings.json` listed repositories more than once under the same GitHub
+   * ID, e.g. after a hand edit or syncing: the entry higher in the sidebar
+   * stayed, and the others were removed.
+   */
+  | {
+      kind: "duplicate-repositories-removed";
+      removed: { repository: RepositoryAddress; sameAs: RepositoryAddress }[];
+    };
+
+/** A tracked repository that GitHub now knows under another address. */
+export interface RepositoryRename {
+  from: RepositoryAddress;
+  to: RepositoryAddress;
+  /**
+   * The saved views whose search names `repo:` and the old address, which
+   * GitHub's search does not follow; they are not rewritten.
+   */
+  views: SavedView[];
+}
 
 /**
  * Why GitHub would not let this account read something, named only when
@@ -151,6 +177,11 @@ export type Problem =
       access: AccessEvidence | undefined;
       /** Only when the readable repository reports `hasIssuesEnabled: false`. */
       issuesDisabled?: true;
+      /**
+       * Only for a tracked repository whose address now leads to a different
+       * repository, while the one tracked cannot be read by its ID.
+       */
+      nameTakenOver?: true;
     }
   /**
    * Reading it stopped before GitHub was asked, as its screen was left; it is
@@ -1071,6 +1102,15 @@ export interface CoreRequests {
     repositories: RepositoryAddress[],
   ) => Promise<RepositoryAddition[]>;
   /**
+   * **Track the new owner/name**, for a tracked repository whose name now
+   * belongs to a different repository: checks the repository at that name
+   * afresh and, if its issues can be read, tracks it in the entry's place,
+   * with its ID, instead of the one tracked before.
+   */
+  replaceRepository: (
+    repository: TrackedRepository,
+  ) => Promise<RepositoryAddition>;
+  /**
    * Removes a tracked repository after the interface has confirmed it.
    * Views and cached issues stay; its list state is discarded and All is
    * updated. A removed selection moves to the next repository, the previous
@@ -1243,6 +1283,7 @@ const requests: Record<keyof CoreRequests, true> = {
   checkRepository: true,
   addRepositories: true,
   removeRepository: true,
+  replaceRepository: true,
   skipRepositoryPicker: true,
   saveView: true,
   removeView: true,

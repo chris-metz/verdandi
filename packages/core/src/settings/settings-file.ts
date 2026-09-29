@@ -19,7 +19,13 @@ import {
   nameWithOwner,
   parseRepositoryAddress,
 } from "../repository-address.ts";
-import type { Settings, SettingsResult, SettingsStorage } from "./port.ts";
+import type {
+  RepositoryDuplicate,
+  RepositoryUpdate,
+  Settings,
+  SettingsResult,
+  SettingsStorage,
+} from "./port.ts";
 
 /** Portable user data. A change always starts from the file as it is now. */
 export function createSettingsFile(
@@ -146,8 +152,9 @@ export function createSettingsFile(
       return serial(async () => {
         try {
           const { document, text } = await readDocument();
+          const { kept, duplicates } = distinctIds(document.repositories);
           lastValid = {
-            repositories: document.repositories.flatMap(({ name, id }) => {
+            repositories: kept.flatMap(({ name, id }) => {
               const address = parseRepositoryAddress(name);
               return address
                 ? [{ ...address, ...(id === undefined ? {} : { id }) }]
@@ -163,6 +170,7 @@ export function createSettingsFile(
                 ? { status: "newer-version", message: newerVersion }
                 : { status: "writable" },
             exists: text !== undefined,
+            duplicates,
           };
         } catch (error) {
           return { ok: false, message: message(error), value: lastValid };
@@ -255,6 +263,37 @@ export function createSettingsFile(
         }
       });
     },
+    async updateRepositories(updates) {
+      const updated: RepositoryUpdate[] = [];
+      const result = await change((document) => {
+        for (const update of updates) {
+          const { entry, current } = update;
+          const name = nameWithOwner(entry).toLowerCase();
+          const found =
+            entry.id === undefined
+              ? document.repositories.find(
+                  (other) =>
+                    other.id === undefined && other.name.toLowerCase() === name,
+                )
+              : document.repositories.find(({ id }) => id === entry.id);
+          if (!found) continue;
+          found.name = nameWithOwner(current);
+          found.id = current.id;
+          updated.push(update);
+        }
+        document.repositories = distinctIds(document.repositories).kept;
+      });
+      return result.ok ? { ok: true, updated } : result;
+    },
+    async removeDuplicateRepositories() {
+      let removed: RepositoryDuplicate[] = [];
+      const result = await change((document) => {
+        const { kept, duplicates } = distinctIds(document.repositories);
+        document.repositories = kept;
+        removed = duplicates;
+      });
+      return result.ok ? { ok: true, removed } : result;
+    },
     removeRepository(repository) {
       return change((document) => {
         const name = nameWithOwner(repository).toLowerCase();
@@ -329,6 +368,31 @@ export function createSettingsFile(
       }
     });
   }
+}
+
+/**
+ * The entries without those that have the ID of one higher in the sidebar,
+ * which is the repository's, and those left out.
+ */
+function distinctIds(repositories: Document["repositories"]): {
+  kept: Document["repositories"];
+  duplicates: RepositoryDuplicate[];
+} {
+  const first = new Map<number, string>();
+  const duplicates: RepositoryDuplicate[] = [];
+  const kept = repositories.filter(({ name, id }) => {
+    if (id === undefined) return true;
+    const sameAs = first.get(id);
+    if (sameAs === undefined) {
+      first.set(id, name);
+      return true;
+    }
+    const repository = parseRepositoryAddress(name);
+    const higher = parseRepositoryAddress(sameAs);
+    if (repository && higher) duplicates.push({ repository, sameAs: higher });
+    return false;
+  });
+  return { kept, duplicates };
 }
 
 function move(

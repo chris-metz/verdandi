@@ -18,12 +18,14 @@ export function MainArea({
   repositories,
   onSelectRepository,
   onRemoveRepository,
+  onTrackNewRepository,
   onEditView,
 }: {
   scope: Scope;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
   onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
+  onTrackNewRepository: (repository: TrackedRepository) => void;
   /** Opens the view dialog for the view shown. */
   onEditView: () => void;
   /** The issue pages opened from the list, the one shown last. */
@@ -51,6 +53,7 @@ export function MainArea({
         repositories={repositories}
         onSelectRepository={onSelectRepository}
         onRemoveRepository={onRemoveRepository}
+        onTrackNewRepository={onTrackNewRepository}
         login={login}
         hasKeyboard={hasKeyboard}
         onOpen={(issue) => {

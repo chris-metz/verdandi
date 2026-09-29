@@ -15,6 +15,7 @@ import { accountLabel } from "./account-label";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
 import {
   presentScope,
+  repositoryLabel,
   sameScope,
   scopeLabel,
   type ScopePresentation,
@@ -40,6 +41,7 @@ export function Sidebar({
   onReorder,
   onAddRepository,
   onRemoveRepository,
+  onTrackNewRepository,
   onNewView,
   onEditView,
   onRemoveView,
@@ -62,6 +64,11 @@ export function Sidebar({
   /** Opens the repository picker. */
   onAddRepository: () => void;
   onRemoveRepository: (repository: TrackedRepository) => void;
+  /**
+   * Tracks the repository that took over a tracked repository's name in its
+   * place.
+   */
+  onTrackNewRepository: (repository: TrackedRepository) => void;
   /** Opens the view dialog for a new view. */
   onNewView: () => void;
   /** Opens the view dialog for a view. */
@@ -190,33 +197,46 @@ export function Sidebar({
     }
     if (scope.kind !== "repository") return undefined;
     const { repository } = scope;
+    const unavailable = "unavailable" in item ? item.unavailable : undefined;
+    const retry: MenuItem = {
+      label: "Retry",
+      onClick: () => {
+        onSelect(scope);
+        void window.verdandi.retry({ kind: "list", scope });
+      },
+    };
+    const remove: MenuItem = {
+      label: "Remove repository…",
+      disabled: !writable,
+      onClick: () => {
+        onRemoveRepository(repository);
+      },
+    };
+    if (!unavailable) return [remove];
+    // Its address would open the repository that took it over.
+    if (unavailable.nameTakenOver)
+      return [
+        retry,
+        remove,
+        {
+          label: `Track the new ${repositoryLabel(repository)}`,
+          disabled: !writable,
+          onClick: () => {
+            onTrackNewRepository(repository);
+          },
+        },
+      ];
     return [
-      ...("unavailable" in item && item.unavailable
-        ? [
-            {
-              label: "Retry",
-              onClick: () => {
-                onSelect(scope);
-                void window.verdandi.retry({ kind: "list", scope });
-              },
-            },
-            {
-              label: "Open on GitHub",
-              onClick: () => {
-                window.desktop.openExternal(
-                  `https://github.com/${repository.owner}/${repository.name}`,
-                );
-              },
-            },
-          ]
-        : []),
+      retry,
       {
-        label: "Remove repository…",
-        disabled: !writable,
+        label: "Open on GitHub",
         onClick: () => {
-          onRemoveRepository(repository);
+          window.desktop.openExternal(
+            `https://github.com/${repository.owner}/${repository.name}`,
+          );
         },
       },
+      remove,
     ];
   }
   const inSection = (section: ScopePresentation["entry"]["section"]) =>
@@ -388,7 +408,13 @@ function Entry({
   const { scope } = item;
   const { description, entry } = presentScope(scope);
   const unavailable = "unavailable" in item ? item.unavailable : undefined;
-  const reason = unavailable ? problemText(unavailable, login) : undefined;
+  const reason = unavailable
+    ? problemText(
+        unavailable,
+        login,
+        scope.kind === "repository" ? scope.repository : undefined,
+      )
+    : undefined;
   const row = (
     <li
       role="option"

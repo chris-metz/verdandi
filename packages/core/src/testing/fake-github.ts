@@ -22,6 +22,7 @@ import {
   type NumberedItem,
   type RateLimitBudget,
   type RepositoryAccess,
+  type RepositoryIdentity,
   type RepositorySummary,
   type SearchPage,
   type SuggestionPage,
@@ -29,7 +30,8 @@ import {
 
 /**
  * A synthetic issue as a test declares it. Its node ID is `I_` and its
- * `owner/name#number`, e.g. `I_acme/api#3`.
+ * `owner/name#number`, e.g. `I_acme/api#3`, by the name its repository was
+ * added under: it keeps it through renames, as GitHub's node IDs do.
  */
 export interface FakeIssue {
   metadata?: Partial<IssueMetadata>;
@@ -42,7 +44,8 @@ export interface FakeIssue {
   labels?: Label[];
   /**
    * Its sub-issues in GitHub's order, as `owner/name#number` of issues
-   * declared in any repository. Parent issues and sub-issue progress follow.
+   * declared in any repository, by the name it was added under. Parent
+   * issues and sub-issue progress follow.
    */
   subIssues?: string[];
   /** Blocking relationships, as owner/name#number; the reverse side is derived. */
@@ -140,9 +143,14 @@ export interface FakeGitHub extends GitHubAccess {
   /**
    * Renames or transfers a repository, `owner/name`: it keeps its ID and
    * issues, and GitHub follows its old address to the new one, as for a
-   * redirect.
+   * redirect, until another repository is added at the old address, which
+   * takes over its name, or unless `redirect` is false.
    */
-  renameRepository(from: string, to: string): void;
+  renameRepository(
+    from: string,
+    to: string,
+    options?: { redirect?: boolean },
+  ): void;
   /** The organizations GitHub lists the account as a member of, from now on. */
   setOrganizations(logins: string[]): void;
   /** A repository's numeric ID, by `owner/name`. */
@@ -196,7 +204,8 @@ export interface FakeGitHub extends GitHubAccess {
    * issue's body and its second comment's), `fetchRepositorySummaries
    * acme/api acme/web`, `fetchRepositoryAccess acme/api` or
    * `fetchRepositorySuggestions after 100` (the first page's without a
-   * cursor), or `searchIssues page 1 is:open label:bug`.
+   * cursor), `fetchRepositoryById 1000001`, or `searchIssues page 1 is:open
+   * label:bug`.
    */
   readonly received: readonly string[];
   /**
@@ -263,25 +272,42 @@ export function createFakeGitHub({
   const pullRequests = new Map<string, Set<number>>();
   /** Each repository's numeric ID, by `owner/name`. */
   const repositoryIds = new Map<string, number>();
+  /** The ID the next repository added gets. */
+  let nextRepositoryId = 1000001;
   const repositoryRequests = new Map<string, number>();
   /** How GitHub shows each repository, by `owner/name`. */
   const repositoryOptions = new Map<string, FakeRepositoryOptions>();
   /** The addresses GitHub follows to where a repository is now. */
   const redirects = new Map<string, string>();
+  /** The name each renamed repository was added under, by its name now. */
+  const addedAs = new Map<string, string>();
   let organizations: string[] = [];
   /** What the issue search answers, by search text. */
   const searches = new Map<string, FakeSearch>();
 
-  /** Where a repository is now, following renames and transfers. */
+  /**
+   * Where a repository is now, following renames and transfers, as GitHub
+   * spells it: GitHub ignores case in owner and name.
+   */
   function resolve(nameWithOwner: string): string {
     const seen = new Set<string>();
-    let current = nameWithOwner;
+    let current = spelled(nameWithOwner);
     while (!repositories.has(current) && redirects.has(current)) {
       if (seen.has(current)) break;
       seen.add(current);
-      current = redirects.get(current) ?? current;
+      current = spelled(redirects.get(current) ?? current);
     }
     return current;
+  }
+
+  /** An address as a repository or redirect GitHub knows spells it. */
+  function spelled(nameWithOwner: string): string {
+    const key = nameWithOwner.toLowerCase();
+    return (
+      [...repositories.keys(), ...redirects.keys()].find(
+        (known) => known.toLowerCase() === key,
+      ) ?? nameWithOwner
+    );
   }
 
   /**
@@ -467,20 +493,26 @@ export function createFakeGitHub({
     );
   }
 
-  /** A declared issue by `owner/name#number`. */
+  /** The name a repository, by its name now, was added under. */
+  function declared(nameWithOwner: string): string {
+    return addedAs.get(nameWithOwner) ?? nameWithOwner;
+  }
+
+  /** A declared issue by `owner/name#number`, following renames. */
   function find(ref: string): FakeIssue | undefined {
     const [nameWithOwner = "", number] = ref.split("#");
     return repositories
-      .get(nameWithOwner)
+      .get(resolve(nameWithOwner))
       ?.find((issue) => issue.number === Number(number));
   }
 
+  /** An issue as a relationship names it, by `owner/name#number` as declared. */
   function referenceTo(ref: string): IssueReference {
     const issue = find(ref);
     if (!issue) throw new Error(`The fake GitHub has no issue ${ref}.`);
     return {
       id: `I_${ref}`,
-      repository: addressOf(ref),
+      repository: addressOf(resolve(ref.split("#")[0] ?? "")),
       number: issue.number,
       title: issue.title,
       state: issue.state ?? "open",
@@ -492,7 +524,7 @@ export function createFakeGitHub({
     return [...repositories].flatMap(([repo, issues]) =>
       issues
         .filter((issue) => issue.blockers?.includes(ref))
-        .map((issue) => `${repo}#${String(issue.number)}`),
+        .map((issue) => `${declared(repo)}#${String(issue.number)}`),
     );
   }
 
@@ -511,8 +543,9 @@ export function createFakeGitHub({
    * The issue as GitHub reads it, with its relationships. Those GitHub hides
    * are left out, and the issue marked incomplete for them.
    */
-  function read(nameWithOwner: string, issue: FakeIssue): Issue {
-    const ref = `${nameWithOwner}#${String(issue.number)}`;
+  function read(asked: string, issue: FakeIssue): Issue {
+    const nameWithOwner = resolve(asked);
+    const ref = `${declared(nameWithOwner)}#${String(issue.number)}`;
     let incomplete: GitHubError | undefined;
     const shown = (related: string) => {
       const error = unavailable(
@@ -529,7 +562,7 @@ export function createFakeGitHub({
     let parent: IssueReference | undefined;
     for (const [repository, issues] of repositories) {
       for (const candidate of issues) {
-        const parentRef = `${repository}#${String(candidate.number)}`;
+        const parentRef = `${declared(repository)}#${String(candidate.number)}`;
         if (candidate.subIssues?.includes(ref) && shown(parentRef)) {
           parent = referenceTo(parentRef);
         }
@@ -613,11 +646,12 @@ export function createFakeGitHub({
       repositories.set(nameWithOwner, issues);
       repositoryOptions.set(nameWithOwner, options);
       redirects.delete(nameWithOwner);
+      addedAs.delete(nameWithOwner);
       if (!repositoryIds.has(nameWithOwner)) {
-        repositoryIds.set(nameWithOwner, 1000001 + repositoryIds.size);
+        repositoryIds.set(nameWithOwner, nextRepositoryId++);
       }
     },
-    renameRepository(from, to) {
+    renameRepository(from, to, { redirect = true } = {}) {
       const issues = repositories.get(from);
       const id = repositoryIds.get(from);
       if (!issues || id === undefined) {
@@ -636,7 +670,9 @@ export function createFakeGitHub({
       repositoryIds.set(to, id);
       repositoryOptions.set(to, repositoryOptions.get(from) ?? {});
       repositoryOptions.delete(from);
-      redirects.set(from, to);
+      if (redirect) redirects.set(from, to);
+      addedAs.set(to, declared(from));
+      addedAs.delete(from);
     },
     setOrganizations(logins) {
       organizations = [...logins];
@@ -854,9 +890,11 @@ export function createFakeGitHub({
       );
     },
     fetchOpenIssues({ owner, name }, after) {
-      const nameWithOwner = `${owner}/${name}`;
-      countRequestFor(nameWithOwner);
-      return answer("fetchOpenIssues", nameWithOwner, () => {
+      const asked = `${owner}/${name}`;
+      countRequestFor(asked);
+      return answer("fetchOpenIssues", asked, () => {
+        // GitHub follows renames and transfers here too.
+        const nameWithOwner = resolve(asked);
         const issues = repositories.get(nameWithOwner);
         const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
         const hides = unavailable(nameWithOwner, message);
@@ -975,6 +1013,41 @@ export function createFakeGitHub({
           ),
         };
       });
+    },
+    fetchRepositoryById(id) {
+      return answer(
+        "fetchRepositoryById",
+        String(id),
+        (): GitHubResult<RepositoryIdentity> => {
+          const nameWithOwner = [...repositoryIds].find(
+            ([, known]) => known === id,
+          )?.[0];
+          const notFound: GitHubError = {
+            kind: "unavailable",
+            message: "Not Found",
+            access: undefined,
+          };
+          if (nameWithOwner === undefined)
+            return { ok: false, error: notFound };
+          const hides = hiding(nameWithOwner);
+          if (hides) {
+            return {
+              ok: false,
+              error: hides.access
+                ? {
+                    ...notFound,
+                    message: hides.access.message,
+                    access: hides.access,
+                  }
+                : notFound,
+            };
+          }
+          return {
+            ok: true,
+            value: { id, repository: addressOf(nameWithOwner) },
+          };
+        },
+      );
     },
     fetchRepositoryAccess(addresses) {
       const names = addresses.map(({ owner, name }) => `${owner}/${name}`);

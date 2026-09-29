@@ -1,11 +1,16 @@
 import type {
   OpenIssueCount,
+  RepositoryAddress,
   SidebarEntries,
   RepositoryEntry,
   ViewMatchCount,
 } from "@verdandi/core/contract";
 
-import type { SidebarScope as Scope } from "./scope";
+import {
+  repositoryLabel,
+  sameScope,
+  type SidebarScope as Scope,
+} from "./scope";
 
 /**
  * A sidebar entry: what it selects, and its open-issue count, or a view's
@@ -72,4 +77,47 @@ export function matchCountLabel(
 ): string {
   if (matches.status === "unknown") return "–";
   return abbreviated.format(matches.count).replace("K", "k");
+}
+
+/**
+ * The selected entry as the sidebar lists it now, if it still does: the same
+ * view, whatever its name and search now, or the same repository, also
+ * renamed or transferred, found by its ID, by its name in another case, or
+ * through `renamed`, which maps what the core announced, by the old
+ * `owner/name` in lower case, to the new address.
+ */
+export function followSelection(
+  selected: Scope,
+  scopes: readonly Scope[],
+  renamed: ReadonlyMap<string, RepositoryAddress>,
+): Scope | undefined {
+  const same = scopes.find((scope) => sameScope(scope, selected));
+  if (same || selected.kind !== "repository") return same;
+  const repositories = scopes.filter((scope) => scope.kind === "repository");
+  const id = idOf(selected.repository);
+  const byId =
+    id === undefined
+      ? undefined
+      : repositories.find((scope) => idOf(scope.repository) === id);
+  if (byId) return byId;
+  const seen = new Set<string>();
+  let key = repositoryLabel(selected.repository).toLowerCase();
+  while (!seen.has(key)) {
+    seen.add(key);
+    const found = repositories.find(
+      (scope) => repositoryLabel(scope.repository).toLowerCase() === key,
+    );
+    if (found) return found;
+    const next = renamed.get(key);
+    if (!next) return undefined;
+    key = repositoryLabel(next).toLowerCase();
+  }
+  return undefined;
+}
+
+/** A repository's GitHub ID, when the sidebar entry it came from knows it. */
+function idOf(repository: RepositoryAddress): number | undefined {
+  return "id" in repository && typeof repository.id === "number"
+    ? repository.id
+    : undefined;
 }

@@ -1,6 +1,15 @@
-import type { RepositoryEntry } from "@verdandi/core/contract";
+import type {
+  RepositoryAddress,
+  RepositoryEntry,
+} from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
-import { countLabel, entryOrder, matchCountLabel } from "./sidebar-entries";
+import type { SidebarScope as Scope } from "./scope";
+import {
+  countLabel,
+  entryOrder,
+  followSelection,
+  matchCountLabel,
+} from "./sidebar-entries";
 
 function entry(owner: string, name: string): RepositoryEntry {
   return {
@@ -115,5 +124,77 @@ describe("views", () => {
       ),
     ).toEqual(["0", "7", "999", "1k", "4.2k", "42.1k", "1.2M"]);
     expect(matchCountLabel({ status: "unknown" })).toBe("–");
+  });
+});
+
+describe("following the selected entry", () => {
+  const repository = (
+    nameWithOwner: string,
+    id?: number,
+  ): Scope & { kind: "repository" } => {
+    const [owner = "", name = ""] = nameWithOwner.split("/");
+    return {
+      kind: "repository",
+      repository: { owner, name, ...(id === undefined ? {} : { id }) },
+    };
+  };
+  const noRenames = new Map<string, RepositoryAddress>();
+
+  it("keeps an entry that is still there as the sidebar has it now", () => {
+    const view = {
+      kind: "view" as const,
+      view: { id: "v", name: "New", query: "q" },
+    };
+    expect(
+      followSelection(
+        { kind: "view", view: { id: "v", name: "Old", query: "q" } },
+        [{ kind: "all" }, view],
+        noRenames,
+      ),
+    ).toBe(view);
+    expect(
+      followSelection({ kind: "all" }, [{ kind: "all" }], noRenames),
+    ).toEqual({
+      kind: "all",
+    });
+  });
+
+  it("follows a repository to its new name by its ID, or when only its case changed", () => {
+    const renamed = repository("newco/api", 7);
+    expect(
+      followSelection(
+        repository("acme/api", 7),
+        [{ kind: "all" }, renamed],
+        noRenames,
+      ),
+    ).toBe(renamed);
+    const corrected = repository("acme/api", 7);
+    expect(
+      followSelection(repository("Acme/API"), [corrected], noRenames),
+    ).toBe(corrected);
+  });
+
+  it("follows a repository selected without its ID through the renames the core announced", () => {
+    const renamed = repository("newco/api", 7);
+    expect(
+      followSelection(
+        repository("acme/api"),
+        [renamed],
+        new Map([
+          ["acme/api", { owner: "acme", name: "api-v2" }],
+          ["acme/api-v2", { owner: "newco", name: "api" }],
+        ]),
+      ),
+    ).toBe(renamed);
+  });
+
+  it("finds no entry that is gone", () => {
+    expect(
+      followSelection(
+        repository("acme/api", 7),
+        [repository("acme/web", 8)],
+        noRenames,
+      ),
+    ).toBeUndefined();
   });
 });

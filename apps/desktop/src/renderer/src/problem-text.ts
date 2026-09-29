@@ -1,4 +1,5 @@
-import type { Problem } from "@verdandi/core/contract";
+import type { Problem, RepositoryAddress } from "@verdandi/core/contract";
+import { repositoryLabel } from "./scope";
 
 /** How the window says why something could not be read. */
 export interface ProblemText {
@@ -13,9 +14,14 @@ export interface ProblemText {
 /**
  * What the window says of a problem. What GitHub will not show is
  * "unavailable or not accessible", never deleted or missing a permission:
- * a specific reason, and a link, come only from GitHub's answer.
+ * a specific reason, and a link, come only from GitHub's answer. A tracked
+ * repository whose name another repository took over is named, when given.
  */
-export function problemText(problem: Problem, login?: string): ProblemText {
+export function problemText(
+  problem: Problem,
+  login?: string,
+  repository?: RepositoryAddress,
+): ProblemText {
   switch (problem.kind) {
     case "unreachable":
       return {
@@ -26,6 +32,14 @@ export function problemText(problem: Problem, login?: string): ProblemText {
     case "unavailable": {
       const { access } = problem;
       const account = login === undefined ? "" : ` (@${login})`;
+      if (problem.nameTakenOver) {
+        const name = repository ? repositoryLabel(repository) : "Its name";
+        return {
+          text: `${name} now names a different repository. The one you tracked is unavailable or not accessible with this account.`,
+          detail: undefined,
+          link: undefined,
+        };
+      }
       return {
         text: `Unavailable or not accessible with this account${account}`,
         detail: problem.issuesDisabled

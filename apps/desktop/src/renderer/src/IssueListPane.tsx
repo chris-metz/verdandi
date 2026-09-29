@@ -33,11 +33,17 @@ export function IssueListPane({
   repositories,
   onSelectRepository,
   onRemoveRepository,
+  onTrackNewRepository,
 }: {
   scope: Scope;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
   onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
+  /**
+   * Tracks the repository that took over a tracked repository's name in its
+   * place.
+   */
+  onTrackNewRepository: (repository: TrackedRepository) => void;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
   onOpen: (issue: IssueDestination) => void;
@@ -131,9 +137,21 @@ export function IssueListPane({
           <ProblemNotice
             problem={failure}
             login={login}
+            repository={repository?.repository}
+            // Its address would open the repository that took it over.
             url={
-              scope.kind === "repository"
+              scope.kind === "repository" &&
+              !(failure.kind === "unavailable" && failure.nameTakenOver)
                 ? `${repositoryUrl(scope.repository)}/issues`
+                : undefined
+            }
+            onTrackNew={
+              repository &&
+              failure.kind === "unavailable" &&
+              failure.nameTakenOver
+                ? () => {
+                    onTrackNewRepository(repository.repository);
+                  }
                 : undefined
             }
             onRetry={retry}

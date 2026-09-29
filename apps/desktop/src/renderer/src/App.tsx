@@ -1,4 +1,5 @@
 import type {
+  RepositoryAddress,
   SavedView,
   SidebarEntryKey,
   SidebarDestination,
@@ -17,11 +18,18 @@ import {
 } from "./pane-navigation";
 import { RepositoryPicker } from "./RepositoryPicker";
 import { RemoveEntryDialog, type RemovableEntry } from "./RemoveEntryDialog";
-import { forgetPlace } from "./list-places";
-import { sameScope, scopeLabel, type SidebarScope as Scope } from "./scope";
+import { forgetPlace, movePlace } from "./list-places";
+import { problemText } from "./problem-text";
+import { unavailableText } from "./repository-picker";
+import {
+  repositoryLabel,
+  sameScope,
+  scopeLabel,
+  type SidebarScope as Scope,
+} from "./scope";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
-import { entryOrder } from "./sidebar-entries";
+import { entryOrder, followSelection } from "./sidebar-entries";
 import { ViewDialog } from "./ViewDialog";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
@@ -36,9 +44,10 @@ const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
  * list being replaced when another entry is selected. What is on screen is
  * read again with `r`, and when it is old as the window regains focus. When
  * GitHub is read as another account, the issue pages opened are dropped for
- * the selected entry's list. While the setup blocker is up, everything behind
- * it stays as it was but is inert; once it goes, the pane that had the
- * keyboard has it again.
+ * the selected entry's list. A repository renamed or transferred stays
+ * selected under its new name, with its issue pages and place in its list.
+ * While the setup blocker is up, everything behind it stays as it was but
+ * is inert; once it goes, the pane that had the keyboard has it again.
  */
 export function App() {
   const setup = useSetup();
@@ -68,6 +77,11 @@ export function App() {
   /** The sidebar entry whose removal is being confirmed. */
   const [removing, setRemoving] = useState<RemovableEntry>();
   const removalPending = useRef(false);
+  /**
+   * The renames the core announced, by the old `owner/name` in lower case,
+   * to follow a selection that does not know its repository's ID.
+   */
+  const renamed = useRef(new Map<string, RepositoryAddress>());
   /** The view dialog, open for a view or, without one, for a new view. */
   const [viewDialog, setViewDialog] = useState<{
     view: SavedView | undefined;
@@ -120,6 +134,45 @@ export function App() {
 
   function confirmViewRemoval(view: SavedView) {
     confirmRemoval({ kind: "view", view });
+  }
+
+  /**
+   * **Track the new owner/name**: tracks the repository that took over a
+   * tracked repository's name in its place, saying why when it cannot.
+   */
+  async function trackNewRepository(repository: TrackedRepository) {
+    if (
+      blocked ||
+      sidebar?.status !== "read" ||
+      sidebar.settings.status !== "writable"
+    )
+      return;
+    const label = repositoryLabel(repository);
+    try {
+      const result = await window.verdandi.replaceRepository(repository);
+      const why =
+        result.status === "failed"
+          ? problemText(result.problem, login).text
+          : result.status === "unavailable" && result.repository.unavailable
+            ? unavailableText(result.repository.unavailable).text
+            : undefined;
+      setSettingsError(
+        why === undefined
+          ? undefined
+          : `The new ${label} could not be tracked: ${why}`,
+      );
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Opens a view's dialog from a notice, as the sidebar has the view now. */
+  function openNoticeView(view: SavedView) {
+    const current =
+      sidebar?.status === "read"
+        ? sidebar.views.find((entry) => entry.view.id === view.id)?.view
+        : undefined;
+    if (current) openViewDialog(current);
   }
 
   /** Opens the view dialog, unless the setup blocker is up. */
@@ -211,17 +264,31 @@ export function App() {
     () =>
       window.verdandi.on("notice", (notice) => {
         if (notice.kind === "account-changed") navigate({ kind: "list" });
+        // The sidebar follows with the new names; places move ahead of it.
+        if (notice.kind === "repositories-renamed") {
+          for (const { from, to } of notice.renamed) {
+            renamed.current.set(repositoryLabel(from).toLowerCase(), to);
+            movePlace(
+              { kind: "repository", repository: from },
+              { kind: "repository", repository: to },
+            );
+          }
+        }
       }),
     [],
   );
 
-  // A hand edit or Reset can remove the selected entry or rename a view.
+  // A hand edit or Reset can remove the selected entry or rename a view,
+  // and GitHub can rename or transfer a repository, which stays selected
+  // with its issue pages.
   useEffect(() =>
     window.verdandi.on("sidebarChanged", (changed) => {
       if (!selected || changed.status !== "read") return;
-      const current = entryOrder(changed).find((item) =>
-        sameScope(item.scope, selected),
-      )?.scope;
+      const current = followSelection(
+        selected,
+        entryOrder(changed).map((item) => item.scope),
+        renamed.current,
+      );
       if (!current && !removalPending.current) select({ kind: "all" });
       else if (
         current?.kind === "view" &&
@@ -230,6 +297,13 @@ export function App() {
           current.view.query !== selected.view.query)
       )
         setSelected(current);
+      else if (
+        current?.kind === "repository" &&
+        !sameScope(current, selected)
+      ) {
+        movePlace(selected, current);
+        setSelected(current);
+      }
     }),
   );
 
@@ -325,6 +399,9 @@ export function App() {
             onReorder={reorder}
             onAddRepository={openPicker}
             onRemoveRepository={confirmRepositoryRemoval}
+            onTrackNewRepository={(repository) => {
+              void trackNewRepository(repository);
+            }}
             onNewView={() => {
               openViewDialog(undefined);
             }}
@@ -368,6 +445,9 @@ export function App() {
                   ? confirmRepositoryRemoval
                   : undefined
               }
+              onTrackNewRepository={(repository) => {
+                void trackNewRepository(repository);
+              }}
               onEditView={() => {
                 if (selected.kind === "view") openViewDialog(selected.view);
               }}
@@ -444,7 +524,7 @@ export function App() {
         />
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
-      <Notices />
+      <Notices onOpenView={openNoticeView} />
     </>
   );
 }

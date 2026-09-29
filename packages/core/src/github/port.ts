@@ -93,6 +93,13 @@ export interface GitHubAccess {
     repositories: readonly RepositoryAddress[],
   ): Promise<GitHubResponse<GitHubResult<RepositoryAccess>[]>>;
   /**
+   * Reads where a repository is now by its numeric ID, through REST
+   * `repositories/{id}`, which GitHub's rename redirects lead to: only when
+   * its name no longer leads to it, as the name alone cannot tell a renamed
+   * repository from another that took over its name.
+   */
+  fetchRepositoryById(id: number): Promise<GitHubResponse<RepositoryIdentity>>;
+  /**
    * Reads one page of the repositories this account owns, collaborates on or
    * reaches as an organization member, up to 100, most recently pushed
    * first: the first page, with the account's organizations, or the one
@@ -144,6 +151,7 @@ export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchIssues: "graphql",
   fetchRepositorySummaries: "graphql",
   fetchRepositoryAccess: "graphql",
+  fetchRepositoryById: "core",
   fetchRepositorySuggestions: "graphql",
   searchIssues: "search",
 };
@@ -250,6 +258,14 @@ export interface RepositorySummary {
   openIssueCount: number;
   hasIssuesEnabled: boolean;
   isArchived: boolean;
+}
+
+/** A repository's identity, and its current address. */
+export interface RepositoryIdentity {
+  /** GitHub's numeric ID, which survives renames. */
+  id: number;
+  /** Its current address. */
+  repository: RepositoryAddress;
 }
 
 /** A repository as the picker checks it: whether its issues can be read. */

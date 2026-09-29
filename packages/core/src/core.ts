@@ -3,6 +3,7 @@ import type {
   Contract,
   CoreEventName,
   CoreEvents,
+  RepositoryAddress,
   SavedView,
   Screen,
 } from "./contract.ts";
@@ -21,7 +22,11 @@ import { createIssuePages, type IssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
 import { createClock } from "./moments.ts";
 import { isTransient, problemOf } from "./problems.ts";
-import { qualifiedReference, sameRepository } from "./repository-address.ts";
+import {
+  nameWithOwner,
+  qualifiedReference,
+  sameRepository,
+} from "./repository-address.ts";
 import {
   createRepositoryPicker,
   type RepositoryPicker,
@@ -31,7 +36,11 @@ import {
   interrupted,
   type SendRequest,
 } from "./request-queue.ts";
-import type { LocalStateStorage, SettingsStorage } from "./settings/port.ts";
+import type {
+  LocalStateStorage,
+  RepositoryUpdate,
+  SettingsStorage,
+} from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
 import { createSidebar, type Sidebar } from "./sidebar.ts";
 import { createSidebarSelection } from "./sidebar-selection.ts";
@@ -88,6 +97,11 @@ interface Session {
   picker: RepositoryPicker;
   /** Sends a request for the session, as long as it lasts. */
   request: SendRequest;
+  /**
+   * Keeps what was read of a repository, and its list, under its new
+   * address, as it was renamed or transferred.
+   */
+  renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
   /** Ends the session: it asks GitHub nothing more, and pushes nothing. */
   end(): void;
 }
@@ -232,6 +246,12 @@ export function createCore({
         emit("sidebarChanged", entries);
         lists.repositoriesChanged();
       },
+      identified: (updates) => {
+        if (live) void identify(updates);
+      },
+      duplicated: () => {
+        if (live) void removeDuplicates();
+      },
     });
     const store = createIssueStore();
     const pages = createIssuePages({
@@ -305,6 +325,10 @@ export function createCore({
       views,
       picker,
       request: sessionRequest,
+      renameRepository(from, to) {
+        store.renameRepository(from, to);
+        lists.renameRepository(from, to);
+      },
       end() {
         live = false;
         stopWatchingLimits();
@@ -313,6 +337,66 @@ export function createCore({
   }
 
   let session = createSession();
+
+  /**
+   * Stores tracked repositories' current names and IDs where the settings
+   * file has others, and follows those that were renamed or transferred.
+   */
+  async function identify(updates: RepositoryUpdate[]) {
+    const { value } = await settings.read();
+    const result = await settings.updateRepositories(updates);
+    if (!result.ok) return;
+    // An entry removed meanwhile follows no rename.
+    followRenames(
+      result.updated.map(({ entry, current }) => ({
+        from: entry,
+        to: current,
+      })),
+      value.views,
+    );
+    await settingsChanged();
+  }
+
+  /**
+   * Removes the entries of the settings file with the same ID as one higher
+   * in the sidebar, and says so.
+   */
+  async function removeDuplicates() {
+    const result = await settings.removeDuplicateRepositories();
+    if (!result.ok || result.removed.length === 0) return;
+    events.emit("notice", {
+      kind: "duplicate-repositories-removed",
+      removed: result.removed,
+    });
+    await settingsChanged();
+  }
+
+  /**
+   * Follows tracked repositories to their new names, as the settings file
+   * now has them, and says so, naming the views whose search still names an
+   * old one. A change only in case goes without saying.
+   */
+  function followRenames(
+    renames: { from: RepositoryAddress; to: RepositoryAddress }[],
+    views: readonly SavedView[],
+  ) {
+    const renamed = renames
+      .filter(({ from, to }) => nameWithOwner(from) !== nameWithOwner(to))
+      .map(({ from, to }) => ({ from: addressOf(from), to: addressOf(to) }));
+    for (const { from, to } of renamed) session.renameRepository(from, to);
+    const notable = renamed.filter(({ from, to }) => !sameRepository(from, to));
+    if (notable.length === 0) return;
+    events.emit("notice", {
+      kind: "repositories-renamed",
+      renamed: notable.map((rename) => ({
+        ...rename,
+        views: views.filter(({ query }) =>
+          searchesRepository(query, rename.from),
+        ),
+      })),
+    });
+  }
+
   const selection = createSidebarSelection(settings, localState);
   async function settingsChanged() {
     session.views.settingsChanged((await settings.read()).value);
@@ -361,11 +445,48 @@ export function createCore({
       return session.picker.check(repository);
     },
     async addRepositories(repositories) {
+      const { value } = await settings.read();
       const additions = await session.picker.add(repositories);
       if (additions.some(({ status }) => status === "added")) {
+        // One tracked already, by its ID, took its new name where it is.
+        followRenames(
+          additions.flatMap((addition) => {
+            if (addition.status !== "added") return [];
+            const { id, repository } = addition.repository;
+            const entry = value.repositories.find((one) => one.id === id);
+            return entry ? [{ from: entry, to: repository }] : [];
+          }),
+          value.views,
+        );
         await settingsChanged();
       }
       return additions;
+    },
+    async replaceRepository(repository) {
+      const asked = addressOf(repository);
+      const checked = await session.picker.check(asked);
+      if (checked.status === "failed") {
+        return { asked, status: "failed", problem: checked.problem };
+      }
+      const found = checked.repository;
+      if (found.unavailable) {
+        return { asked, status: "unavailable", repository: found };
+      }
+      const result = await settings.updateRepositories([
+        { entry: repository, current: { ...found.repository, id: found.id } },
+      ]);
+      if (!result.ok || result.updated.length === 0) {
+        const message = result.ok
+          ? "The repository is no longer in settings.json."
+          : result.message;
+        return { asked, status: "failed", problem: { kind: "error", message } };
+      }
+      await settingsChanged();
+      return {
+        asked,
+        status: "added",
+        repository: { ...found, tracked: true },
+      };
     },
     async removeRepository(repository) {
       const selected = await selection.getSelectedSidebarEntry();
@@ -606,6 +727,38 @@ function newViewId(views: readonly SavedView[]): string {
     const id = randomUUID().replaceAll("-", "").slice(0, 12);
     if (!views.some((view) => view.id === id)) return id;
   }
+}
+
+/** Only a repository's address, e.g. without its ID. */
+function addressOf({ owner, name }: RepositoryAddress): RepositoryAddress {
+  return { owner, name };
+}
+
+/**
+ * Whether a search names a repository with `repo:`, whatever the case, as
+ * GitHub's search does not follow a repository to a new name.
+ */
+function searchesRepository(
+  query: string,
+  repository: RepositoryAddress,
+): boolean {
+  const qualifier = `repo:${nameWithOwner(repository)}`.toLowerCase();
+  const text = query.toLowerCase();
+  for (
+    let at = text.indexOf(qualifier);
+    at >= 0;
+    at = text.indexOf(qualifier, at + 1)
+  ) {
+    const before = text[at - 1];
+    const after = text[at + qualifier.length];
+    if (
+      // Negated, `-repo:`, it names the repository all the same.
+      (before === undefined || !/[\w.]/.test(before)) &&
+      (after === undefined || !/[\w.-]/.test(after))
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Sends one read through GitHub access. */

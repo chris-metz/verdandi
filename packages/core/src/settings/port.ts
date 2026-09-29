@@ -32,6 +32,25 @@ export interface SettingsStorage {
   addRepositories(
     repositories: readonly (RepositoryAddress & { id: number })[],
   ): Promise<SettingsChangeResult>;
+  /**
+   * Gives tracked repositories their current name and ID where they are:
+   * each entry found by its ID, or else by its name without an ID. An entry
+   * left with the ID of one higher in the sidebar is removed. Says which
+   * updates found their entry.
+   */
+  updateRepositories(
+    updates: readonly RepositoryUpdate[],
+  ): Promise<
+    { ok: true; updated: RepositoryUpdate[] } | { ok: false; message: string }
+  >;
+  /**
+   * Removes the entries that have the ID of one higher in the sidebar, as
+   * `read` leaves them out, and says which it removed.
+   */
+  removeDuplicateRepositories(): Promise<
+    | { ok: true; removed: RepositoryDuplicate[] }
+    | { ok: false; message: string }
+  >;
   /** Removes this sidebar entry; views are kept verbatim. */
   removeRepository(
     repository: TrackedRepository,
@@ -48,6 +67,18 @@ export interface SettingsStorage {
   createIfMissing(): Promise<SettingsChangeResult>;
 }
 
+/** A tracked repository as the settings file has it, and as GitHub has it now. */
+export interface RepositoryUpdate {
+  entry: TrackedRepository;
+  current: RepositoryAddress & { id: number };
+}
+
+/** An entry with the same GitHub ID as one higher in the sidebar. */
+export interface RepositoryDuplicate {
+  repository: RepositoryAddress;
+  sameAs: RepositoryAddress;
+}
+
 /** Portable user data as the core and sidebar use it. */
 export interface Settings {
   /** The tracked repositories, in sidebar order. */
@@ -62,6 +93,11 @@ export type SettingsResult =
       status: SettingsStatus;
       /** Whether the file exists; if not, nothing is tracked yet. */
       exists: boolean;
+      /**
+       * The entries left out of `value` as they have the ID of one higher
+       * in the sidebar, which is the repository's.
+       */
+      duplicates: RepositoryDuplicate[];
     }
   /** The file cannot be used; value keeps the last valid data (empty at startup). */
   | { ok: false; message: string; value: Settings };
