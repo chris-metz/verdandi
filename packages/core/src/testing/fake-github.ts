@@ -42,8 +42,11 @@ export interface FakeIssue {
   state?: "open" | "closed";
   /** Its author's login, or none for a deleted account. */
   author?: string;
-  /** An ISO 8601 timestamp; the same for every issue unless said otherwise. */
-  updatedAt?: string;
+  /**
+   * When it was opened, as an ISO 8601 timestamp; the same for every issue
+   * unless said otherwise.
+   */
+  createdAt?: string;
   labels?: Label[];
   /**
    * Its sub-issues in GitHub's order, as `owner/name#number` of issues
@@ -227,7 +230,7 @@ export interface FakeGitHub extends GitHubAccess {
 }
 
 /** When every issue was updated, unless a test says otherwise. */
-const defaultUpdatedAt = "2026-09-01T12:00:00Z";
+const defaultCreatedAt = "2026-09-01T12:00:00Z";
 
 /** The most comments GitHub returns in one page. */
 const commentsPerPage = 100;
@@ -581,7 +584,7 @@ export function createFakeGitHub({
       state: issue.state ?? "open",
       url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}`,
       author: actorOf(issue.author),
-      updatedAt: issue.updatedAt ?? defaultUpdatedAt,
+      createdAt: issue.createdAt ?? defaultCreatedAt,
       labels: issue.labels ?? [],
       parent,
       subIssues: shownSubIssues,
@@ -749,7 +752,6 @@ export function createFakeGitHub({
           value: {
             ...read(ref.split("#")[0] ?? "", issue),
             stateReason: issue.state === "closed" ? "completed" : undefined,
-            createdAt: defaultUpdatedAt,
             assignees: [],
             milestone: undefined,
             commentCount: 0,
@@ -821,7 +823,7 @@ export function createFakeGitHub({
                 return {
                   id: `IC_${ref}/${n}`,
                   author: actorOf(comment.author),
-                  createdAt: comment.createdAt ?? defaultUpdatedAt,
+                  createdAt: comment.createdAt ?? defaultCreatedAt,
                   url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}#issuecomment-${n}`,
                   bodyHTML: comment.bodyHTML,
                 };
@@ -1102,7 +1104,7 @@ export function createFakeGitHub({
                   state,
                   url,
                   author,
-                  updatedAt,
+                  createdAt,
                   labels,
                   subIssuesSummary,
                   issueDependenciesSummary,
@@ -1122,7 +1124,7 @@ export function createFakeGitHub({
                     state,
                     url,
                     author,
-                    updatedAt,
+                    createdAt,
                     labels,
                     hasParent,
                     subIssuesSummary,

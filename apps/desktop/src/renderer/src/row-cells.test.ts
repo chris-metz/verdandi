@@ -2,6 +2,7 @@ import type { Label } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
   colorStyle,
+  createdCell,
   incompleteTitle,
   labelColors,
   labelOverflow,
@@ -253,5 +254,29 @@ describe("an issue GitHub showed only in part", () => {
     ).toBe(
       "Shown in part: Unavailable or not accessible with this account. OAuth App access restrictions",
     );
+  });
+});
+
+describe("the created column", () => {
+  const now = Date.parse("2026-09-29T12:00:00Z");
+  const ago = (seconds: number) =>
+    createdCell(new Date(now - seconds * 1000).toISOString(), now);
+
+  it("says how long ago an issue was opened, in its largest whole unit", () => {
+    expect(ago(59)).toBe("now");
+    expect(ago(60)).toBe("1m");
+    expect(ago(59 * 60)).toBe("59m");
+    expect(ago(3600)).toBe("1h");
+    expect(ago(23 * 3600 + 3599)).toBe("23h");
+    expect(ago(86400)).toBe("1d");
+    expect(ago(29 * 86400)).toBe("29d");
+    expect(ago(30 * 86400)).toBe("1mo");
+    expect(ago(364 * 86400)).toBe("12mo");
+    expect(ago(365 * 86400)).toBe("1y");
+    expect(ago(3 * 365 * 86400)).toBe("3y");
+  });
+
+  it("reads an issue opened after the clock's time as just opened", () => {
+    expect(ago(-120)).toBe("now");
   });
 });

@@ -402,7 +402,6 @@ export function createIssuePages({
     }
     const {
       stateReason,
-      createdAt,
       assignees,
       milestone,
       commentCount,
@@ -413,7 +412,6 @@ export function createIssuePages({
     state.metadata = {
       value: {
         stateReason,
-        createdAt,
         assignees,
         milestone,
         commentCount,

@@ -128,6 +128,25 @@ export function ownerColors(owner: string): ColorPair {
   };
 }
 
+/**
+ * The "Created" column: how long ago an issue was opened, in the largest
+ * whole unit, as `now`, `5m`, `3h`, `2d`, `4mo` or `1y`.
+ */
+export function createdCell(createdAt: string, now: number): string {
+  const seconds = (now - Date.parse(createdAt)) / 1000;
+  const units = [
+    [365 * 86400, "y"],
+    [30 * 86400, "mo"],
+    [86400, "d"],
+    [3600, "h"],
+    [60, "m"],
+  ] as const;
+  for (const [size, unit] of units) {
+    if (seconds >= size) return `${String(Math.floor(seconds / size))}${unit}`;
+  }
+  return "now";
+}
+
 /** The sub-issue progress column: a bar filled to `fraction`, and `text`. */
 export function progressCell({
   closed,

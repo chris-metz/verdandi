@@ -214,8 +214,8 @@ export interface Issue {
   url: string;
   /** Who opened it, unless their account has been deleted. */
   author: IssueActor | undefined;
-  /** When it last changed, as an ISO 8601 timestamp. */
-  updatedAt: string;
+  /** When it was opened, as an ISO 8601 timestamp. */
+  createdAt: string;
   labels: Label[];
   /** Its parent issue, if it has one. */
   parent: IssueReference | undefined;

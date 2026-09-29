@@ -400,6 +400,8 @@ export interface IssueIdentity {
 export interface IssueSummary extends IssueIdentity {
   /** Who opened it, unless their account has been deleted. */
   author: IssueActor | undefined;
+  /** When it was opened, as an ISO 8601 timestamp. */
+  createdAt: string;
   /** Its labels, in GitHub's order. */
   labels: Label[];
   /** Sub-issue progress, from GitHub's `subIssuesSummary`. */
@@ -704,7 +706,6 @@ export type SearchProblem =
 export interface IssueMetadata {
   stateReason:
     "completed" | "not-planned" | "reopened" | "duplicate" | undefined;
-  createdAt: string;
   assignees: IssueActor[];
   milestone: string | undefined;
   commentCount: number;

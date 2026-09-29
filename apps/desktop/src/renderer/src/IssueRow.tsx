@@ -17,6 +17,7 @@ import type { ListRow } from "./list-navigation";
 import { problemText } from "./problem-text";
 import {
   colorStyle,
+  createdCell,
   incompleteTitle,
   labelColors,
   labelOverflow,
@@ -25,6 +26,7 @@ import {
   repositoryChipCell,
   unreadCell,
 } from "./row-cells";
+import { useNow } from "./use-now";
 
 /** A column right of the title, with its header and its cell of an issue. */
 interface IssueColumn {
@@ -51,6 +53,13 @@ const issueColumns: readonly IssueColumn[] = [
     className: "w-7 justify-center",
     dimsClosed: true,
     cell: (issue) => <AuthorAvatar issue={issue} />,
+  },
+  {
+    key: "created",
+    header: "Created",
+    className: "w-16 justify-end",
+    dimsClosed: true,
+    cell: (issue) => <Created issue={issue} />,
   },
   {
     key: "progress",
@@ -101,7 +110,8 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
 
 /**
  * One issue in a list: chevron, state, repository chip in All, reference,
- * title, labels and tags, then the author, sub-issue progress, "Blocked by"
+ * title, labels and tags, then the author, when it was created, sub-issue
+ * progress, "Blocked by"
  * and "Blocks" columns. An issue that has not been read shows as its parent issue
  * names it, with why, and Retry and Open on GitHub once it failed; its
  * columns stay empty, as nothing is known of them.
@@ -508,6 +518,19 @@ function AuthorAvatar({ issue: { author } }: { issue: IssueSummary }) {
       title={`Opened by @${author.login}`}
       className="size-[18px]"
     />
+  );
+}
+
+/** How long ago an issue was opened, with the exact time in its tooltip. */
+function Created({ issue: { createdAt } }: { issue: IssueSummary }) {
+  return (
+    <time
+      dateTime={createdAt}
+      title={`Opened ${new Date(createdAt).toLocaleString()}`}
+      className="text-xs text-muted-foreground tabular-nums"
+    >
+      {createdCell(createdAt, useNow())}
+    </time>
   );
 }
 

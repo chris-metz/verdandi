@@ -1,21 +1,35 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /** How often the time is brought up to date. */
 const tick = 30 * 1000;
 
+let now = Date.now();
+const listeners = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | undefined;
+
+/** One timer for everything that shows the time, while anything does. */
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (timer === undefined) {
+    now = Date.now();
+    timer = setInterval(() => {
+      now = Date.now();
+      for (const notify of listeners) notify();
+    }, tick);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+  };
+}
+
 /**
  * The time, brought up to date every half minute, e.g. for an age a header
- * shows.
+ * or a row shows.
  */
 export function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, tick);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
-  return now;
+  return useSyncExternalStore(subscribe, () => now);
 }

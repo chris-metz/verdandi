@@ -2818,9 +2818,9 @@ describe("repository list", () => {
   it("shows the issues page by page as they arrive", async () => {
     const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 2 });
     github.addRepository("acme/api", [
-      { number: 5, title: "Dark mode", updatedAt: "2026-09-05T00:00:00Z" },
-      { number: 4, title: "Audit trail", updatedAt: "2026-09-04T00:00:00Z" },
-      { number: 2, title: "CSV import", updatedAt: "2026-09-02T00:00:00Z" },
+      { number: 5, title: "Dark mode", createdAt: "2026-09-05T00:00:00Z" },
+      { number: 4, title: "Audit trail", createdAt: "2026-09-04T00:00:00Z" },
+      { number: 2, title: "CSV import", createdAt: "2026-09-02T00:00:00Z" },
     ]);
     const core = createTestCore(github);
     const pushed: IssueList[] = [];
@@ -2979,35 +2979,73 @@ describe("sub-issue forest", () => {
     ]);
   });
 
-  it("lists parent issues first, then the most recently updated", async () => {
+  it("lists the newest first, each tree by the newest open issue in it", async () => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
-      { number: 6, title: "Typo in README", updatedAt: "2026-09-03T00:00:00Z" },
+      {
+        number: 7,
+        title: "Old parser",
+        state: "closed",
+        createdAt: "2026-09-28T00:00:00Z",
+      },
+      { number: 6, title: "Typo in README", createdAt: "2026-09-03T00:00:00Z" },
       {
         number: 5,
         title: "Harden webhooks",
-        updatedAt: "2026-08-01T00:00:00Z",
-        subIssues: ["acme/api#1"],
+        createdAt: "2026-08-01T00:00:00Z",
+        subIssues: ["acme/api#1", "acme/api#7", "octo-org/lib#9"],
       },
-      { number: 4, title: "Flaky test", updatedAt: "2026-09-20T00:00:00Z" },
+      { number: 4, title: "Flaky test", createdAt: "2026-09-20T00:00:00Z" },
       {
         number: 3,
         title: "Launch billing",
-        updatedAt: "2026-09-10T00:00:00Z",
+        createdAt: "2026-09-10T00:00:00Z",
         subIssues: ["acme/api#2"],
       },
-      { number: 2, title: "Rate cards", updatedAt: "2026-09-25T00:00:00Z" },
-      { number: 1, title: "Retry budget", updatedAt: "2026-07-01T00:00:00Z" },
+      { number: 2, title: "Rate cards", createdAt: "2026-09-25T00:00:00Z" },
+      { number: 1, title: "Retry budget", createdAt: "2026-07-01T00:00:00Z" },
+    ]);
+    github.addRepository("octo-org/lib", [
+      { number: 9, title: "Sign payloads", createdAt: "2026-09-29T00:00:00Z" },
     ]);
     const core = createTestCore(github);
 
+    // A new sub-issue lifts its old parent issue; a closed one and one of
+    // another repository do not. Sub-issues keep GitHub's order.
     expect(outline(await openUntilLoaded(core, acmeApi))).toEqual([
       "#3 Launch billing",
       "  #2 Rate cards",
-      "#5 Harden webhooks",
-      "  #1 Retry budget",
       "#4 Flaky test",
       "#6 Typo in README",
+      "#5 Harden webhooks",
+      "  #1 Retry budget",
+      "  #7 Old parser · closed",
+      "  octo-org/lib#9 Sign payloads · external",
+    ]);
+  });
+
+  it("keeps a tree in place when its issues are collapsed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 4, title: "Flaky test", createdAt: "2026-09-20T00:00:00Z" },
+      {
+        number: 3,
+        title: "Launch billing",
+        createdAt: "2026-09-10T00:00:00Z",
+        subIssues: ["acme/api#2"],
+      },
+      { number: 2, title: "Rate cards", createdAt: "2026-09-25T00:00:00Z" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    const collapsed = await nextList(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#3", false),
+    );
+    expect(outline(collapsed)).toEqual([
+      "#3 Launch billing",
+      "  #2 Rate cards",
+      "#4 Flaky test",
     ]);
   });
 
@@ -3262,6 +3300,7 @@ describe("sub-issue forest", () => {
         login: "octo-dev",
         avatarUrl: "https://avatars.githubusercontent.com/octo-dev",
       },
+      createdAt: "2026-09-01T12:00:00Z",
       labels: [{ name: "roadmap", color: "3e4b9e" }],
       external: false,
       subIssueProgress: { closed: 1, total: 2 },
@@ -3275,6 +3314,7 @@ describe("sub-issue forest", () => {
       title: "Usage endpoint",
       state: "open",
       url: "https://github.com/acme/api/issues/3",
+      createdAt: "2026-09-01T12:00:00Z",
       labels: [
         { name: "api", color: "0075ca" },
         { name: "good first issue", color: "7057ff" },
@@ -3410,7 +3450,7 @@ describe("expansion", () => {
     await core.setAllExpanded(acmeApi, false);
     github.resume();
 
-    expect(collapsedIssues(await loaded)).toEqual(["#2", "#1", "#3"]);
+    expect(collapsedIssues(await loaded)).toEqual(["#3", "#2", "#1"]);
   });
 
   it("keeps each list's expansion when another list was opened meanwhile", async () => {
@@ -3433,11 +3473,11 @@ describe("All", () => {
     });
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
-      { number: 3, title: "Retry webhooks", updatedAt: "2026-09-03T00:00:00Z" },
-      { number: 1, title: "Crash on start", updatedAt: "2026-09-01T00:00:00Z" },
+      { number: 3, title: "Retry webhooks", createdAt: "2026-09-03T00:00:00Z" },
+      { number: 1, title: "Crash on start", createdAt: "2026-09-01T00:00:00Z" },
     ]);
     github.addRepository("octo-org/web", [
-      { number: 2, title: "Broken footer", updatedAt: "2026-09-02T00:00:00Z" },
+      { number: 2, title: "Broken footer", createdAt: "2026-09-02T00:00:00Z" },
     ]);
     const core = createTestCore(github);
     const list = await openUntilLoaded(core, all);
@@ -3474,10 +3514,10 @@ describe("All", () => {
     // octo-org/web#5 and acme/api#2 are open issues of tracked repositories
     // and sub-issues too; each shows once, under its parent issue.
     expect(outline(await openUntilLoaded(core, all))).toEqual([
+      "octo-org/web #6 Broken footer",
       "acme/api #1 Launch billing",
       "  octo-org/web #5 Usage dashboard",
       "    acme/api #2 Usage endpoint",
-      "octo-org/web #6 Broken footer",
     ]);
   });
 
@@ -3491,7 +3531,7 @@ describe("All", () => {
       {
         number: 2,
         title: "Support the v3 handshake",
-        updatedAt: "2026-09-03T00:00:00Z",
+        createdAt: "2026-09-03T00:00:00Z",
       },
       { number: 1, title: "Usage endpoint" },
     ]);
@@ -3504,7 +3544,7 @@ describe("All", () => {
       {
         number: 4,
         title: "Show the protocol version",
-        updatedAt: "2026-09-02T00:00:00Z",
+        createdAt: "2026-09-02T00:00:00Z",
       },
     ]);
     github.addRepository("upstream/protocol", [
@@ -3518,10 +3558,10 @@ describe("All", () => {
     const list = await openUntilLoaded(core, all);
 
     expect(outline(list)).toEqual([
-      "acme/web #5 Usage dashboard",
-      "  acme/api #1 Usage endpoint",
       "acme/api #2 Support the v3 handshake · ↑ upstream/protocol#7 external",
       "acme/web #4 Show the protocol version · ↑ upstream/protocol#7 external",
+      "acme/web #5 Usage dashboard",
+      "  acme/api #1 Usage endpoint",
     ]);
     expect(list.trees[1]?.parent).toEqual({
       id: "I_upstream/protocol#7",
@@ -3622,9 +3662,9 @@ describe("All", () => {
     const list = await openUntilLoaded(core, all);
 
     expect(outline(list)).toEqual([
+      "acme/web #6 Broken footer",
       "acme/api #1 Launch billing",
       "  acme/web #4 Usage chart · closed",
-      "acme/web #6 Broken footer",
     ]);
     expect(list.loading).toEqual({
       status: "current",

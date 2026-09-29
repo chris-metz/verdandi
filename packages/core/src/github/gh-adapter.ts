@@ -88,7 +88,7 @@ const listAvatarSize = 40;
  * sub-issues, and an issue at most 100 labels, so one page of each is all.
  */
 const issueFields = `
-  id number title state url updatedAt
+  id number title state url createdAt
   author { login avatarUrl }
   repository { nameWithOwner }
   labels(first: 100) { nodes { name color } }
@@ -314,7 +314,7 @@ export function createGhAdapter({
       return graphql(
         `node(id: $id) { ... on Issue {
           ${issueFields}
-          stateReason createdAt
+          stateReason
           assignees(first: 100) { nodes { login avatarUrl } }
           milestone { title }
           comments { totalCount }
@@ -1024,7 +1024,7 @@ function readIssue(
 ): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
-  const { url, updatedAt, author, labels, parent, subIssues } = node;
+  const { url, createdAt, author, labels, parent, subIssues } = node;
   const subIssuesSummary = readCounts(node.subIssuesSummary, [
     "total",
     "completed",
@@ -1042,7 +1042,7 @@ function readIssue(
   const readAuthor = author === null ? null : readActor(author, listAvatarSize);
   if (
     typeof url !== "string" ||
-    typeof updatedAt !== "string" ||
+    typeof createdAt !== "string" ||
     readAuthor === undefined ||
     !subIssuesSummary ||
     !issueDependenciesSummary ||
@@ -1056,7 +1056,7 @@ function readIssue(
     ...reference,
     url,
     author: readAuthor ?? undefined,
-    updatedAt,
+    createdAt,
     labels: labelList,
     parent: parentReference ?? undefined,
     subIssues: subIssueList,
@@ -1458,7 +1458,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     html_url,
     repository_url,
     user,
-    updated_at,
+    created_at,
     labels,
     sub_issues_summary,
     issue_dependencies_summary,
@@ -1485,7 +1485,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     typeof title !== "string" ||
     (state !== "open" && state !== "closed") ||
     typeof html_url !== "string" ||
-    typeof updated_at !== "string" ||
+    typeof created_at !== "string" ||
     author === undefined ||
     !repository ||
     !labelList ||
@@ -1501,7 +1501,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     state,
     url: html_url,
     author: author ?? undefined,
-    updatedAt: updated_at,
+    createdAt: created_at,
     labels: labelList as Label[],
     // GitHub leaves the pointer out of an issue without a parent issue.
     hasParent: typeof parent_issue_url === "string",
@@ -1600,7 +1600,7 @@ function readMetadata(
   partial: boolean,
 ): IssueMetadata | undefined {
   if (!isObject(node)) return undefined;
-  const { stateReason, createdAt, milestone, comments, bodyHTML } = node;
+  const { stateReason, milestone, comments, bodyHTML } = node;
   const reasons = {
     COMPLETED: "completed",
     NOT_PLANNED: "not-planned",
@@ -1620,7 +1620,6 @@ function readMetadata(
         ? milestone.title
         : undefined;
   if (
-    typeof createdAt !== "string" ||
     !assignees ||
     (milestoneTitle !== null && typeof milestoneTitle !== "string") ||
     !isObject(comments) ||
@@ -1633,7 +1632,6 @@ function readMetadata(
       stateReason === null
         ? undefined
         : reasons[stateReason as keyof typeof reasons],
-    createdAt,
     assignees,
     milestone: milestoneTitle ?? undefined,
     commentCount: comments.totalCount,

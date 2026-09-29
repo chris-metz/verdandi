@@ -47,6 +47,10 @@ export interface ForestOptions {
  * nested below another listed issue does not also stand at the top, where a
  * chip names a parent issue the list does not show. A sub-issue that has not
  * been read shows as its parent issue names it, with why.
+ *
+ * The newest stand first: each top-level issue by the newest open issue of
+ * the scope within its tree, collapsed or not, or by itself if there is none.
+ * Sub-issues keep GitHub's order.
  */
 export function buildForest({
   scope,
@@ -64,12 +68,13 @@ export function buildForest({
     !isTracked(address) && !isOwn(address);
   const missing = new Map<string, IssueReference>();
   const belowCollapsed = new Set<string>();
+  const openIds = new Set(openIssueIds);
 
   // The ancestors of each open issue are read up to the top, through other
   // repositories too, to find the closed parent issues in the scope's own.
   const listed = new Map<string, Issue>();
   const climbed = new Set<string>();
-  for (const id of openIssueIds) {
+  for (const id of openIds) {
     let issue = lookup(id);
     while (issue && !climbed.has(issue.id)) {
       climbed.add(issue.id);
@@ -161,10 +166,32 @@ export function buildForest({
     };
   }
 
+  const newest = new Map<string, number>();
+  /** When the newest open issue of the scope within an issue's tree opened. */
+  function newestOpen(issue: Issue): number {
+    const known = newest.get(issue.id);
+    if (known !== undefined) return known;
+    newest.set(issue.id, -Infinity);
+    let time = openIds.has(issue.id) ? Date.parse(issue.createdAt) : -Infinity;
+    for (const reference of issue.subIssues) {
+      const subIssue = lookup(reference.id);
+      if (subIssue) time = Math.max(time, newestOpen(subIssue));
+    }
+    newest.set(issue.id, time);
+    return time;
+  }
+
   const trees = [...listed.values()]
     .filter((issue) => !nested.has(issue.id))
-    .sort(topLevelOrder)
-    .map((issue): IssueTree => ({
+    .map((issue) => {
+      const time = newestOpen(issue);
+      return {
+        issue,
+        time: time === -Infinity ? Date.parse(issue.createdAt) : time,
+      };
+    })
+    .sort((a, b) => b.time - a.time || b.issue.number - a.issue.number)
+    .map(({ issue }): IssueTree => ({
       ...place(issue, false),
       parent: issue.parent && nameParent(issue.parent),
     }));
@@ -175,15 +202,4 @@ export function buildForest({
     missing: [...missing.values()],
     belowCollapsed,
   };
-}
-
-/** Parent issues first, then the most recently updated. */
-function topLevelOrder(a: Issue, b: Issue): number {
-  const parentsFirst =
-    Number(b.subIssues.length > 0) - Number(a.subIssues.length > 0);
-  return (
-    parentsFirst ||
-    Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
-    b.number - a.number
-  );
 }

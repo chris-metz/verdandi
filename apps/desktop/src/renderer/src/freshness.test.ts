@@ -417,6 +417,7 @@ describe("a view's freshness", () => {
       url: "https://github.com/acme/api/issues/1",
       external: false,
       author: undefined,
+      createdAt: "2026-09-01T12:00:00Z",
       labels: [],
       subIssueProgress: { closed: 0, total: 0 },
       blockedBy: { open: 0, total: 0 },
