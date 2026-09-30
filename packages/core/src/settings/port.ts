@@ -4,6 +4,7 @@ import type {
   SavedView,
   SidebarEntryKey,
   SidebarDestination,
+  ConfigState,
   SettingsChangeResult,
   SettingsStatus,
   WindowState,
@@ -134,3 +135,27 @@ export type StoredSidebarEntry =
   | { kind: "repository"; id: number }
   | { kind: "repository"; name: string }
   | { kind: "view"; id: string };
+
+/**
+ * The config-storage port: where the core reads how Verdandi looks, which
+ * the user may edit by hand while it runs.
+ */
+export interface ConfigStorage {
+  /** Reads the configuration, with what in it cannot be used. */
+  read(): Promise<ConfigState>;
+  /**
+   * Watches the file through its folder, so that creating, deleting and
+   * replacing it are seen too.
+   */
+  watch(changed: () => void): () => void;
+}
+
+/**
+ * The themes an interface offers, by ID, each light or dark, and the one of
+ * each kind used when none is chosen or the chosen one cannot be used. The
+ * core checks the configuration against them, but has no colours itself.
+ */
+export interface ThemeCatalogue {
+  themes: readonly { id: string; kind: "light" | "dark" }[];
+  defaults: { light: string; dark: string };
+}

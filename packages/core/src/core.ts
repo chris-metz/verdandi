@@ -37,6 +37,7 @@ import {
   type SendRequest,
 } from "./request-queue.ts";
 import type {
+  ConfigStorage,
   LocalStateStorage,
   RepositoryUpdate,
   SettingsStorage,
@@ -69,6 +70,8 @@ export interface CoreOptions {
   settings: SettingsStorage;
   /** Machine-local state, kept apart from portable user data. */
   localState: LocalStateStorage;
+  /** How Verdandi looks, which the user may edit by hand while it runs. */
+  config: ConfigStorage;
   /** The time, in milliseconds since the epoch: the system clock by default. */
   now?: () => number;
   /**
@@ -113,6 +116,7 @@ export function createCore({
   host,
   settings,
   localState,
+  config,
   now = Date.now,
   wait = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -409,6 +413,11 @@ export function createCore({
   const stopWatchingSettings = settings.watch(() => {
     void settingsChanged();
   });
+  const stopWatchingConfig = config.watch(() => {
+    void config.read().then((state) => {
+      events.emit("configChanged", state);
+    });
+  });
 
   return {
     ...selection,
@@ -420,6 +429,7 @@ export function createCore({
     },
     dispose() {
       stopWatchingSettings();
+      stopWatchingConfig();
       session.end();
       queue.cancel();
     },
@@ -655,6 +665,9 @@ export function createCore({
     },
     getSetup() {
       return Promise.resolve(setup.current());
+    },
+    getConfig() {
+      return config.read();
     },
     checkSetupAgain() {
       return setup.checkAgain();

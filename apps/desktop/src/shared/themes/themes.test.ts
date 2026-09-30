@@ -5,6 +5,7 @@ import {
   defaultDarkTheme,
   defaultLightTheme,
   shownTheme,
+  themeCatalogue,
   themeTokens,
   type ThemeToken,
 } from "./index";
@@ -30,9 +31,35 @@ describe("built-in themes", () => {
     expect(defaultDarkTheme.id).toBe("github-dark");
   });
 
-  it("show the default light or dark theme as the operating system does", () => {
+  it("show the default light or dark theme when none is chosen", () => {
     expect(shownTheme(false).id).toBe("github-light");
     expect(shownTheme(true).id).toBe("github-dark");
+  });
+
+  it("show the chosen light or dark theme", () => {
+    const chosen = {
+      lightTheme: "github-light",
+      darkTheme: "github-dark-dimmed",
+    };
+    expect(shownTheme(false, chosen).id).toBe("github-light");
+    expect(shownTheme(true, chosen).id).toBe("github-dark-dimmed");
+  });
+
+  it("show the default for a chosen theme they do not have, or of the other kind", () => {
+    expect(
+      shownTheme(true, { lightTheme: "github-light", darkTheme: "nord" }).id,
+    ).toBe("github-dark");
+    expect(
+      shownTheme(false, { lightTheme: "github-dark", darkTheme: "github-dark" })
+        .id,
+    ).toBe("github-light");
+  });
+
+  it("are offered to the core by ID and kind, with the defaults", () => {
+    expect(themeCatalogue).toEqual({
+      themes: builtInThemes,
+      defaults: { light: "github-light", dark: "github-dark" },
+    });
   });
 
   describe.each(builtInThemes)("$name", (theme) => {

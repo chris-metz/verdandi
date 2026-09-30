@@ -113,6 +113,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@decimalturn/toml-patch':
+        specifier: ^3.3.0
+        version: 3.3.0
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
@@ -357,6 +360,10 @@ packages:
   '@csstools/css-tokenizer@4.0.2':
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
+
+  '@decimalturn/toml-patch@3.3.0':
+    resolution: {integrity: sha512-xyamcHl5Jlm+KfI9Vn7k6Je+kqQ8bAmJtoWleQ7yNqUL9fwwc66+Q3bRO326U/ZLYjrVzB3irvJz8nuG+JwFdA==}
+    engines: {node: '>=16'}
 
   '@dotenvx/dotenvx@1.75.1':
     resolution: {integrity: sha512-/BITOC9dmS/edY2zQwZNicQ059O6RKabtQfyEafV0nGtfYRNHYy1DIPiYVcov40+tob9hfmBnbR963dS+EQ1DQ==}
@@ -3947,6 +3954,8 @@ snapshots:
       css-tree: 3.2.1
 
   '@csstools/css-tokenizer@4.0.2': {}
+
+  '@decimalturn/toml-patch@3.3.0': {}
 
   '@dotenvx/dotenvx@1.75.1':
     dependencies:

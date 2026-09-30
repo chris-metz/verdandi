@@ -1,7 +1,8 @@
-import { mkdir } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  createConfigFile,
   createCore,
   createGhAdapter,
   createLocalStateFile,
@@ -13,6 +14,8 @@ import {
 } from "@verdandi/core";
 import {
   eventNames,
+  type Config,
+  type ConfigState,
   type Contract,
   type CoreRequests,
 } from "@verdandi/core/contract";
@@ -31,7 +34,7 @@ import {
   rendererRequestNames,
   type DesktopApi,
 } from "../shared/ipc";
-import { shownTheme } from "../shared/themes";
+import { shownTheme, themeCatalogue } from "../shared/themes";
 import icon from "../../build/icon.png?asset";
 import { loadImage } from "./load-image";
 
@@ -61,8 +64,25 @@ function start() {
     host,
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
+    config: createConfigFile(host, themeCatalogue),
   });
 
+  // Native menus and dialogs, and the renderer's prefers-color-scheme, follow
+  // the appearance; the renderer then shows the light or dark theme.
+  let config: Config | undefined;
+  function applyConfig(state: ConfigState) {
+    config = state.config;
+    nativeTheme.themeSource = state.config.appearance;
+    showBackground();
+  }
+  /** The shown theme's background behind each window's page. */
+  function showBackground() {
+    for (const window of BrowserWindow.getAllWindows())
+      window.setBackgroundColor(windowBackground(config));
+  }
+  // Before the renderer hears of a change, main applies it.
+  core.on("configChanged", applyConfig);
+  nativeTheme.on("updated", showBackground);
   wireContract(core);
   let quitting = false;
   app.on("before-quit", () => {
@@ -73,7 +93,7 @@ function start() {
   });
   let opening: Promise<void> | undefined;
   function openWindow() {
-    opening ??= createWindow(core, () => {
+    opening ??= createWindow(core, windowBackground(config), () => {
       // A close delayed for its state write also delayed app.quit on macOS.
       if (quitting) app.quit();
     }).finally(() => {
@@ -90,6 +110,7 @@ function start() {
     } else if (app.isReady()) void openWindow();
   });
   ipcMain.handle(ipcChannels.showSettingsFolder, showSettingsFolder);
+  ipcMain.handle(ipcChannels.showConfigFile, showConfigFile);
   // The renderer's one way to open a link, e.g. `o` on an issue.
   ipcMain.on(ipcChannels.openExternal, (_event, url: unknown) => {
     if (typeof url === "string") openExternal(url);
@@ -102,7 +123,7 @@ function start() {
     loadImage(url),
   );
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     // A packaged app shows its bundle's icon; `pnpm dev` runs Electron's own.
     if (process.platform === "darwin" && !app.isPackaged) {
       app.dock?.setIcon(icon);
@@ -126,6 +147,17 @@ function start() {
                 });
               },
             },
+            {
+              label: "Show Config File",
+              click: () => {
+                void showConfigFile().catch((error: unknown) => {
+                  dialog.showErrorBox(
+                    "Cannot show config file",
+                    error instanceof Error ? error.message : String(error),
+                  );
+                });
+              },
+            },
             { type: "separator" },
             { role: "close" },
           ],
@@ -135,6 +167,8 @@ function start() {
         { role: "windowMenu" },
       ]),
     );
+    // The window opens in the look config.toml sets.
+    applyConfig(await core.getConfig());
     void openWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void openWindow();
@@ -166,6 +200,25 @@ function start() {
         }
       });
     }
+  }
+
+  /**
+   * Reveals config.toml in the file manager, or, while there is none, the
+   * folder it goes in.
+   */
+  async function showConfigFile() {
+    const { file } = await core.getConfig();
+    try {
+      await lstat(file);
+      shell.showItemInFolder(file);
+      return;
+    } catch {
+      // Not there yet: the folder is shown instead.
+    }
+    const folder = dirname(file);
+    await mkdir(folder, { recursive: true });
+    const error = await shell.openPath(folder);
+    if (error) throw new Error(error);
   }
 
   /** Whether a renderer may make a request of this name. */
@@ -202,7 +255,11 @@ function start() {
   }
 }
 
-async function createWindow(core: Contract, afterClose: () => void) {
+async function createWindow(
+  core: Contract,
+  backgroundColor: string,
+  afterClose: () => void,
+) {
   const saved = await core.getWindowState();
   const window = new BrowserWindow({
     ...(saved
@@ -213,8 +270,7 @@ async function createWindow(core: Contract, afterClose: () => void) {
     // macOS shows the app's icon instead; Linux shows no icon without it.
     ...(process.platform === "darwin" ? {} : { icon }),
     // The shown theme's background, so the window does not flash on opening.
-    backgroundColor: shownTheme(nativeTheme.shouldUseDarkColors).colors
-      .background,
+    backgroundColor,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -285,6 +341,11 @@ async function createWindow(core: Contract, afterClose: () => void) {
 /** Opens a link in the browser, but only an `https://` one. */
 function openExternal(url: string) {
   if (URL.parse(url)?.protocol === "https:") void shell.openExternal(url);
+}
+
+/** The background of the theme shown now, as the appearance says. */
+function windowBackground(config: Config | undefined): string {
+  return shownTheme(nativeTheme.shouldUseDarkColors, config).colors.background;
 }
 
 /** The renderer cannot choose an arbitrary local path to open. */

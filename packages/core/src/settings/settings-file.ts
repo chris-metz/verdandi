@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   lstat,
@@ -26,6 +25,7 @@ import type {
   SettingsResult,
   SettingsStorage,
 } from "./port.ts";
+import { watchFile } from "./watch-file.ts";
 
 /** Portable user data. A change always starts from the file as it is now. */
 export function createSettingsFile(
@@ -83,14 +83,6 @@ export function createSettingsFile(
     }
   }
 
-  async function signature(): Promise<string> {
-    try {
-      return await readFile(file, "utf8");
-    } catch (error) {
-      return `Cannot read: ${message(error)}`;
-    }
-  }
-
   /** Windows virus scanners and sync clients briefly hold files open. */
   async function replace(from: string, to: string) {
     for (let attempt = 0; ; attempt++) {
@@ -121,33 +113,9 @@ export function createSettingsFile(
 
   return {
     watch(changed) {
-      let closed = false;
-      let observed: string | undefined;
-      let watcher: ReturnType<typeof watch> | undefined;
-      watching = mkdir(folder, { recursive: true })
-        .then(async () => {
-          if (closed) return;
-          watcher = watch(folder, { persistent: false }, (_event, name) => {
-            if (name !== null && name !== "settings.json") return;
-            void serial(async () => {
-              // Before the first signature is read, the folder may report a
-              // write from before watching began; that read sees any change.
-              if (closed || observed === undefined) return;
-              const previous = observed;
-              observed = await signature();
-              if (observed !== previous) changed();
-            });
-          });
-          watcher.on("error", changed);
-          observed = await signature();
-        })
-        .catch(() => {
-          if (!closed) changed();
-        });
-      return () => {
-        closed = true;
-        watcher?.close();
-      };
+      const watcher = watchFile(folder, "settings.json", { serial, changed });
+      watching = watcher.ready;
+      return watcher.close;
     },
     async read(): Promise<SettingsResult> {
       await watching;

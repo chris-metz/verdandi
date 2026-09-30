@@ -36,6 +36,9 @@ const desktop: DesktopApi = {
   showSettingsFolder() {
     return ipcRenderer.invoke(ipcChannels.showSettingsFolder) as Promise<void>;
   },
+  showConfigFile() {
+    return ipcRenderer.invoke(ipcChannels.showConfigFile) as Promise<void>;
+  },
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
   },

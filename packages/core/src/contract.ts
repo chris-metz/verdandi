@@ -237,6 +237,58 @@ export type SettingsStatus =
   | { status: "writable" }
   | { status: "invalid" | "newer-version"; message: string };
 
+/**
+ * Whether Verdandi shows the user's light theme or dark theme: following the
+ * operating system, always light, or always dark.
+ */
+export type Appearance = "system" | "light" | "dark";
+
+/** How Verdandi looks, as `config.toml` sets it. */
+export interface Config {
+  appearance: Appearance;
+  /** The ID of the light theme. */
+  lightTheme: string;
+  /** The ID of the dark theme. */
+  darkTheme: string;
+}
+
+/** `config.toml` as Verdandi read it, and what it uses of it. */
+export interface ConfigState {
+  /**
+   * What Verdandi uses: the file's values, each one that cannot be used
+   * replaced by its default, or every default when the file cannot be read.
+   */
+  config: Config;
+  /** Where the file is. */
+  file: string;
+  /**
+   * - `missing`: there is no file, so every default applies. Verdandi does
+   *   not create it; a change in the settings dialog will.
+   * - `read`: it was read as TOML.
+   * - `unreadable`: it cannot be read, or not as TOML. Nothing may write it
+   *   until it can.
+   */
+  status: "missing" | "read" | "unreadable";
+  /**
+   * What in the file cannot be used, in the file's order; empty when all of
+   * it can. The user is told until the file is fixed.
+   */
+  problems: ConfigProblem[];
+}
+
+/** Something in `config.toml` Verdandi cannot use, and what it does instead. */
+export interface ConfigProblem {
+  /** The key, when it is one key's value or an unknown key. */
+  key?: string;
+  /** The line, counted from 1, when it is known. */
+  line?: number;
+  /**
+   * What the user is told: the file, the key and line, and the default used
+   * instead.
+   */
+  message: string;
+}
+
 /** A saved GitHub issue search, in sidebar order. */
 export interface SavedView {
   id: string;
@@ -1221,6 +1273,11 @@ export interface CoreRequests {
    * pushed as `rateLimitsChanged`.
    */
   getRateLimits: () => Promise<RateLimitState[]>;
+  /**
+   * `config.toml` as it is now: how Verdandi looks, and what in the file it
+   * cannot use. Changes to the file are pushed as `configChanged`.
+   */
+  getConfig: () => Promise<ConfigState>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -1248,6 +1305,11 @@ export interface CoreEvents {
   rateLimitsChanged: RateLimitState[];
   /** The repository picker's suggestions, while it is open, as they change. */
   repositorySuggestionsChanged: RepositorySuggestions;
+  /**
+   * `config.toml` whenever it changes, including when it is created, deleted
+   * or replaced.
+   */
+  configChanged: ConfigState;
 }
 
 export type CoreEventName = keyof CoreEvents;
@@ -1295,6 +1357,7 @@ const requests: Record<keyof CoreRequests, true> = {
   saveView: true,
   removeView: true,
   openView: true,
+  getConfig: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,
@@ -1305,6 +1368,7 @@ const events: Record<CoreEventName, true> = {
   sidebarChanged: true,
   rateLimitsChanged: true,
   repositorySuggestionsChanged: true,
+  configChanged: true,
 };
 
 /** Every request name, for wiring the contract to a transport. */

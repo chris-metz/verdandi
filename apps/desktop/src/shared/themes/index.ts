@@ -1,3 +1,4 @@
+import type { Config } from "@verdandi/core/contract";
 import { githubDark, githubDarkDimmed, githubLight } from "./github";
 
 /**
@@ -116,9 +117,26 @@ export const defaultLightTheme = githubLight;
 export const defaultDarkTheme = githubDark;
 
 /**
- * The theme Verdandi shows while it follows the operating system, which is
- * dark or not.
+ * The themes as the core checks `config.toml` against them: by ID, each
+ * light or dark, with the defaults.
  */
-export function shownTheme(systemIsDark: boolean): Theme {
-  return systemIsDark ? defaultDarkTheme : defaultLightTheme;
+export const themeCatalogue = {
+  themes: builtInThemes,
+  defaults: { light: defaultLightTheme.id, dark: defaultDarkTheme.id },
+};
+
+/**
+ * The theme Verdandi shows, light or dark as the appearance says: the chosen
+ * one of that kind, or the default when none is chosen or it cannot be used.
+ */
+export function shownTheme(
+  dark: boolean,
+  chosen?: Pick<Config, "lightTheme" | "darkTheme">,
+): Theme {
+  const kind = dark ? "dark" : "light";
+  const id = dark ? chosen?.darkTheme : chosen?.lightTheme;
+  return (
+    builtInThemes.find((theme) => theme.id === id && theme.kind === kind) ??
+    (dark ? defaultDarkTheme : defaultLightTheme)
+  );
 }

@@ -56,7 +56,7 @@ const commands = {
     });
     const fresh = args === "--fresh";
     const tracked = fresh ? [] : args ? args.split(/\s+/) : ["cli/cli"];
-    home = mkdtempSync(join(tmpdir(), "verdandi-run-"));
+    home ??= mkdtempSync(join(tmpdir(), "verdandi-run-"));
     if (!fresh) {
       writeFileSync(
         join(home, "settings.json"),
@@ -158,6 +158,66 @@ const commands = {
     return existsSync(file)
       ? readFileSync(file, "utf8").trim()
       : "no settings.json";
+  },
+
+  /**
+   * Prints the scratch home's config.toml; with TOML, writes it, `\n`
+   * separating lines; with `--remove`, deletes it. Before `launch`, the app
+   * starts with it; after, this waits until the app has read the change.
+   */
+  async config(args) {
+    if (!args) {
+      if (!home) throw new Error("launch or write a config first");
+      const file = join(home, "config.toml");
+      return existsSync(file)
+        ? readFileSync(file, "utf8").trim()
+        : "no config.toml";
+    }
+    home ??= mkdtempSync(join(tmpdir(), "verdandi-run-"));
+    const file = join(home, "config.toml");
+    const change = () => {
+      if (args === "--remove") rmSync(file, { force: true });
+      else writeFileSync(file, `${args.replaceAll("\\n", "\n")}\n`);
+    };
+    if (!page || !app) {
+      change();
+      return args === "--remove" ? "no config.toml" : `wrote ${file}`;
+    }
+    await page.evaluate(() => {
+      globalThis.configPushed = new Promise((resolve) => {
+        const stop = globalThis.verdandi.on("configChanged", (state) => {
+          stop();
+          resolve(state);
+        });
+      });
+    });
+    change();
+    const state = await page.evaluate(() =>
+      Promise.race([
+        globalThis.configPushed,
+        new Promise((_, reject) =>
+          globalThis.setTimeout(() => {
+            reject(new Error("the app did not see the change"));
+          }, 10_000),
+        ),
+      ]),
+    );
+    // The page also hears of the appearance, from main, on its own.
+    const dark = await app.evaluate(
+      ({ nativeTheme }) => nativeTheme.shouldUseDarkColors,
+    );
+    await page.waitForFunction(
+      (dark) =>
+        document.defaultView.matchMedia("(prefers-color-scheme: dark)")
+          .matches === dark,
+      dark,
+      { timeout },
+    );
+    return JSON.stringify(
+      { status: state.status, config: state.config, problems: state.problems },
+      null,
+      2,
+    );
   },
 
   /**

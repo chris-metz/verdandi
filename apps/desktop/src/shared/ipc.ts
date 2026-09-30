@@ -18,6 +18,7 @@ export const ipcChannels = {
   /** Renderer → main: `(url)` of an image to load from elsewhere than GitHub. */
   loadImage: "desktop:load-image",
   showSettingsFolder: "desktop:show-settings-folder",
+  showConfigFile: "desktop:show-config-file",
 } as const;
 
 /**
@@ -51,6 +52,11 @@ export const rendererRequestNames = requestNames.filter(
 export interface DesktopApi {
   /** Reveals the user-data folder containing settings.json. */
   showSettingsFolder: () => Promise<void>;
+  /**
+   * Reveals config.toml in the file manager, or its folder, created if need
+   * be, while there is no file.
+   */
+  showConfigFile: () => Promise<void>;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**

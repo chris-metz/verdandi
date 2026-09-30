@@ -70,3 +70,27 @@ export function desktopStateDirectory({
     }
   }
 }
+
+/**
+ * Where the user's configuration is kept (`config.toml`): safe to share and
+ * where dotfiles live (ADR 0002, ADR 0005). `~/.config` on macOS too, as
+ * terminal and editor configs are, and `VERDANDI_HOME` relocates it for tests
+ * and portable use.
+ */
+export function configDirectory({
+  platform,
+  env,
+  homedir,
+}: HostEnvironment): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  const join = (...segments: string[]) => paths.join(...segments);
+  if (env.VERDANDI_HOME) return env.VERDANDI_HOME;
+  if (platform === "win32")
+    return join(env.APPDATA || join(homedir, "AppData", "Roaming"), "Verdandi");
+  // The XDG spec says to ignore relative paths.
+  const configHome =
+    env.XDG_CONFIG_HOME && paths.isAbsolute(env.XDG_CONFIG_HOME)
+      ? env.XDG_CONFIG_HOME
+      : join(homedir, ".config");
+  return join(configHome, "verdandi");
+}

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { desktopStateDirectory, userDataDirectory } from "./directories.ts";
+import {
+  configDirectory,
+  desktopStateDirectory,
+  userDataDirectory,
+} from "./directories.ts";
 
 describe("user data directory", () => {
   it("is in Application Support on macOS", () => {
@@ -134,5 +138,80 @@ describe("desktop state directory", () => {
         homedir: "/home/octo",
       }),
     ).toBe("/tmp/verdandi-test/desktop");
+  });
+});
+
+describe("config directory", () => {
+  it("is in ~/.config on macOS", () => {
+    expect(
+      configDirectory({ platform: "darwin", env: {}, homedir: "/Users/octo" }),
+    ).toBe("/Users/octo/.config/verdandi");
+  });
+
+  it("is in XDG_CONFIG_HOME on macOS and Linux", () => {
+    for (const platform of ["darwin", "linux"] as const)
+      expect(
+        configDirectory({
+          platform,
+          env: { XDG_CONFIG_HOME: "/var/config/octo" },
+          homedir: "/home/octo",
+        }),
+      ).toBe("/var/config/octo/verdandi");
+  });
+
+  it("is in ~/.config on Linux without XDG_CONFIG_HOME", () => {
+    expect(
+      configDirectory({
+        platform: "linux",
+        env: { XDG_CONFIG_HOME: "" },
+        homedir: "/home/octo",
+      }),
+    ).toBe("/home/octo/.config/verdandi");
+  });
+
+  it("ignores a relative XDG_CONFIG_HOME", () => {
+    expect(
+      configDirectory({
+        platform: "linux",
+        env: { XDG_CONFIG_HOME: "config" },
+        homedir: "/home/octo",
+      }),
+    ).toBe("/home/octo/.config/verdandi");
+  });
+
+  it("is in the roaming app data on Windows", () => {
+    expect(
+      configDirectory({
+        platform: "win32",
+        env: {
+          APPDATA: "C:\\Users\\octo\\AppData\\Roaming",
+          XDG_CONFIG_HOME: "C:\\config",
+        },
+        homedir: "C:\\Users\\octo",
+      }),
+    ).toBe("C:\\Users\\octo\\AppData\\Roaming\\Verdandi");
+  });
+
+  it("is in AppData\\Roaming on Windows without APPDATA", () => {
+    expect(
+      configDirectory({
+        platform: "win32",
+        env: {},
+        homedir: "C:\\Users\\octo",
+      }),
+    ).toBe("C:\\Users\\octo\\AppData\\Roaming\\Verdandi");
+  });
+
+  it("is VERDANDI_HOME when it is set", () => {
+    expect(
+      configDirectory({
+        platform: "darwin",
+        env: {
+          VERDANDI_HOME: "/tmp/verdandi-test",
+          XDG_CONFIG_HOME: "/var/config/octo",
+        },
+        homedir: "/Users/octo",
+      }),
+    ).toBe("/tmp/verdandi-test");
   });
 });

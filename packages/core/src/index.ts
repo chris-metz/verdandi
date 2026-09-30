@@ -15,16 +15,20 @@ export type {
   SuggestionPage,
 } from "./github/port.ts";
 export { runCommand } from "./github/run-command.ts";
+export { createConfigFile } from "./settings/config-file.ts";
 export { createLocalStateFile } from "./settings/local-state-file.ts";
 export { createSettingsFile } from "./settings/settings-file.ts";
 export type {
+  ConfigStorage,
   LocalState,
   LocalStateStorage,
   Settings,
   SettingsResult,
   SettingsStorage,
+  ThemeCatalogue,
 } from "./settings/port.ts";
 export {
+  configDirectory,
   desktopStateDirectory,
   userDataDirectory,
   type HostEnvironment,

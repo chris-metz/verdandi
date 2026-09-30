@@ -81,6 +81,18 @@ The sidebar follows the file order. Drag an entry within its section, or press â
 
 Files from a newer version are read-only until Verdandi is updated. Older files are migrated on the next change, with a one-time `settings.json.backup-v<version>` backup.
 
+## Choose the look
+
+How Verdandi looks is kept in `config.toml` in the config directory: `~/.config/verdandi/` on macOS and Linux (`$XDG_CONFIG_HOME/verdandi/` when that is set), `%APPDATA%\Verdandi\` on Windows, or `VERDANDI_HOME` when it is set. It is meant for your dotfiles. Every key is optional:
+
+```toml
+appearance = "system"               # "system", "light" or "dark"
+light_theme = "github-light"        # github-light
+dark_theme = "github-dark-dimmed"   # github-dark or github-dark-dimmed
+```
+
+**File â†’ Show Config File** reveals it, or its folder while there is none. Changes apply at once. A value Verdandi cannot use falls back to its default, an unknown key is ignored, and a file that is not valid TOML means every default; the sidebar says what and where until the file is fixed.
+
 ## Check before pushing
 
 ```sh

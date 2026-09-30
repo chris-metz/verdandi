@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createCore } from "./core.ts";
+import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
+import { testThemes } from "./testing/themes.ts";
 import { createFakeGitHub } from "./testing/fake-github.ts";
 import type { IssueList, SidebarEntryKey } from "./contract.ts";
 
@@ -21,6 +23,7 @@ function launch() {
     host,
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
+    config: createConfigFile(host, testThemes),
     github: () => github,
     runCommand: () =>
       Promise.resolve({

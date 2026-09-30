@@ -12,6 +12,7 @@ import { ContextMenu } from "@base-ui/react/context-menu";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
+import { ConfigProblems } from "./ConfigProblems";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
 import {
   presentScope,
@@ -268,6 +269,7 @@ export function Sidebar({
           sidebar.settings.status !== "writable" && (
             <SettingsProblem status={sidebar.settings} />
           )}
+        <ConfigProblems />
         {settingsError && (
           <p role="alert" className="px-2 py-1 break-words text-destructive">
             {settingsError}

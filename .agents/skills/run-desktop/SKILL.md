@@ -43,9 +43,26 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
 | `opened`                              | The links the app opened in the browser                                                                |
 | `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                       |
+| `config [<toml> \| --remove]`         | Writes `config.toml`, `\n` between lines, or deletes it; with nothing, prints it. See below            |
 | `quit`                                | Closes the app and deletes its scratch home                                                            |
 
 A failed command prints `ERROR <command>: …`, the rest still runs, and the exit code is 1. Lines starting with `//` are comments. Run it from a terminal without stdin redirected for a `driver>` prompt.
+
+## The look
+
+`config.toml` sets the appearance and the themes. Write it before `launch` for the app to start with it, or after to change it while the app runs: then `config` waits until the app has read it, and prints what it uses and any problems.
+
+```bash
+node .agents/skills/run-desktop/driver.mjs <<'EOF'
+config dark_theme = "github-dark-dimmed"\nappearance = "dark"
+launch
+ss dimmed
+config appearance = "light"
+ss light
+EOF
+```
+
+`theme` switches the appearance as the operating system would, overriding the file's until it changes again.
 
 ## Gotchas
 

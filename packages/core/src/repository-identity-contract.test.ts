@@ -12,8 +12,10 @@ import type {
 } from "./contract.ts";
 import { createCore } from "./core.ts";
 import type { HostEnvironment } from "./directories.ts";
+import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
+import { testThemes } from "./testing/themes.ts";
 import { createFakeGitHub, type FakeGitHub } from "./testing/fake-github.ts";
 
 /** A temporary `VERDANDI_HOME`, so tests never touch the real user data. */
@@ -70,6 +72,7 @@ function createTestCore(github: FakeGitHub): Contract {
     },
     settings: createSettingsFile(files),
     localState: createLocalStateFile(files),
+    config: createConfigFile(files, testThemes),
     wait: () => Promise.resolve(),
   });
   cores.push(core);

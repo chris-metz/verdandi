@@ -1,4 +1,7 @@
+import type { Config } from "@verdandi/core/contract";
+import type { RendererContract } from "../../shared/ipc";
 import { shownTheme, themeTokens, type Theme } from "../../shared/themes";
+import { followConfig } from "./config";
 
 /**
  * Shows a theme's colours on the page, in place of any shown before. Each
@@ -16,9 +19,12 @@ export function showTheme(root: HTMLElement, theme: Theme) {
 }
 
 /**
- * Shows the theme for the operating system's appearance, and switches it
- * whenever the operating system does, until the returned function is called.
- * `media` is `(prefers-color-scheme: dark)`.
+ * Shows the user's light or dark theme, as the appearance says, and switches
+ * it whenever the appearance or the chosen themes change, until `stop` is
+ * called. `media` is `(prefers-color-scheme: dark)`, which main makes follow
+ * the appearance. Nothing is shown until `config.toml` is read, so that the
+ * window's background, already its theme's, shows through; `ready` settles
+ * once it is, with the default themes if it cannot be.
  */
 export function followAppearance(
   root: HTMLElement,
@@ -26,13 +32,29 @@ export function followAppearance(
     MediaQueryList,
     "matches" | "addEventListener" | "removeEventListener"
   >,
-) {
+  verdandi: Pick<RendererContract, "getConfig" | "on">,
+): { ready: Promise<void>; stop: () => void } {
+  let chosen: Config | undefined;
+  let showing = false;
   const show = () => {
-    showTheme(root, shownTheme(media.matches));
+    if (showing) showTheme(root, shownTheme(media.matches, chosen));
   };
-  show();
+  const config = followConfig(verdandi, (state) => {
+    chosen = state.config;
+    show();
+  });
   media.addEventListener("change", show);
-  return () => {
-    media.removeEventListener("change", show);
+  let stopped = false;
+  return {
+    ready: config.ready.then(() => {
+      showing = !stopped;
+      show();
+    }),
+    stop() {
+      stopped = true;
+      showing = false;
+      config.stop();
+      media.removeEventListener("change", show);
+    },
   };
 }
