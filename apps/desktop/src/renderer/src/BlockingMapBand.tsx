@@ -12,6 +12,7 @@ import {
   minimumMapHeight,
   type MapLayout,
 } from "./blocking-layout";
+import type { ThemeToken } from "../../shared/themes";
 import type { IssueDestination } from "./issue-navigation";
 import {
   mapScrollAfterLayout,
@@ -110,12 +111,13 @@ export function BlockingMapBand({
       for (const card of layout.cards) {
         if (!card.issue) continue;
         const old = before.get(card.id);
-        const colour = !old
-          ? "rgb(46 160 67 / 30%)"
+        const token: ThemeToken | undefined = !old
+          ? "map-new"
           : old.step !== card.step
-            ? "rgb(210 153 34 / 35%)"
+            ? "map-moved"
             : undefined;
-        if (!colour) continue;
+        if (!token) continue;
+        const colour = getComputedStyle(element).getPropertyValue(`--${token}`);
         const flash = element.querySelector<HTMLElement>(
           `[data-map-card="${CSS.escape(card.id)}"] > .map-flash`,
         );
@@ -320,7 +322,7 @@ export function BlockingMapBand({
                               key={label.name}
                               title={label.name}
                               aria-label={label.name}
-                              className="size-2 rounded-full ring-1 ring-black/10"
+                              className="size-2 rounded-full ring-1 ring-foreground/10"
                               style={{ backgroundColor: `#${label.color}` }}
                             />
                           ))}

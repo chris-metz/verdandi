@@ -1,101 +1,15 @@
 /*
  * Issue bodies and comments as github.com shows them, for the HTML GitHub
  * renders and Verdandi's allowlist keeps: its typography, highlighted code
- * (`pl-*`), task lists, alerts, tables and footnotes, in light and dark.
- * The colours are GitHub's own.
+ * (`pl-*`), task lists, alerts, tables and footnotes. The colours are the
+ * shown theme's `--gh-*` and `--pl-*` tokens.
  */
 
 @layer components {
   .markdown-body {
-    --gh-fg-muted: #59636e;
-    --gh-accent: #0969da;
-    --gh-border: #d1d9e0;
-    --gh-border-muted: #d1d9e0b3;
-    --gh-canvas-subtle: #f6f8fa;
-    --gh-neutral-muted: #818b981f;
-    --gh-success: #1a7f37;
-    --gh-done: #8250df;
-    --gh-attention: #9a6700;
-    --gh-danger: #d1242f;
-    --pl-comment: #59636e;
-    --pl-constant: #0550ae;
-    --pl-reference-link: #0a3069;
-    --pl-entity: #6639ba;
-    --pl-storage-modifier-import: #1f2328;
-    --pl-entity-tag: #0550ae;
-    --pl-keyword: #cf222e;
-    --pl-string: #0a3069;
-    --pl-variable: #953800;
-    --pl-bracket-unmatched: #82071e;
-    --pl-bracket-angle: #59636e;
-    --pl-invalid-text: #f6f8fa;
-    --pl-invalid-bg: #82071e;
-    --pl-carriage-return-text: #f6f8fa;
-    --pl-carriage-return-bg: #cf222e;
-    --pl-string-regexp: #116329;
-    --pl-markup-list: #3b2300;
-    --pl-markup-heading: #0550ae;
-    --pl-markup-italic: #1f2328;
-    --pl-markup-bold: #1f2328;
-    --pl-markup-deleted-text: #82071e;
-    --pl-markup-deleted-bg: #ffebe9;
-    --pl-markup-inserted-text: #116329;
-    --pl-markup-inserted-bg: #dafbe1;
-    --pl-markup-changed-text: #953800;
-    --pl-markup-changed-bg: #ffd8b5;
-    --pl-markup-ignored-text: #d1d9e0;
-    --pl-markup-ignored-bg: #0550ae;
-    --pl-meta-diff-range: #8250df;
-    --pl-gutter-mark: #818b98;
-
     font-size: 14px;
     line-height: 1.5;
     overflow-wrap: break-word;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .markdown-body {
-      --gh-fg-muted: #9198a1;
-      --gh-accent: #4493f8;
-      --gh-border: #3d444d;
-      --gh-border-muted: #3d444db3;
-      --gh-canvas-subtle: #151b23;
-      --gh-neutral-muted: #656c7633;
-      --gh-success: #3fb950;
-      --gh-done: #ab7df8;
-      --gh-attention: #d29922;
-      --gh-danger: #f85149;
-      --pl-comment: #9198a1;
-      --pl-constant: #79c0ff;
-      --pl-reference-link: #a5d6ff;
-      --pl-entity: #d2a8ff;
-      --pl-storage-modifier-import: #f0f6fc;
-      --pl-entity-tag: #7ee787;
-      --pl-keyword: #ff7b72;
-      --pl-string: #a5d6ff;
-      --pl-variable: #ffa657;
-      --pl-bracket-unmatched: #f85149;
-      --pl-bracket-angle: #9198a1;
-      --pl-invalid-text: #f0f6fc;
-      --pl-invalid-bg: #8e1519;
-      --pl-carriage-return-text: #f0f6fc;
-      --pl-carriage-return-bg: #b62324;
-      --pl-string-regexp: #7ee787;
-      --pl-markup-list: #f2cc60;
-      --pl-markup-heading: #1f6feb;
-      --pl-markup-italic: #f0f6fc;
-      --pl-markup-bold: #f0f6fc;
-      --pl-markup-deleted-text: #ffdcd7;
-      --pl-markup-deleted-bg: #67060c;
-      --pl-markup-inserted-text: #aff5b4;
-      --pl-markup-inserted-bg: #033a16;
-      --pl-markup-changed-text: #ffdfb6;
-      --pl-markup-changed-bg: #5a1e02;
-      --pl-markup-ignored-text: #f0f6fc;
-      --pl-markup-ignored-bg: #1158c7;
-      --pl-meta-diff-range: #d2a8ff;
-      --pl-gutter-mark: #3d444d;
-    }
   }
 
   .markdown-body > :first-child {

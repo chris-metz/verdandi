@@ -38,7 +38,7 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | `scroll <css>`                        | Scrolls the first match to the top                                                                     |
 | `text [css]`                          | Prints the text shown by the first match, or the whole window                                          |
 | `eval <js>`                           | Evaluates an expression in the window, prints it as JSON                                               |
-| `theme <light \| dark>`               | Switches the colour scheme                                                                             |
+| `theme <light \| dark>`               | Switches the operating system's appearance, and waits until the page sees it                           |
 | `size <width> <height>`               | Resizes the page, 1200 × 800 at launch                                                                 |
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
 | `opened`                              | The links the app opened in the browser                                                                |

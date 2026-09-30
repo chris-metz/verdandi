@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { contrastRatio } from "./contrast";
+import {
+  builtInThemes,
+  defaultDarkTheme,
+  defaultLightTheme,
+  shownTheme,
+  themeTokens,
+  type ThemeToken,
+} from "./index";
+
+describe("built-in themes", () => {
+  it("are GitHub Light, Dark and Dark Dimmed", () => {
+    expect(
+      builtInThemes.map(({ id, name, kind }) => ({ id, name, kind })),
+    ).toEqual([
+      { id: "github-light", name: "GitHub Light", kind: "light" },
+      { id: "github-dark", name: "GitHub Dark", kind: "dark" },
+      { id: "github-dark-dimmed", name: "GitHub Dark Dimmed", kind: "dark" },
+    ]);
+  });
+
+  it("have unique IDs", () => {
+    const ids = builtInThemes.map(({ id }) => id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("default to GitHub Light and GitHub Dark", () => {
+    expect(defaultLightTheme.id).toBe("github-light");
+    expect(defaultDarkTheme.id).toBe("github-dark");
+  });
+
+  it("show the default light or dark theme as the operating system does", () => {
+    expect(shownTheme(false).id).toBe("github-light");
+    expect(shownTheme(true).id).toBe("github-dark");
+  });
+
+  describe.each(builtInThemes)("$name", (theme) => {
+    const colour = (token: ThemeToken) => theme.colors[token];
+
+    it("defines every token as a hex colour, and nothing else", () => {
+      expect(Object.keys(theme.colors).sort()).toEqual([...themeTokens].sort());
+      for (const token of themeTokens)
+        expect(colour(token), token).toMatch(/^#([0-9a-f]{6}|[0-9a-f]{8})$/);
+    });
+
+    it.each(["background", "sidebar", "card"] as const)(
+      "shows foreground on %s at 4.5:1 or more",
+      (surface) => {
+        expect(
+          contrastRatio(colour("foreground"), colour(surface)),
+        ).toBeGreaterThanOrEqual(4.5);
+      },
+    );
+
+    it.each([
+      "muted-foreground",
+      "issue-open",
+      "issue-closed",
+      "blocked",
+      "blocking",
+    ] as const)("shows %s on background at 3:1 or more", (token) => {
+      expect(
+        contrastRatio(colour(token), colour("background")),
+      ).toBeGreaterThanOrEqual(3);
+    });
+  });
+});

@@ -12,6 +12,13 @@ export default defineConfig({
       },
       {
         test: {
+          name: "desktop-shared",
+          root: "apps/desktop/src/shared",
+          environment: "node",
+        },
+      },
+      {
+        test: {
           name: "renderer",
           root: "apps/desktop/src/renderer",
           environment: "jsdom",

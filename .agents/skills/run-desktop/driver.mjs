@@ -82,6 +82,8 @@ const commands = {
       };
     });
     page = await app.firstWindow();
+    // Playwright emulates a light scheme; follow the (native) theme instead.
+    await page.emulateMedia({ colorScheme: null });
     await page.setViewportSize({ width: 1200, height: 800 });
     try {
       await page.waitForSelector(
@@ -207,11 +209,26 @@ const commands = {
     return JSON.stringify(await window().evaluate(expression), null, 2);
   },
 
+  /**
+   * Switches the operating system's appearance to light or dark, so the page
+   * gets its `prefers-color-scheme` change event: emulating the media query
+   * changes what it matches, but fires no event.
+   */
   async theme(scheme) {
     if (scheme !== "light" && scheme !== "dark") {
       throw new Error("theme light or theme dark");
     }
-    await window().emulateMedia({ colorScheme: scheme });
+    if (!app) throw new Error("launch first");
+    await app.evaluate(({ nativeTheme }, source) => {
+      nativeTheme.themeSource = source;
+    }, scheme);
+    await window().waitForFunction(
+      (dark) =>
+        document.defaultView.matchMedia("(prefers-color-scheme: dark)")
+          .matches === dark,
+      scheme === "dark",
+      { timeout },
+    );
     return `theme ${scheme}`;
   },
 

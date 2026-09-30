@@ -31,6 +31,7 @@ import {
   rendererRequestNames,
   type DesktopApi,
 } from "../shared/ipc";
+import { shownTheme } from "../shared/themes";
 import icon from "../../build/icon.png?asset";
 import { loadImage } from "./load-image";
 
@@ -211,8 +212,9 @@ async function createWindow(core: Contract, afterClose: () => void) {
     title: "Verdandi",
     // macOS shows the app's icon instead; Linux shows no icon without it.
     ...(process.platform === "darwin" ? {} : { icon }),
-    // Matches the page background, so the window does not flash on opening.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+    // The shown theme's background, so the window does not flash on opening.
+    backgroundColor: shownTheme(nativeTheme.shouldUseDarkColors).colors
+      .background,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
