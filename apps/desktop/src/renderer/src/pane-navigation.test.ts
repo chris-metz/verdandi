@@ -162,6 +162,64 @@ describe("a", () => {
   });
 });
 
+describe("#", () => {
+  const goToIssue = {
+    kind: "go-to-issue",
+    repository: { owner: "acme", name: "api" },
+  };
+
+  it("opens the Go to issue dialog of the selected repository, whichever pane has the keyboard", () => {
+    expect(press(key("#"), { focused: "sidebar", selected: "api" })).toEqual(
+      goToIssue,
+    );
+    expect(press(key("#"), { focused: "main", selected: "api" })).toEqual(
+      goToIssue,
+    );
+  });
+
+  it("works with ⇧ held, as for Shift+3 on a US keyboard", () => {
+    expect(
+      press(
+        { ...key("#", { shiftKey: true }), code: "Digit3" },
+        {
+          selected: "api",
+        },
+      ),
+    ).toEqual(goToIssue);
+  });
+
+  it("does nothing in All or a view, or with nothing selected", () => {
+    const all = { kind: "all" } as const;
+    const bugs = {
+      kind: "view",
+      view: { id: "bugs", name: "Bugs", query: "label:bug" },
+    } as const;
+    for (const selected of [all, bugs]) {
+      expect(
+        commandForWindowKey(key("#"), {
+          focused: "main",
+          entries: [all, ...entries, bugs],
+          selected,
+          modifier: macOS,
+        }),
+      ).toBeUndefined();
+    }
+    expect(press(key("#"))).toBeUndefined();
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt", () => {
+    expect(
+      press(key("#", { metaKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("#", { ctrlKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("#", { altKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+  });
+});
+
 describe("sidebar keys", () => {
   it("select the entry below with j and ↓, stopping at the last", () => {
     expect(press(key("j"), { selected: "api" })).toEqual(select("web"));

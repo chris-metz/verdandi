@@ -23,6 +23,7 @@ export function MainArea({
   onRemoveRepository,
   onTrackNewRepository,
   onEditView,
+  onGoToIssue,
 }: {
   scope: Scope;
   repositories: readonly RepositoryEntry[];
@@ -31,6 +32,8 @@ export function MainArea({
   onTrackNewRepository: (repository: TrackedRepository) => void;
   /** Opens the view dialog for the view shown. */
   onEditView: () => void;
+  /** Opens the Go to issue dialog, where it is available. */
+  onGoToIssue: (() => void) | undefined;
   /** The issue pages opened from the list, the one shown last. */
   stack: readonly IssueVisit[];
   /** The account GitHub is read as, if known. */
@@ -62,6 +65,7 @@ export function MainArea({
         onOpen={(issue) => {
           onNavigate({ kind: "open", issue });
         }}
+        onGoToIssue={onGoToIssue}
       />
     );
   return (
@@ -73,6 +77,7 @@ export function MainArea({
       login={login}
       hasKeyboard={hasKeyboard}
       onNavigate={onNavigate}
+      onGoToIssue={onGoToIssue}
       onFilterLabel={(label) => {
         void window.verdandi.addLabelToFilter(
           scope.kind === "view"

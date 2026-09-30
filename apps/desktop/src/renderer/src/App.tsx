@@ -1,5 +1,5 @@
 import type {
-  IssueState,
+  IssueList,
   RepositoryAddress,
   SavedView,
   SidebarEntryKey,
@@ -10,6 +10,7 @@ import type {
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useConfig } from "./config";
+import { GoToIssueDialog } from "./GoToIssueDialog";
 import { navigateIssues } from "./issue-navigation";
 import { MainArea } from "./MainArea";
 import { Notices } from "./Notices";
@@ -90,11 +91,14 @@ export function App() {
   const [viewDialog, setViewDialog] = useState<ViewDialogPurpose>();
   const config = useConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The repository the Go to issue dialog is open for. */
+  const [goingTo, setGoingTo] = useState<RepositoryAddress>();
   const dialogOpen =
     picking ||
     removing !== undefined ||
     viewDialog !== undefined ||
-    settingsOpen;
+    settingsOpen ||
+    goingTo !== undefined;
   const login =
     setup?.status === "ready" && setup.account.status === "known"
       ? setup.account.account.login
@@ -222,6 +226,11 @@ export function App() {
     refocusPane();
   }
 
+  /** Opens the Go to issue dialog, unless the setup blocker is up. */
+  function openGoToIssue(repository: RepositoryAddress) {
+    if (!blocked) setGoingTo(repository);
+  }
+
   /** Shows a view just saved, with its list in front of any issue page. */
   function showSaved(view: SavedView) {
     setViewDialog(undefined);
@@ -295,15 +304,22 @@ export function App() {
   }, [blocked, focused]);
 
   // The core pushes a scope's list only in the state it shows it in, so the
-  // last list pushed tells which one `s` switches from.
-  const listStates = useRef(new Map<string, IssueState>());
+  // last list pushed tells which one `s` switches from. It tells which
+  // issues the Go to issue dialog opens without asking GitHub too, on the
+  // issue pages that replace the list as well.
+  const lists = useRef(new Map<string, IssueList>());
   useEffect(
     () =>
       window.verdandi.on("listChanged", (list) => {
-        listStates.current.set(scopeLabel(list.scope), list.state);
+        lists.current.set(scopeLabel(list.scope), list);
       }),
     [],
   );
+
+  /** The list last pushed for a scope, in the state the core shows it in. */
+  function pushedList(scope: Scope): IssueList | undefined {
+    return lists.current.get(scopeLabel(scope));
+  }
 
   // The issue pages were opened as the previous account, which may be all
   // that could read them: the selected entry's list is read anew instead.
@@ -403,7 +419,7 @@ export function App() {
         case "switch-state":
           // Only while the list shows, not an issue page opened from it.
           if (screen?.kind === "list") {
-            const shown = listStates.current.get(scopeLabel(screen.scope));
+            const shown = pushedList(screen.scope)?.state;
             void window.verdandi.switchState(
               screen.scope,
               shown === "closed" ? "open" : "closed",
@@ -412,6 +428,9 @@ export function App() {
           break;
         case "add-repository":
           openPicker();
+          break;
+        case "go-to-issue":
+          openGoToIssue(command.repository);
           break;
         case "remove-repository":
           confirmRepositoryRemoval(command.repository);
@@ -512,6 +531,13 @@ export function App() {
               onEditView={() => {
                 if (selected.kind === "view") editView(selected.view);
               }}
+              onGoToIssue={
+                selected.kind === "repository"
+                  ? () => {
+                      openGoToIssue(selected.repository);
+                    }
+                  : undefined
+              }
               stack={stack}
               login={login}
               onNavigate={navigate}
@@ -581,6 +607,24 @@ export function App() {
             if (viewDialog.kind === "edit") confirmViewRemoval(viewDialog.view);
           }}
           onClose={closeViewDialog}
+        />
+      )}
+      {goingTo && (
+        <GoToIssueDialog
+          repository={goingTo}
+          login={login}
+          shown={stack.at(-1)?.issue}
+          trees={() =>
+            pushedList({ kind: "repository", repository: goingTo })?.trees ?? []
+          }
+          onOpen={(issue) => {
+            setGoingTo(undefined);
+            navigate({ kind: "open", issue });
+          }}
+          refocusPane={refocusPane}
+          onClose={() => {
+            setGoingTo(undefined);
+          }}
         />
       )}
       {settingsOpen && config && (

@@ -28,6 +28,7 @@ export type WindowCommand =
   | { kind: "refresh" }
   | { kind: "switch-state" }
   | { kind: "add-repository" }
+  | { kind: "go-to-issue"; repository: RepositoryAddress }
   | { kind: "remove-repository"; repository: RepositoryAddress }
   | { kind: "new-view" }
   | { kind: "edit-view"; view: SavedView }
@@ -67,8 +68,9 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
  * What a key does in the window before the focused pane gets it: Tab moves
  * the keyboard to the other pane, `r` refreshes what is on screen, `s`
  * switches a repository's or All's list between open and closed issues, `a`
- * opens the repository picker, `v` opens the dialog for a new view, `E` the one
- * for the selected view and `V` one for a duplicate of it, ⌘/Ctrl+1…9
+ * opens the repository picker, `#` the Go to issue dialog of the selected
+ * repository, `v` the dialog for a new view, `E` the one for the selected
+ * view and `V` one for a duplicate of it, ⌘/Ctrl+1…9
  * select the sidebar's entries in visual order, and in the sidebar ↑/↓ or
  * `j`/`k` select the entry above or below at once, F2 edits the view it has
  * and ⌫ asks to remove its entry. Every other key is the
@@ -119,6 +121,10 @@ export function commandForWindowKey(
     return { kind: "switch-state" };
   }
   if (key === "a") return { kind: "add-repository" };
+  // `#` is its own key on some layouts, and Shift+3 on others.
+  if (key === "#" && selected?.kind === "repository") {
+    return { kind: "go-to-issue", repository: selected.repository };
+  }
   if (key === "v" && !shiftKey) return { kind: "new-view" };
   if (key === "E" && selected?.kind === "view") {
     return { kind: "edit-view", view: selected.view };

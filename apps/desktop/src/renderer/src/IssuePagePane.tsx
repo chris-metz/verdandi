@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { loadingFreshness, pageFreshness } from "./freshness";
 import { openLinkToIssue } from "./follow-link";
 import { BlockingMapBand } from "./BlockingMapBand";
+import { GoToIssueButton } from "./GoToIssueDialog";
 import type { MapTarget } from "./map-navigation";
 import { IssueConversation } from "./IssueConversation";
 import { IssueMetadataLine } from "./IssueMetadataLine";
@@ -65,6 +66,7 @@ export function IssuePagePane({
   login,
   hasKeyboard,
   onNavigate,
+  onGoToIssue,
   onFilterLabel,
 }: {
   visit: IssueVisit;
@@ -74,6 +76,8 @@ export function IssuePagePane({
   login: string | undefined;
   hasKeyboard: boolean;
   onNavigate: (action: IssueNavigation) => void;
+  /** Opens the Go to issue dialog, where it is available. */
+  onGoToIssue?: (() => void) | undefined;
   /**
    * Returns to the list the page was opened from, with a label added to its
    * label filter.
@@ -321,6 +325,7 @@ export function IssuePagePane({
         )}
         <span className="flex-1" />
         <RateLimitStatus />
+        {onGoToIssue && <GoToIssueButton onClick={onGoToIssue} />}
         <RefreshControl
           freshness={(now) =>
             page

@@ -185,8 +185,8 @@ export function commandForKey(
       };
     }
     case "Enter": {
-      const { id, reference, title } = node.issue;
-      return { kind: "openIssue", issue: { id, reference, title } };
+      const { id, reference, title, url } = node.issue;
+      return { kind: "openIssue", issue: { id, reference, title, url } };
     }
     case "o":
       return { kind: "openOnGitHub", url: node.issue.url };
@@ -196,7 +196,7 @@ export function commandForKey(
 }
 
 /** Every issue of a forest, shown or collapsed away. */
-function allNodes(trees: readonly IssueNode[]): IssueNode[] {
+export function allNodes(trees: readonly IssueNode[]): IssueNode[] {
   return trees.flatMap((node) => [node, ...allNodes(node.subIssues)]);
 }
 

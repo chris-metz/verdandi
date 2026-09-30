@@ -11,6 +11,7 @@ import type {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { listFreshness } from "./freshness";
+import { GoToIssueButton } from "./GoToIssueDialog";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
@@ -39,6 +40,7 @@ export function IssueListPane({
   onSelectRepository,
   onRemoveRepository,
   onTrackNewRepository,
+  onGoToIssue,
 }: {
   scope: Scope;
   repositories: readonly RepositoryEntry[];
@@ -57,6 +59,8 @@ export function IssueListPane({
    * when it opens in place of another list.
    */
   hasKeyboard: boolean;
+  /** Opens the Go to issue dialog, where it is available. */
+  onGoToIssue?: (() => void) | undefined;
 }) {
   const list = useList(scope);
   const trees = useMemo(() => list?.trees ?? [], [list]);
@@ -136,6 +140,7 @@ export function IssueListPane({
             </span>
           )}
           <RateLimitStatus />
+          {onGoToIssue && <GoToIssueButton onClick={onGoToIssue} />}
           {list && (
             <RefreshControl
               freshness={(now) => listFreshness(list, now)}
