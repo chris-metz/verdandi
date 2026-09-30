@@ -29,6 +29,7 @@ const cannotReachGitHub = {
 function allLoading(loaded: number, total: number): IssueList {
   return {
     scope: { kind: "all" },
+    state: "open",
     trees: [],
     loading: { status: "loading" },
     repositories: Array.from({ length: total }, (_, index) => ({
@@ -47,6 +48,7 @@ function repositoryList(loading: ListLoading): IssueList {
       kind: "repository",
       repository: { owner: "acme", name: "api" },
     },
+    state: "open",
     trees: [],
     loading,
     repositories: [],
@@ -78,7 +80,7 @@ describe("a list's header", () => {
   it("gives the age of what a list shows, also while it is read again", () => {
     const loaded = {
       updatedAt: now - 3 * minute,
-      openIssues: 2,
+      matches: 2,
       closedNotListed: 0,
     };
     expect(
@@ -105,7 +107,7 @@ describe("a list's header", () => {
           status: "stale",
           updatedAt: now - 30 * minute,
           problem: cannotReachGitHub,
-          openIssues: 2,
+          matches: 2,
           closedNotListed: 0,
         }),
         now,
@@ -125,7 +127,7 @@ describe("a list's header", () => {
           status: "stale",
           updatedAt: new Date(2026, 8, 26, 9, 5).getTime(),
           problem: cannotReachGitHub,
-          openIssues: 2,
+          matches: 2,
           closedNotListed: 0,
         }),
         now,
@@ -139,7 +141,7 @@ describe("a list's header", () => {
       loading: {
         status: "current",
         updatedAt: now - 3 * minute,
-        openIssues: 2,
+        matches: 2,
         closedNotListed: 0,
       },
       repositories: [

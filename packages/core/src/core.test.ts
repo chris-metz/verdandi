@@ -15,6 +15,7 @@ import type {
   IssueList,
   IssueNode,
   IssuePage,
+  IssueState,
   IssueSummary,
   Notice,
   RateLimitState,
@@ -180,11 +181,13 @@ async function untilSettled(
   core: Contract,
   scope: Scope,
   act: () => Promise<void>,
+  state?: IssueState,
 ): Promise<IssueList> {
   const settled = new Promise<IssueList>((resolve) => {
     const unsubscribe = core.on("listChanged", (list) => {
       if (
         isDeepStrictEqual(list.scope, scope) &&
+        (state === undefined || list.state === state) &&
         list.loading.status !== "loading" &&
         list.loading.status !== "refreshing"
       ) {
@@ -231,6 +234,18 @@ async function pageUntilSettled(
   });
   await act();
   return settled;
+}
+
+/**
+ * Switches a scope's list to a state and waits until nothing it shows in that
+ * state is being read any more.
+ */
+async function switchUntilLoaded(
+  core: Contract,
+  scope: Scope,
+  state: IssueState,
+): Promise<IssueList> {
+  return untilSettled(core, scope, () => core.switchState(scope, state), state);
 }
 
 /** The list pushed next for a scope, after `act`. */
@@ -2892,6 +2907,7 @@ describe("repository list", () => {
 
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
+      state: "open",
       trees: [],
       repositories: [],
       loading: {
@@ -3097,7 +3113,7 @@ describe("sub-issue forest", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 3,
     });
   });
@@ -3134,7 +3150,7 @@ describe("sub-issue forest", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 2,
+      matches: 2,
       closedNotListed: 0,
     });
   });
@@ -3169,7 +3185,7 @@ describe("sub-issue forest", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 1,
     });
   });
@@ -3381,6 +3397,301 @@ describe("sub-issue forest", () => {
   });
 });
 
+describe("closed issues", () => {
+  it("reads a repository's closed issues only once its list is switched to closed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Launch billing" },
+    ]);
+    const core = createTestCore(github);
+
+    const open = await openUntilLoaded(core, acmeApi);
+    expect(open.state).toBe("open");
+    expect(github.received).not.toContain("fetchClosedIssues acme/api");
+
+    const closed = await switchUntilLoaded(core, acmeApi, "closed");
+    expect(closed.state).toBe("closed");
+    expect(outline(closed)).toEqual(["#2 Old crash · closed"]);
+    expect(closed.loading).toEqual({
+      status: "current",
+      updatedAt: startTime,
+      matches: 1,
+      closedNotListed: 0,
+    });
+    expect(github.received).toContain("fetchClosedIssues acme/api");
+  });
+
+  it("stands each closed issue under its parent issue, even an open one, with all its sub-issues", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 5, title: "Retry budget" },
+      { number: 4, title: "Meter requests", state: "closed" },
+      {
+        number: 3,
+        title: "Usage endpoint",
+        state: "closed",
+        subIssues: ["acme/api#4", "acme/api#5", "other/lib#1"],
+      },
+      { number: 2, title: "Rate cards" },
+      {
+        number: 1,
+        title: "Launch billing",
+        subIssues: ["acme/api#2", "acme/api#3"],
+      },
+    ]);
+    github.addRepository("other/lib", [
+      { number: 1, title: "Shared client", state: "closed" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+
+    const closed = await switchUntilLoaded(core, acmeApi, "closed");
+
+    expect(outline(closed)).toEqual([
+      "#1 Launch billing",
+      "  #2 Rate cards",
+      "  #3 Usage endpoint · closed",
+      "    #4 Meter requests · closed",
+      "    #5 Retry budget",
+      "    other/lib#1 Shared client · external · closed",
+    ]);
+    expect(closed.loading).toMatchObject({ matches: 2, closedNotListed: 0 });
+  });
+
+  it("lists the most recently closed first, each tree by the most recently closed issue in it", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 6,
+        title: "Typo in README",
+        state: "closed",
+        createdAt: "2026-09-20T00:00:00Z",
+        closedAt: "2026-09-21T00:00:00Z",
+      },
+      {
+        number: 5,
+        title: "Flaky test",
+        state: "closed",
+        createdAt: "2026-06-01T00:00:00Z",
+        closedAt: "2026-09-25T00:00:00Z",
+      },
+      {
+        number: 4,
+        title: "Old parser",
+        state: "closed",
+        closedAt: "2026-09-21T00:00:00Z",
+      },
+      {
+        number: 3,
+        title: "Rate cards",
+        state: "closed",
+        closedAt: "2026-09-28T00:00:00Z",
+      },
+      {
+        number: 2,
+        title: "Launch billing",
+        state: "closed",
+        closedAt: "2026-08-01T00:00:00Z",
+        subIssues: ["acme/api#3"],
+      },
+      {
+        number: 1,
+        title: "Harden webhooks",
+        state: "closed",
+        closedAt: "2026-09-10T00:00:00Z",
+      },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await switchUntilLoaded(core, acmeApi, "closed");
+
+    // A recently closed sub-issue lifts its parent issue, also while it is
+    // collapsed. Ties go to the higher number.
+    const collapsed = await nextList(core, acmeApi, () =>
+      core.setExpanded(acmeApi, "I_acme/api#2", false),
+    );
+    expect(outline(collapsed)).toEqual([
+      "#2 Launch billing · closed",
+      "  #3 Rate cards · closed",
+      "#5 Flaky test · closed",
+      "#6 Typo in README · closed",
+      "#4 Old parser · closed",
+      "#1 Harden webhooks · closed",
+    ]);
+  });
+
+  it("shows how many closed issues have been read while the pages arrive", async () => {
+    const github = createFakeGitHub({ login: "octo-reader", issuesPerPage: 2 });
+    github.addRepository("acme/api", [
+      { number: 4, title: "Dark mode", state: "closed" },
+      { number: 3, title: "Audit trail", state: "closed" },
+      { number: 2, title: "CSV import", state: "closed" },
+      { number: 1, title: "Launch billing" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+
+    await switchUntilLoaded(core, acmeApi, "closed");
+
+    expect(
+      pushed.map((list) => ({
+        state: list.state,
+        outline: outline(list),
+        loading: list.loading,
+      })),
+    ).toEqual([
+      // The tracked repositories are read first.
+      { state: "closed", outline: [], loading: { status: "loading" } },
+      {
+        state: "closed",
+        outline: ["#4 Dark mode · closed", "#3 Audit trail · closed"],
+        loading: { status: "loading", progress: { read: 2, total: 3 } },
+      },
+      {
+        state: "closed",
+        outline: [
+          "#4 Dark mode · closed",
+          "#3 Audit trail · closed",
+          "#2 CSV import · closed",
+        ],
+        loading: {
+          status: "current",
+          updatedAt: startTime,
+          matches: 3,
+          closedNotListed: 0,
+        },
+      },
+    ]);
+  });
+
+  it("keeps each list's state for the session, and the sidebar's open count", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+      views: [],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Launch billing" },
+    ]);
+    github.addRepository("acme/web", [{ number: 1, title: "Broken footer" }]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await switchUntilLoaded(core, acmeApi, "closed");
+
+    const web = await openUntilLoaded(core, acmeWeb);
+    expect(web.state).toBe("open");
+    const api = await nextList(core, acmeApi, () => core.openList(acmeApi));
+    expect(api.state).toBe("closed");
+    expect(outline(api)).toEqual(["#2 Old crash · closed"]);
+    expect(sidebarLines(await core.getSidebar())).toEqual([
+      "acme/api 1",
+      "acme/web 1",
+    ]);
+
+    const reopened = await nextList(core, acmeApi, () =>
+      core.switchState(acmeApi, "open"),
+    );
+    expect(reopened.state).toBe("open");
+    expect(outline(reopened)).toEqual(["#1 Launch billing"]);
+  });
+
+  it("pushes only a scope's list in its current state", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Launch billing" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await switchUntilLoaded(core, acmeApi, "closed");
+    const pushed: IssueList[] = [];
+    core.on("listChanged", (list) => pushed.push(list));
+
+    await untilSettled(
+      core,
+      acmeApi,
+      () => core.refresh({ kind: "list", scope: acmeApi }),
+      "closed",
+    );
+
+    expect(pushed.map((list) => list.state)).not.toContain("open");
+  });
+
+  it("reads the closed pages again as the list is refreshed", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Old crash", state: "closed" },
+      { number: 1, title: "Launch billing" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await switchUntilLoaded(core, acmeApi, "closed");
+
+    github.addRepository("acme/api", [
+      { number: 3, title: "Launch billing", state: "closed" },
+      { number: 2, title: "Old crash", state: "closed" },
+    ]);
+    const refreshed = await untilSettled(
+      core,
+      acmeApi,
+      () => core.refresh({ kind: "list", scope: acmeApi }),
+      "closed",
+    );
+
+    expect(outline(refreshed)).toEqual([
+      "#3 Launch billing · closed",
+      "#2 Old crash · closed",
+    ]);
+    expect(
+      github.received.filter((read) => read.startsWith("fetchClosedIssues")),
+    ).toEqual(["fetchClosedIssues acme/api", "fetchClosedIssues acme/api"]);
+  });
+
+  it("lists the closed issues of every tracked repository in All", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+      views: [],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 2,
+        title: "Old crash",
+        state: "closed",
+        closedAt: "2026-09-20T00:00:00Z",
+      },
+      { number: 1, title: "Launch billing" },
+    ]);
+    github.addRepository("acme/web", [
+      {
+        number: 7,
+        title: "Broken footer",
+        state: "closed",
+        closedAt: "2026-09-22T00:00:00Z",
+      },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, all);
+
+    const closed = await switchUntilLoaded(core, all, "closed");
+
+    expect(outline(closed)).toEqual([
+      "acme/web #7 Broken footer · closed",
+      "acme/api #2 Old crash · closed",
+    ]);
+    expect(closed.loading).toMatchObject({ matches: 2, closedNotListed: 0 });
+    expect(
+      github.received.filter((read) => read.startsWith("fetchClosedIssues")),
+    ).toEqual(["fetchClosedIssues acme/api", "fetchClosedIssues acme/web"]);
+  });
+});
+
 describe("expansion", () => {
   /** acme/api with two trees, one of them nested two levels deep. */
   function billingRepository() {
@@ -3494,7 +3805,7 @@ describe("All", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 3,
+      matches: 3,
       closedNotListed: 0,
     });
   });
@@ -3673,7 +3984,7 @@ describe("All", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 2,
+      matches: 2,
       closedNotListed: 3,
     });
   });
@@ -3707,7 +4018,7 @@ describe("All", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 2,
     });
   });
@@ -3899,7 +4210,7 @@ describe("All", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 0,
     });
     expect(list.repositories).toEqual([
@@ -3945,6 +4256,7 @@ describe("All", () => {
 
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
+      state: "open",
       trees: [],
       repositories: [],
       loading: {
@@ -3966,12 +4278,13 @@ describe("All", () => {
 
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
+      state: "open",
       trees: [],
       repositories: [],
       loading: {
         status: "current",
         updatedAt: startTime,
-        openIssues: 0,
+        matches: 0,
         closedNotListed: 0,
       },
     });
@@ -4014,7 +4327,7 @@ describe("All", () => {
     expect(list.loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 0,
     });
   });
@@ -4029,7 +4342,7 @@ describe("freshness", () => {
     expect((await openUntilLoaded(core, acmeApi)).loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 0,
     });
   });
@@ -4064,7 +4377,7 @@ describe("freshness", () => {
     expect(reread.loading).toMatchObject({
       status: "current",
       updatedAt: startTime + 5 * minute + 1,
-      openIssues: 2,
+      matches: 2,
     });
   });
 
@@ -4163,7 +4476,7 @@ describe("loading states", () => {
     expect((await loaded).loading).toEqual({
       status: "current",
       updatedAt: startTime,
-      openIssues: 0,
+      matches: 0,
       closedNotListed: 1,
     });
   });
@@ -4362,7 +4675,7 @@ describe("refresh", () => {
 
     expect(outline(refreshed)).toEqual(["#2 Dark mode"]);
     expect(refreshed.loading).toMatchObject({
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 1,
     });
   });
@@ -4690,7 +5003,7 @@ describe("stale content", () => {
       status: "stale",
       updatedAt: startTime,
       problem: { kind: "unreachable", message: cannotReachGitHub.message },
-      openIssues: 1,
+      matches: 1,
       closedNotListed: 0,
     });
   });
@@ -4770,6 +5083,7 @@ describe("failed content", () => {
 
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
+      state: "open",
       trees: [],
       repositories: [],
       loading: {
@@ -4901,7 +5215,7 @@ describe("unavailable content", () => {
     );
 
     expect(outline(list)).toEqual(["acme/api #1 Crash on start"]);
-    expect(list.loading).toMatchObject({ status: "current", openIssues: 1 });
+    expect(list.loading).toMatchObject({ status: "current", matches: 1 });
     expect(list.repositories.map(({ loading }) => loading)).toEqual([
       { status: "current", updatedAt: startTime },
       { status: "failed", problem: unavailable },
@@ -5020,7 +5334,7 @@ describe("partial content", () => {
         message:
           "GitHub left out some open issues: Unavailable or not accessible with this account: Could not resolve to a node with the global id of 'I_acme/api#2'.",
       },
-      openIssues: 2,
+      matches: 2,
       closedNotListed: 0,
     });
   });
@@ -5068,7 +5382,7 @@ describe("partial content", () => {
       url: "https://github.com/acme/api/issues/1",
       external: false,
     });
-    expect(list.loading).toMatchObject({ status: "current", openIssues: 1 });
+    expect(list.loading).toMatchObject({ status: "current", matches: 1 });
   });
 
   it("keeps the issues GitHub answers when it will not show another asked for with them", async () => {
@@ -6679,7 +6993,7 @@ it("removes issues from All immediately, keeps related external issues and cache
     ok: true,
     selection: { kind: "all" },
   });
-  expect(all?.loading).toMatchObject({ status: "current", openIssues: 2 });
+  expect(all?.loading).toMatchObject({ status: "current", matches: 2 });
   expect(all?.trees.map((node) => node.issue.id)).not.toContain("I_acme/web#3");
   const api = all?.trees.find((node) => node.issue.id === "I_acme/api#1");
   expect(readSummary(api?.subIssues[0])).toMatchObject({

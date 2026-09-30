@@ -1,5 +1,6 @@
 import type {
   IssueList,
+  IssueState,
   RepositoryAddress,
   RepositoryEntry,
   TrackedRepository,
@@ -20,7 +21,8 @@ import { useListPane } from "./use-list-pane";
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
- * the core pushes it, driven by keyboard and mouse. The selection and scroll
+ * the core pushes it, driven by keyboard and mouse. A switch beside its name
+ * shows its open or its closed issues. The selection and scroll
  * position are remembered per scope for the session. When the list is read
  * again, the selection stays on its issue, or moves to a neighbour if the
  * issue disappeared, and stays where it is on screen.
@@ -98,7 +100,16 @@ export function IssueListPane({
     <>
       <header className="shrink-0 border-b">
         <div className="flex h-12 items-center gap-2 pr-2 pl-4">
-          <h1 className="min-w-0 flex-1 truncate font-medium">{label}</h1>
+          <h1 className="min-w-0 truncate font-medium">{label}</h1>
+          {list && (
+            <StateSwitch
+              state={list.state}
+              onSwitch={(state) => {
+                void window.verdandi.switchState(scope, state);
+              }}
+            />
+          )}
+          <span className="flex-1" />
           {list?.archived && (
             <span className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
               Archived
@@ -177,6 +188,7 @@ export function IssueListPane({
                 <IssueRow
                   key={row.node.issue.id}
                   row={row}
+                  listState={list.state}
                   withRepository={repositoryChips}
                   selected={index === selected}
                   login={login}
@@ -193,7 +205,7 @@ export function IssueListPane({
                   failure && "text-warning",
                 )}
               >
-                {listStatus(list.loading)}
+                {listStatus(list.loading, list.state)}
                 {failure && (
                   <button
                     type="button"
@@ -209,6 +221,58 @@ export function IssueListPane({
         )}
       </div>
     </>
+  );
+}
+
+/** The states a list switches between, in the switch's order. */
+const switchStates: readonly { state: IssueState; label: string }[] = [
+  { state: "open", label: "Open" },
+  { state: "closed", label: "Closed" },
+];
+
+/**
+ * The segmented control that shows a list's open or its closed issues, which
+ * `s` switches too.
+ */
+function StateSwitch({
+  state,
+  onSwitch,
+}: {
+  state: IssueState;
+  onSwitch: (state: IssueState) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Issues shown"
+      title="Show open or closed issues (s)"
+      className="flex shrink-0 rounded-md border p-0.5 text-xs"
+    >
+      {switchStates.map((option) => {
+        const checked = option.state === state;
+        return (
+          <button
+            key={option.state}
+            type="button"
+            role="radio"
+            aria-checked={checked}
+            // The list keeps the keyboard, as `s` would.
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              if (!checked) onSwitch(option.state);
+            }}
+            className={cn(
+              "rounded px-2 py-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+              checked && "bg-muted font-medium text-foreground",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -300,7 +364,10 @@ function repositoryUrl(repository: RepositoryAddress): string {
   return `https://github.com/${repositoryLabel(repository)}`;
 }
 
-/** The scope's list as the core pushes it, from the moment it is opened. */
+/**
+ * The scope's list as the core pushes it, from the moment it is opened, in
+ * the state the core shows it in.
+ */
 function useList(scope: Scope): IssueList | undefined {
   const [list, setList] = useState<IssueList>();
   useEffect(() => {
@@ -312,12 +379,13 @@ function useList(scope: Scope): IssueList | undefined {
     window.verdandi.openList(scope).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       if (current) {
-        setList({
+        setList((shown) => ({
           scope,
+          state: shown?.state ?? "open",
           trees: [],
           loading: { status: "failed", problem: { kind: "error", message } },
           repositories: [],
-        });
+        }));
       }
     });
     return () => {

@@ -1,5 +1,6 @@
 import type {
   IssueNode,
+  IssueState,
   IssueTree,
   ParentIssue,
   RepositoryAddress,
@@ -17,7 +18,7 @@ export interface Forest {
   closedShown: number;
   /**
    * Issues the forest names but has not read: sub-issues, and the ancestors
-   * of the scope's open issues, in any repository.
+   * of the matches, in any repository.
    */
   missing: IssueReference[];
   /** Of the missing issues, those that would show only below collapsed ones. */
@@ -26,8 +27,13 @@ export interface Forest {
 
 export interface ForestOptions {
   scope: Scope;
-  /** The open issues of the scope's repositories, as far as they have loaded. */
-  openIssueIds: Iterable<string>;
+  /** Which of the scope's issues match. */
+  state: IssueState;
+  /**
+   * The matches: the issues of the scope's repositories in its state, as far
+   * as they have loaded.
+   */
+  matchIds: Iterable<string>;
   /** An issue read earlier. */
   lookup: (id: string) => Issue | undefined;
   /** Why an issue the forest names has not been read. */
@@ -39,22 +45,25 @@ export interface ForestOptions {
 }
 
 /**
- * Arranges a scope's open issues into its sub-issue forest. The scope's own
- * repositories are a repository list's one repository, or in All every
- * tracked one. Their issues among the ancestors of the open issues are listed
- * too, open or closed, however many repositories lie in between. Below each
- * listed issue its sub-issues nest, from any repository. An issue already
- * nested below another listed issue does not also stand at the top, where a
- * chip names a parent issue the list does not show. A sub-issue that has not
- * been read shows as its parent issue names it, with why.
+ * Arranges a scope's matches, its open or its closed issues, into its
+ * sub-issue forest. The scope's own repositories are a repository list's one
+ * repository, or in All every tracked one. Their issues among the ancestors
+ * of the matches are listed too, open or closed, however many repositories
+ * lie in between. Below each listed issue its sub-issues nest, from any
+ * repository. An issue already nested below another listed issue does not
+ * also stand at the top, where a chip names a parent issue the list does not
+ * show. A sub-issue that has not been read shows as its parent issue names
+ * it, with why.
  *
- * The newest stand first: each top-level issue by the newest open issue of
- * the scope within its tree, collapsed or not, or by itself if there is none.
- * Sub-issues keep GitHub's order.
+ * The newest stand first: each top-level issue by the newest match within
+ * its tree, collapsed or not, or by itself if there is none. An open match
+ * is as new as when it was opened, a closed one as when it was closed. Ties
+ * go to the higher number. Sub-issues keep GitHub's order.
  */
 export function buildForest({
   scope,
-  openIssueIds,
+  state,
+  matchIds,
   lookup,
   unread,
   isTracked,
@@ -68,13 +77,13 @@ export function buildForest({
     !isTracked(address) && !isOwn(address);
   const missing = new Map<string, IssueReference>();
   const belowCollapsed = new Set<string>();
-  const openIds = new Set(openIssueIds);
+  const matches = new Set(matchIds);
 
-  // The ancestors of each open issue are read up to the top, through other
-  // repositories too, to find the closed parent issues in the scope's own.
+  // The ancestors of each match are read up to the top, through other
+  // repositories too, to find the parent issues in the scope's own.
   const listed = new Map<string, Issue>();
   const climbed = new Set<string>();
-  for (const id of openIds) {
+  for (const id of matches) {
     let issue = lookup(id);
     while (issue && !climbed.has(issue.id)) {
       climbed.add(issue.id);
@@ -166,16 +175,25 @@ export function buildForest({
     };
   }
 
+  /** How new an issue is: when it was opened, or closed in a closed list. */
+  function timeOf(issue: Issue): number {
+    return Date.parse(
+      state === "closed"
+        ? (issue.closedAt ?? issue.createdAt)
+        : issue.createdAt,
+    );
+  }
+
   const newest = new Map<string, number>();
-  /** When the newest open issue of the scope within an issue's tree opened. */
-  function newestOpen(issue: Issue): number {
+  /** How new the newest match within an issue's tree is. */
+  function newestMatch(issue: Issue): number {
     const known = newest.get(issue.id);
     if (known !== undefined) return known;
     newest.set(issue.id, -Infinity);
-    let time = openIds.has(issue.id) ? Date.parse(issue.createdAt) : -Infinity;
+    let time = matches.has(issue.id) ? timeOf(issue) : -Infinity;
     for (const reference of issue.subIssues) {
       const subIssue = lookup(reference.id);
-      if (subIssue) time = Math.max(time, newestOpen(subIssue));
+      if (subIssue) time = Math.max(time, newestMatch(subIssue));
     }
     newest.set(issue.id, time);
     return time;
@@ -184,11 +202,8 @@ export function buildForest({
   const trees = [...listed.values()]
     .filter((issue) => !nested.has(issue.id))
     .map((issue) => {
-      const time = newestOpen(issue);
-      return {
-        issue,
-        time: time === -Infinity ? Date.parse(issue.createdAt) : time,
-      };
+      const time = newestMatch(issue);
+      return { issue, time: time === -Infinity ? timeOf(issue) : time };
     })
     .sort((a, b) => b.time - a.time || b.issue.number - a.issue.number)
     .map(({ issue }): IssueTree => ({

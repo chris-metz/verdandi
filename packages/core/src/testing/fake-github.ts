@@ -6,6 +6,7 @@ import type {
   Label,
   RateLimitPool,
   RelationshipCount,
+  RepositoryAddress,
   TokenSource,
 } from "../contract.ts";
 import {
@@ -19,6 +20,7 @@ import {
   type GitHubResponse,
   type GitHubResult,
   type Issue,
+  type IssuePage,
   type IssueReference,
   type NumberedItem,
   type RateLimitBudget,
@@ -47,6 +49,11 @@ export interface FakeIssue {
    * unless said otherwise.
    */
   createdAt?: string;
+  /**
+   * When a closed issue was closed, as an ISO 8601 timestamp; the same for
+   * every closed issue unless said otherwise.
+   */
+  closedAt?: string;
   labels?: Label[];
   /**
    * Its sub-issues in GitHub's order, as `owner/name#number` of issues
@@ -204,7 +211,8 @@ export interface FakeGitHub extends GitHubAccess {
   readonly requestsReceived: number;
   /**
    * The reads GitHub has received so far, in order, each as its method and
-   * what it asks about: `fetchOpenIssues acme/api`, `fetchIssues acme/api#2
+   * what it asks about: `fetchOpenIssues acme/api` (or
+   * `fetchClosedIssues`), `fetchIssues acme/api#2
    * other/lib#5`, `fetchIssueDetails acme/api#1`, `fetchIssueComments
    * acme/api#1 after 100`, `fetchBodyHtml acme/api#1 acme/api#1/2` (the
    * issue's body and its second comment's), `fetchRepositorySummaries
@@ -231,6 +239,9 @@ export interface FakeGitHub extends GitHubAccess {
 
 /** When every issue was updated, unless a test says otherwise. */
 const defaultCreatedAt = "2026-09-01T12:00:00Z";
+
+/** When every closed issue was closed, unless a test says otherwise. */
+const defaultClosedAt = "2026-09-15T12:00:00Z";
 
 /** The most comments GitHub returns in one page. */
 const commentsPerPage = 100;
@@ -585,6 +596,10 @@ export function createFakeGitHub({
       url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}`,
       author: actorOf(issue.author),
       createdAt: issue.createdAt ?? defaultCreatedAt,
+      closedAt:
+        issue.state === "closed"
+          ? (issue.closedAt ?? defaultClosedAt)
+          : undefined,
       labels: issue.labels ?? [],
       parent,
       subIssues: shownSubIssues,
@@ -600,6 +615,58 @@ export function createFakeGitHub({
       },
       incomplete,
     };
+  }
+
+  /** One page of a repository's open or closed issues. */
+  function issuePage(
+    method: "fetchOpenIssues" | "fetchClosedIssues",
+    state: "open" | "closed",
+    { owner, name }: RepositoryAddress,
+    after: string | undefined,
+  ): Promise<GitHubResponse<IssuePage>> {
+    const asked = `${owner}/${name}`;
+    countRequestFor(asked);
+    return answer(method, asked, () => {
+      // GitHub follows renames and transfers here too.
+      const nameWithOwner = resolve(asked);
+      const issues = repositories.get(nameWithOwner);
+      const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
+      const hides = unavailable(nameWithOwner, message);
+      if (hides) return { ok: false, error: hides };
+      if (!issues) {
+        return {
+          ok: false,
+          error: { kind: "unavailable", message, access: undefined },
+        };
+      }
+      const inState = issues.filter(
+        (issue) => (issue.state ?? "open") === state,
+      );
+      // The cursor is simply where the next page starts.
+      const start = after === undefined ? 0 : Number(after);
+      const end = start + issuesPerPage;
+      // Issues GitHub hides are left out of the page, which says so.
+      let incomplete: GitHubError | undefined;
+      const shown = inState.slice(start, end).filter((issue) => {
+        const ref = `${nameWithOwner}#${String(issue.number)}`;
+        const error = unavailable(
+          ref,
+          `Could not resolve to a node with the global id of 'I_${ref}'.`,
+        );
+        incomplete ??= error;
+        return !error;
+      });
+      return {
+        ok: true,
+        value: {
+          issues: shown.map((issue) => read(nameWithOwner, issue)),
+          closedIssueCount: issues.filter((issue) => issue.state === "closed")
+            .length,
+          nextPage: end < inState.length ? String(end) : undefined,
+          incomplete,
+        },
+      };
+    });
   }
 
   /**
@@ -888,47 +955,11 @@ export function createFakeGitHub({
         },
       );
     },
-    fetchOpenIssues({ owner, name }, after) {
-      const asked = `${owner}/${name}`;
-      countRequestFor(asked);
-      return answer("fetchOpenIssues", asked, () => {
-        // GitHub follows renames and transfers here too.
-        const nameWithOwner = resolve(asked);
-        const issues = repositories.get(nameWithOwner);
-        const message = `Could not resolve to a Repository with the name '${nameWithOwner}'.`;
-        const hides = unavailable(nameWithOwner, message);
-        if (hides) return { ok: false, error: hides };
-        if (!issues) {
-          return {
-            ok: false,
-            error: { kind: "unavailable", message, access: undefined },
-          };
-        }
-        const open = issues.filter((issue) => issue.state !== "closed");
-        // The cursor is simply where the next page starts.
-        const start = after === undefined ? 0 : Number(after);
-        const end = start + issuesPerPage;
-        // Issues GitHub hides are left out of the page, which says so.
-        let incomplete: GitHubError | undefined;
-        const shown = open.slice(start, end).filter((issue) => {
-          const ref = `${nameWithOwner}#${String(issue.number)}`;
-          const error = unavailable(
-            ref,
-            `Could not resolve to a node with the global id of 'I_${ref}'.`,
-          );
-          incomplete ??= error;
-          return !error;
-        });
-        return {
-          ok: true,
-          value: {
-            issues: shown.map((issue) => read(nameWithOwner, issue)),
-            closedIssueCount: issues.length - open.length,
-            nextPage: end < open.length ? String(end) : undefined,
-            incomplete,
-          },
-        };
-      });
+    fetchOpenIssues(repository, after) {
+      return issuePage("fetchOpenIssues", "open", repository, after);
+    },
+    fetchClosedIssues(repository, after) {
+      return issuePage("fetchClosedIssues", "closed", repository, after);
     },
     fetchIssues(ids) {
       const refs = ids.map((id) => id.replace(/^I_/, ""));
@@ -1105,6 +1136,7 @@ export function createFakeGitHub({
                   url,
                   author,
                   createdAt,
+                  closedAt,
                   labels,
                   subIssuesSummary,
                   issueDependenciesSummary,
@@ -1125,6 +1157,7 @@ export function createFakeGitHub({
                     url,
                     author,
                     createdAt,
+                    closedAt,
                     labels,
                     hasParent,
                     subIssuesSummary,

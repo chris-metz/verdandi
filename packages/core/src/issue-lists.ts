@@ -1,7 +1,9 @@
 import type {
   IssueList,
   IssueNode,
+  IssueState,
   ListLoading,
+  ListProgress,
   LoadingState,
   Problem,
   RepositoryAddress,
@@ -13,7 +15,11 @@ import type {
 } from "./contract.ts";
 import { buildForest, type Forest } from "./forest.ts";
 import type { IssueReference } from "./github/port.ts";
-import { createIssueLoader, type RepositoryIssues } from "./issue-loader.ts";
+import {
+  createIssueLoader,
+  issueStates,
+  type RepositoryIssues,
+} from "./issue-loader.ts";
 import type { Failure, IssueStore } from "./issue-store.ts";
 import {
   atOrAfter,
@@ -37,16 +43,18 @@ import {
 import type { SettingsStorage } from "./settings/port.ts";
 
 /**
- * The lists of the main area, one per scope, over the one issue store. A list
- * loads when it is first opened and is then kept for the session, together
- * with its expansion, and read again when it is refreshed or has grown old.
- * What of it failed is read again when it is retried, opened again or shown
- * again. The issue loader reads a repository's open issues for its own list
- * or for All, whichever needs them, and they serve both. Only the list on
- * screen asks GitHub for anything: what it shows first, then what it would
- * show below collapsed issues, and, when it has grown old, all of it in the
- * background. A list left before it has loaded keeps what it has, marked
- * interrupted where it lacks something, until it shows again.
+ * The lists of the main area, one per scope and state, over the one issue
+ * store. Each scope shows its list in one state, open unless switched, for
+ * the session; only that list is pushed. A list loads when it is first
+ * opened and is then kept for the session, together with its expansion, and
+ * read again when it is refreshed or has grown old. What of it failed is read
+ * again when it is retried, opened again or shown again. The issue loader
+ * reads a repository's issues in a state for its own list or for All,
+ * whichever needs them, and they serve both. Only the list on screen asks
+ * GitHub for anything: what it shows first, then what it would show below
+ * collapsed issues, and, when it has grown old, all of it in the background.
+ * A list left before it has loaded keeps what it has, marked interrupted
+ * where it lacks something, until it shows again.
  */
 export interface IssueLists {
   /** Updates lists when the startup count query learns repository availability. */
@@ -54,21 +62,24 @@ export interface IssueLists {
   /** Applies hand-edited tracking to cached lists, loading only the shown one. */
   settingsChanged(): Promise<void>;
   /**
-   * Keeps a repository's list, what was read of its open issues and its
-   * expansion, under its new address, as it was renamed or transferred.
+   * Keeps a repository's lists, what was read of its issues, their
+   * expansion and its state, under its new address, as it was renamed or
+   * transferred.
    */
   renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
   /**
-   * Pushes a scope's list at once. If it has not loaded, loads it, pushing
-   * the list after each response; if it is older than five minutes, reads it
-   * again the same way while it shows what it has; otherwise reads again
-   * what of it failed.
+   * Pushes a scope's list in its state at once. If it has not loaded, loads
+   * it, pushing the list after each response; if it is older than five
+   * minutes, reads it again the same way while it shows what it has;
+   * otherwise reads again what of it failed.
    */
   open(scope: Scope): void;
+  /** Shows a scope's list in a state from now on, and opens it. */
+  switchState(scope: Scope, state: IssueState): void;
   /**
-   * Reads everything a scope's list shows again now: its repositories' open
-   * issues, and the other issues it shows, with the sub-issues of expanded
-   * ones. What it has shows meanwhile.
+   * Reads everything a scope's list shows again now: its repositories'
+   * issues in its state, and the other issues it shows, with the sub-issues
+   * of expanded ones. What it has shows meanwhile.
    */
   refresh(scope: Scope): void;
   /**
@@ -91,7 +102,8 @@ export interface IssueListsOptions {
   repositoryStatus: (
     repository: RepositoryAddress,
   ) => Pick<RepositoryEntry, "unavailable" | "archived">;
-  openIssuesFailed: (
+  /** Takes why reading a repository's open or closed issues failed. */
+  issuesFailed: (
     repository: RepositoryAddress,
     problem: Problem,
     readAt: Moment,
@@ -125,12 +137,14 @@ export interface IssueListsOptions {
 }
 
 /**
- * What a list reads beyond its repositories' open issues, how far that has
- * loaded, and what is expanded.
+ * What a list reads beyond its repositories' issues in its state, how far
+ * that has loaded, and what is expanded.
  */
 interface ListState {
   /** The scope, as last opened. */
   scope: Scope;
+  /** Which of the scope's issues it matches. */
+  state: IssueState;
   /** The tracked repositories, once they have been read. */
   tracked: RepositoryAddress[] | undefined;
   /** Whether the tracked repositories are being read. */
@@ -180,51 +194,78 @@ export function createIssueLists({
   settings,
   push,
   openIssuesLoaded,
-  openIssuesFailed,
+  issuesFailed,
   repositoryStatus,
 }: IssueListsOptions): IssueLists {
+  /** The lists, by `listKey`. */
   const lists = new Map<string, ListState>();
+  /** The state each scope shows its list in, by `scopeKey`, unless open. */
+  const states = new Map<string, IssueState>();
   const loader = createIssueLoader({
     store,
     request,
     clock,
-    pagesUrgency: (repository) =>
+    pagesUrgency: (repository, state) =>
       mostUrgent(
         [...lists.values()]
-          .filter((list) => shows(list, repository))
+          .filter((list) => shows(list, repository, state))
           .map((list) => urgencyOf(list, "visible")),
       ),
-    // Every list that shows the repository follows its pages.
-    pageRead: (repository) => {
+    // Every list that shows the repository's issues follows their pages.
+    pageRead: (repository, state) => {
       for (const list of lists.values()) {
-        if (shows(list, repository) && list.tracked !== undefined) {
+        if (shows(list, repository, state) && list.tracked !== undefined) {
           update(list);
         }
       }
     },
     openIssuesLoaded,
-    openIssuesFailed,
+    issuesFailed,
   });
 
-  /** Confirmed unavailability overrides cached pages until access recovers. */
-  function openIssuesOf(
+  /** The state a scope shows its list in. */
+  function stateOf(scope: Scope): IssueState {
+    return states.get(scopeKey(scope)) ?? "open";
+  }
+
+  /**
+   * A repository's issues in a state. Confirmed unavailability overrides
+   * cached pages until access recovers.
+   */
+  function issuesOf(
     repository: RepositoryAddress,
+    state: IssueState,
   ): RepositoryIssues | undefined {
     const unavailable = repositoryStatus(repository).unavailable;
     return unavailable
       ? {
-          openIssueIds: new Set(),
+          issueIds: new Set(),
           closedIssueCount: 0,
           readAt: undefined,
-          reading: loader.openIssuesOf(repository)?.reading ?? false,
+          reading: loader.issuesOf(repository, state)?.reading ?? false,
           problem: unavailable,
         }
-      : loader.openIssuesOf(repository);
+      : loader.issuesOf(repository, state);
   }
 
-  /** Whether a list shows a repository's open issues. */
-  function shows(list: ListState, repository: RepositoryAddress): boolean {
-    return repositoriesOf(list).some((own) => sameRepository(own, repository));
+  /** Whether a list shows a repository's issues in a state. */
+  function shows(
+    list: ListState,
+    repository: RepositoryAddress,
+    state: IssueState,
+  ): boolean {
+    return (
+      list.state === state &&
+      repositoriesOf(list).some((own) => sameRepository(own, repository))
+    );
+  }
+
+  /** Whether a list is its scope's in its state, which alone is pushed. */
+  function isCurrent(list: ListState): boolean {
+    return (
+      lists.get(listKey(list.scope, list.state)) === list &&
+      stateOf(list.scope) === list.state
+    );
   }
 
   /** Whether a list is the screen the main area shows. */
@@ -233,7 +274,7 @@ export function createIssueLists({
     return (
       screen?.kind === "list" &&
       scopeKey(screen.scope) === scopeKey(list.scope) &&
-      lists.get(scopeKey(list.scope)) === list
+      isCurrent(list)
     );
   }
 
@@ -246,8 +287,8 @@ export function createIssueLists({
   }
 
   /**
-   * The repositories whose open issues a list shows, each once: its own, or
-   * in All every tracked one.
+   * The repositories whose issues in its state a list shows, each once: its
+   * own, or in All every tracked one.
    */
   function repositoriesOf(list: ListState): RepositoryAddress[] {
     if (list.scope.kind === "repository") return [list.scope.repository];
@@ -269,8 +310,8 @@ export function createIssueLists({
 
   /**
    * Why the list shows an issue it names only as a relationship names it:
-   * reading it failed, or, for an open issue of its repositories, which
-   * comes with their pages, reading those did.
+   * reading it failed, or, for a match, which comes with its repository's
+   * pages, reading those did.
    */
   function unreadIssue(list: ListState, issue: IssueReference): UnreadIssue {
     const unavailable = repositoryStatus(issue.repository).unavailable;
@@ -278,15 +319,23 @@ export function createIssueLists({
     if (loader.isReading(issue.id)) return { status: "loading" };
     const failure = failureOf(list, issue.id);
     if (failure) return { status: "failed", problem: failure.problem };
-    const ownOpen =
-      issue.state === "open" &&
-      repositoriesOf(list).some((own) => sameRepository(own, issue.repository));
-    const pageProblem = ownOpen
-      ? openIssuesOf(issue.repository)?.problem
+    const pageProblem = comesWithPages(list, issue)
+      ? issuesOf(issue.repository, list.state)?.problem
       : undefined;
     return pageProblem
       ? { status: "failed", problem: pageProblem }
       : { status: "loading" };
+  }
+
+  /**
+   * Whether an issue arrives with the pages of the list's repositories: it
+   * is theirs, and in the list's state.
+   */
+  function comesWithPages(list: ListState, issue: IssueReference): boolean {
+    return (
+      issue.state === list.state &&
+      repositoriesOf(list).some((own) => sameRepository(own, issue.repository))
+    );
   }
 
   /** The list's forest, as the store has it now. */
@@ -295,8 +344,9 @@ export function createIssueLists({
     const { expanded, except } = list.expansion;
     return buildForest({
       scope: list.scope,
-      openIssueIds: repositoriesOf(list).flatMap((repository) => [
-        ...(openIssuesOf(repository)?.openIssueIds ?? []),
+      state: list.state,
+      matchIds: repositoriesOf(list).flatMap((repository) => [
+        ...(issuesOf(repository, list.state)?.issueIds ?? []),
       ]),
       lookup: (id) => {
         const issue = store.get(id);
@@ -317,12 +367,13 @@ export function createIssueLists({
    * show below collapsed issues.
    */
   function arrange(list: ListState): IssueList {
-    const { scope, tracked } = list;
+    const { scope, state, tracked } = list;
     // Until the tracked repositories are known, external issues cannot be
     // told apart, nor All's repositories named.
     if (tracked === undefined) {
       return {
         scope,
+        state,
         trees: [],
         loading: { status: "loading" },
         repositories: [],
@@ -337,20 +388,12 @@ export function createIssueLists({
         ? [issue]
         : [];
     });
-    // An open issue of the list's repositories arrives with its page, also
-    // as a page that failed is read again, unless it changed while the
-    // pages were read.
+    // A match arrives with its repository's page, also as a page that
+    // failed is read again, unless it changed while the pages were read.
     const unread = [...forest.missing, ...outdated].filter((reference) => {
       if (repositoryStatus(reference.repository).unavailable) return false;
-      if (reference.state === "closed") return true;
-      if (
-        !own.some((repository) =>
-          sameRepository(repository, reference.repository),
-        )
-      ) {
-        return true;
-      }
-      const load = openIssuesOf(reference.repository);
+      if (!comesWithPages(list, reference)) return true;
+      const load = issuesOf(reference.repository, state);
       return load?.reading === false && load.problem === undefined;
     });
     if (isShown(list)) {
@@ -365,6 +408,7 @@ export function createIssueLists({
     }
     return {
       scope,
+      state,
       ...(scope.kind === "repository" &&
       repositoryStatus(scope.repository).archived
         ? { archived: true as const }
@@ -375,15 +419,15 @@ export function createIssueLists({
         scope.kind === "all"
           ? own.map((repository): RepositoryLoading => ({
               repository,
-              loading: repositoryLoading(openIssuesOf(repository)),
+              loading: repositoryLoading(issuesOf(repository, state)),
             }))
           : [],
     };
   }
 
-  /** Pushes a list as it is now. */
+  /** Pushes a list as it is now, if it is its scope's in its state. */
   function update(list: ListState) {
-    if (lists.get(scopeKey(list.scope)) !== list) return;
+    if (!isCurrent(list)) return;
     push(arrange(list));
   }
 
@@ -448,7 +492,7 @@ export function createIssueLists({
   async function start(list: ListState) {
     list.readingTracked = true;
     const read = await settings.read();
-    if (lists.get(scopeKey(list.scope)) !== list) return;
+    if (lists.get(listKey(list.scope, list.state)) !== list) return;
     list.readingTracked = false;
     if (
       !read.ok &&
@@ -461,14 +505,16 @@ export function createIssueLists({
     const own = repositoriesOf(list);
     // A list whose repositories other lists have read shows what they read,
     // while it reads again what is older than it needs.
-    if (own.every((repository) => openIssuesOf(repository)?.readAt)) {
+    if (own.every((repository) => issuesOf(repository, list.state)?.readAt)) {
       list.loaded = true;
     }
     // A repository that starts loading updates a list that has not loaded
     // with its first page; one that was read or is being read shows at once.
     let updateNow = list.loaded || list.settingsProblem !== undefined;
     for (const repository of own) {
-      if (!loader.loadOpenIssues(repository, list.validFrom)) updateNow = true;
+      if (!loader.loadIssues(repository, list.state, list.validFrom)) {
+        updateNow = true;
+      }
     }
     if (updateNow) update(list);
   }
@@ -483,10 +529,10 @@ export function createIssueLists({
     list.checkedAt = list.validFrom.time;
     list.requested.clear();
     list.settingsProblem = undefined;
-    // Its repositories' pages start at once, so that their open issues are
-    // not also asked for by ID.
+    // Its repositories' pages start at once, so that their issues in its
+    // state are not also asked for by ID.
     for (const repository of repositoriesOf(list)) {
-      loader.loadOpenIssues(repository, list.validFrom);
+      loader.loadIssues(repository, list.state, list.validFrom);
     }
     void start(list);
     update(list);
@@ -494,7 +540,7 @@ export function createIssueLists({
 
   /**
    * Reads again what of a list failed, GitHub would not show, or left out:
-   * the tracked repositories, its repositories' open issues, the issues it
+   * the tracked repositories, its repositories' issues, the issues it
    * asked for by ID, and the issues it shows that GitHub answered only in
    * part. Pushes the list, and says so, if anything is read again.
    */
@@ -508,9 +554,10 @@ export function createIssueLists({
     if (list.tracked === undefined) return false;
     let retried = false;
     for (const repository of repositoriesOf(list)) {
-      if (openIssuesOf(repository)?.problem) {
-        loader.loadOpenIssues(
+      if (issuesOf(repository, list.state)?.problem) {
+        loader.loadIssues(
           repository,
+          list.state,
           repositoryStatus(repository).unavailable ? clock() : list.validFrom,
         );
         retried = true;
@@ -537,9 +584,10 @@ export function createIssueLists({
   }
 
   /** Starts a list, which takes what other lists read since `validFrom`. */
-  function create(scope: Scope, validFrom: Moment) {
+  function create(scope: Scope, state: IssueState, validFrom: Moment) {
     const list: ListState = {
       scope,
+      state,
       tracked: undefined,
       readingTracked: false,
       settingsProblem: undefined,
@@ -551,23 +599,24 @@ export function createIssueLists({
       loaded: false,
       background: false,
     };
-    lists.set(scopeKey(scope), list);
+    lists.set(listKey(scope, state), list);
     update(list);
     void start(list);
   }
 
   /**
    * How far a list has loaded and how current it is, with its counts. It
-   * failed when none of its repositories' open issues could be read, and is
-   * stale when what it shows could not be read again. A repository within
-   * All that failed does not count, and shows in `repositories`.
+   * failed when none of its repositories' issues in its state could be read,
+   * and is stale when what it shows could not be read again. A repository
+   * within All that failed does not count, and shows in `repositories`.
    */
   function loadingOf(list: ListState, forest: Forest): ListLoading {
     if (list.settingsProblem) {
       return { status: "failed", problem: list.settingsProblem };
     }
-    const loads = repositoriesOf(list).map((repository) =>
-      openIssuesOf(repository),
+    const repositories = repositoriesOf(list);
+    const loads = repositories.map((repository) =>
+      issuesOf(repository, list.state),
     );
     const reading =
       list.readingTracked ||
@@ -576,7 +625,9 @@ export function createIssueLists({
     // Read again after it failed with nothing to show, it is loading anew.
     const anyRead = loads.some((load) => load?.readAt !== undefined);
     if (reading && (!list.loaded || (loads.length > 0 && !anyRead))) {
-      return { status: "loading" };
+      return list.state === "closed"
+        ? { status: "loading", progress: closedProgress(repositories, loads) }
+        : { status: "loading" };
     }
     const failures = loads.flatMap((load) =>
       load?.problem && !showsEarlierRead(load) ? [load.problem] : [],
@@ -586,15 +637,15 @@ export function createIssueLists({
       return { status: "failed", problem: firstFailure };
     }
     list.loaded = true;
-    let openIssues = 0;
+    let matches = 0;
     let closedIssues = 0;
     let problem: Problem | undefined;
     // The list is as old as the oldest of what it shows.
     let updatedAt = Infinity;
     for (const load of loads) {
       if (!load || (!showsEarlierRead(load) && load.problem)) continue;
-      openIssues += load.openIssueIds.size;
-      closedIssues += load.closedIssueCount;
+      matches += load.issueIds.size;
+      closedIssues += load.closedIssueCount ?? 0;
       updatedAt = Math.min(updatedAt, load.readAt?.time ?? Infinity);
       problem ??= load.problem;
     }
@@ -608,20 +659,65 @@ export function createIssueLists({
     }
     const loaded = {
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : list.checkedAt,
-      openIssues,
-      closedNotListed: Math.max(0, closedIssues - forest.closedShown),
+      matches,
+      closedNotListed:
+        list.state === "open"
+          ? Math.max(0, closedIssues - forest.closedShown)
+          : 0,
     };
     if (reading) return { status: "refreshing", ...loaded };
     if (problem) return { status: "stale", problem, ...loaded };
     return { status: "current", ...loaded };
   }
 
-  /** Updates an opened list after a change, if it is open. */
+  /**
+   * How many closed issues a closed list has read of its repositories, and of
+   * how many, as their closed pages count them, or before the first arrived,
+   * their open pages.
+   */
+  function closedProgress(
+    repositories: readonly RepositoryAddress[],
+    loads: readonly (RepositoryIssues | undefined)[],
+  ): ListProgress {
+    let read = 0;
+    let total: number | undefined = 0;
+    for (const [index, repository] of repositories.entries()) {
+      const load = loads[index];
+      read += load?.issueIds.size ?? 0;
+      const count =
+        load?.closedIssueCount ??
+        issuesOf(repository, "open")?.closedIssueCount;
+      total =
+        total === undefined || count === undefined ? undefined : total + count;
+    }
+    return { read, total };
+  }
+
+  /** A scope's list in its state, once opened. */
+  function currentList(scope: Scope): ListState | undefined {
+    return lists.get(listKey(scope, stateOf(scope)));
+  }
+
+  /** Updates a scope's list in its state after a change, if it is open. */
   function change(scope: Scope, apply: (list: ListState) => void) {
-    const list = lists.get(scopeKey(scope));
+    const list = currentList(scope);
     if (!list) return;
     apply(list);
     update(list);
+  }
+
+  /** Pushes a scope's list in its state, loading it as it needs. */
+  function open(scope: Scope) {
+    const state = stateOf(scope);
+    const known = lists.get(listKey(scope, state));
+    if (!known) {
+      // Opened for the first time, it takes what other lists have read in
+      // the last five minutes.
+      create(scope, state, fiveMinutesAgo(clock));
+      return;
+    }
+    known.scope = scope;
+    if (!revalidate(known)) update(known);
   }
 
   /**
@@ -652,6 +748,7 @@ export function createIssueLists({
           )
         ) {
           lists.delete(key);
+          states.delete(scopeKey(scope));
           continue;
         }
         list.tracked = value.repositories;
@@ -661,37 +758,39 @@ export function createIssueLists({
     },
     renameRepository(from, to) {
       loader.renameRepository(from, to);
+      const old: Scope = { kind: "repository", repository: from };
       const scope: Scope = { kind: "repository", repository: { ...to } };
-      const list = lists.get(
-        scopeKey({ kind: "repository", repository: from }),
-      );
-      if (!list || lists.has(scopeKey(scope))) return;
-      lists.delete(scopeKey(list.scope));
-      list.scope = scope;
-      lists.set(scopeKey(scope), list);
-    },
-    open(scope) {
-      const known = lists.get(scopeKey(scope));
-      if (!known) {
-        // Opened for the first time, it takes what other lists have read in
-        // the last five minutes.
-        create(scope, fiveMinutesAgo(clock));
-        return;
+      const shown = states.get(scopeKey(old));
+      if (shown && !states.has(scopeKey(scope))) {
+        states.delete(scopeKey(old));
+        states.set(scopeKey(scope), shown);
       }
-      known.scope = scope;
-      if (!revalidate(known)) update(known);
+      for (const state of issueStates) {
+        const list = lists.get(listKey(old, state));
+        if (!list || lists.has(listKey(scope, state))) continue;
+        lists.delete(listKey(old, state));
+        list.scope = scope;
+        lists.set(listKey(scope, state), list);
+      }
+    },
+    open,
+    switchState(scope, state) {
+      if (state === "open") states.delete(scopeKey(scope));
+      else states.set(scopeKey(scope), state);
+      open(scope);
     },
     refresh(scope) {
-      const known = lists.get(scopeKey(scope));
+      const state = stateOf(scope);
+      const known = lists.get(listKey(scope, state));
       if (known) refresh(known);
-      else create(scope, clock());
+      else create(scope, state, clock());
     },
     revalidate(scope) {
-      const known = lists.get(scopeKey(scope));
+      const known = currentList(scope);
       if (known) revalidate(known);
     },
     retry(scope) {
-      const known = lists.get(scopeKey(scope));
+      const known = currentList(scope);
       if (!known) return;
       // Asked for, what is read is no longer read in the background.
       known.background = false;
@@ -761,4 +860,9 @@ function scopeKey(scope: Scope): string {
   return scope.kind === "all"
     ? "all"
     : `repository:${repositoryKey(scope.repository)}`;
+}
+
+/** Tells a scope's open and closed lists apart. */
+function listKey(scope: Scope, state: IssueState): string {
+  return `${state}:${scopeKey(scope)}`;
 }

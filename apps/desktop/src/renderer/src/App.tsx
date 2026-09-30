@@ -1,4 +1,5 @@
 import type {
+  IssueState,
   RepositoryAddress,
   SavedView,
   SidebarEntryKey,
@@ -265,6 +266,17 @@ export function App() {
     }
   }, [blocked, focused]);
 
+  // The core pushes a scope's list only in the state it shows it in, so the
+  // last list pushed tells which one `s` switches from.
+  const listStates = useRef(new Map<string, IssueState>());
+  useEffect(
+    () =>
+      window.verdandi.on("listChanged", (list) => {
+        listStates.current.set(scopeLabel(list.scope), list.state);
+      }),
+    [],
+  );
+
   // The issue pages were opened as the previous account, which may be all
   // that could read them: the selected entry's list is read anew instead.
   useEffect(
@@ -359,6 +371,16 @@ export function App() {
           break;
         case "refresh":
           void window.verdandi.refresh(screen);
+          break;
+        case "switch-state":
+          // Only while the list shows, not an issue page opened from it.
+          if (screen?.kind === "list") {
+            const shown = listStates.current.get(scopeLabel(screen.scope));
+            void window.verdandi.switchState(
+              screen.scope,
+              shown === "closed" ? "open" : "closed",
+            );
+          }
           break;
         case "add-repository":
           openPicker();

@@ -1,5 +1,6 @@
 import type {
   IssueIdentity,
+  IssueState,
   IssueSummary,
   Label,
   ParentIssue,
@@ -37,10 +38,11 @@ interface IssueColumn {
   /** Its width and how its cell aligns, shared with its header. */
   className: string;
   /**
-   * Whether its cell dims with a closed issue outside views, as the title
-   * does. In a view, every cell of a context issue dims.
+   * Whether its cell dims with a context issue outside views, as the title
+   * does: a closed issue in an open list, an open one in a closed list. In a
+   * view, every cell of a context issue dims.
    */
-  dimsClosed: boolean;
+  dimsContext: boolean;
   cell: (issue: IssueSummary) => ReactNode;
 }
 
@@ -51,35 +53,35 @@ const issueColumns: readonly IssueColumn[] = [
     header: "By",
     headerTitle: "Author",
     className: "w-7 justify-center",
-    dimsClosed: true,
+    dimsContext: true,
     cell: (issue) => <AuthorAvatar issue={issue} />,
   },
   {
     key: "created",
     header: "Created",
     className: "w-16 justify-end",
-    dimsClosed: true,
+    dimsContext: true,
     cell: (issue) => <Created issue={issue} />,
   },
   {
     key: "progress",
     header: "Sub-issues",
     className: "w-24 justify-end gap-1.5",
-    dimsClosed: true,
+    dimsContext: true,
     cell: (issue) => <Progress progress={issue.subIssueProgress} />,
   },
   {
     key: "blockedBy",
     header: "Blocked by",
     className: "w-20 justify-end",
-    dimsClosed: false,
+    dimsContext: false,
     cell: (issue) => <Relationship issue={issue} kind="blockedBy" />,
   },
   {
     key: "blocking",
     header: "Blocks",
     className: "w-16 justify-end",
-    dimsClosed: false,
+    dimsContext: false,
     cell: (issue) => <Relationship issue={issue} kind="blocking" />,
   },
 ];
@@ -116,6 +118,9 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  * names it, with why, and Retry and Open on GitHub once it failed; its
  * columns stay empty, as nothing is known of them.
  *
+ * Outside views, the issues in the other state than the list's are dimmed:
+ * closed issues in an open list, and open ones in a closed list.
+ *
  * In a view, only context issues are dimmed, as whole rows, counts
  * included; a closed match is not, and only its state icon says closed. A
  * context issue that may match too, as the results are incomplete, has a
@@ -124,6 +129,7 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  */
 export const IssueRow = memo(function IssueRow({
   row,
+  listState = "open",
   withRepository,
   selected,
   login,
@@ -133,6 +139,11 @@ export const IssueRow = memo(function IssueRow({
   onRetry,
 }: {
   row: ListRow;
+  /**
+   * The state of the list it stands in outside views, whose issues are its
+   * matches: open unless said otherwise.
+   */
+  listState?: IssueState;
   /** Whether the row names its repository with a chip, as in All. */
   withRepository: boolean;
   selected: boolean;
@@ -148,9 +159,10 @@ export const IssueRow = memo(function IssueRow({
   const { issue, view } = node;
   const hasSubIssues = node.subIssues.length > 0;
   const read = node.unread ? undefined : node.issue;
-  // In a view, dimming means only "context"; elsewhere it means closed.
+  // In a view, dimming means only "context"; elsewhere it means in the
+  // other state than the list's.
   const context = view !== undefined && !view.match;
-  const closedDimmed = view === undefined && issue.state === "closed";
+  const stateDimmed = view === undefined && issue.state !== listState;
   const inside =
     hasSubIssues && !node.expanded ? (view?.matchesInside ?? 0) : 0;
   return (
@@ -200,7 +212,7 @@ export const IssueRow = memo(function IssueRow({
       <span
         className={cn(
           "flex min-w-0 items-center gap-1.5",
-          (closedDimmed || context || !read) && "opacity-55",
+          (stateDimmed || context || !read) && "opacity-55",
         )}
       >
         <IssueStateIcon state={issue.state} />
@@ -262,7 +274,7 @@ export const IssueRow = memo(function IssueRow({
           className={cn(
             "flex shrink-0 items-center",
             column.className,
-            (context || (column.dimsClosed && closedDimmed)) && "opacity-55",
+            (context || (column.dimsContext && stateDimmed)) && "opacity-55",
           )}
         >
           {read && column.cell(read)}

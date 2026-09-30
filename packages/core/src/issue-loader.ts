@@ -1,4 +1,4 @@
-import type { Problem, RepositoryAddress } from "./contract.ts";
+import type { IssueState, Problem, RepositoryAddress } from "./contract.ts";
 import { inBatches } from "./batches.ts";
 import { describeGitHubError } from "./github/error-message.ts";
 import type { GitHubError } from "./github/port.ts";
@@ -15,21 +15,31 @@ import {
 
 /**
  * Reads issues from GitHub into the one store, for every list: a
- * repository's open issues page by page, and other issues by ID, sharing a
- * read that is under way with every list that names the same issue. What a
- * list needs no older than a moment is read again only if it is older. A
- * read is as urgent as the most urgent list that waits for it, and dropped
- * unsent once none needs it.
+ * repository's open or closed issues page by page, and other issues by ID,
+ * sharing a read that is under way with every list that names the same
+ * issue. What a list needs no older than a moment is read again only if it
+ * is older. A read is as urgent as the most urgent list that waits for it,
+ * and dropped unsent once none needs it.
  */
 export interface IssueLoader {
-  /** How far a repository's open issues have been read, once asked for. */
-  openIssuesOf(repository: RepositoryAddress): RepositoryIssues | undefined;
   /**
-   * Starts reading a repository's open issues, unless a read that started at
-   * `since` or later has not failed, and says whether it did. A read that
-   * starts supersedes one under way.
+   * How far a repository's issues in a state have been read, once asked
+   * for.
    */
-  loadOpenIssues(repository: RepositoryAddress, since: Moment): boolean;
+  issuesOf(
+    repository: RepositoryAddress,
+    state: IssueState,
+  ): RepositoryIssues | undefined;
+  /**
+   * Starts reading a repository's issues in a state, unless a read that
+   * started at `since` or later has not failed, and says whether it did. A
+   * read that starts supersedes one under way.
+   */
+  loadIssues(
+    repository: RepositoryAddress,
+    state: IssueState,
+    since: Moment,
+  ): boolean;
   /**
    * Reads issues by ID into the store, or why they could not be read, as
    * urgently as `urgency` says. Issues a read under way, asked at `since` or
@@ -44,20 +54,24 @@ export interface IssueLoader {
   /** Whether an issue is being read by ID. */
   isReading(id: string): boolean;
   /**
-   * Keeps what was read of a repository's open issues under its new
-   * address, as it was renamed or transferred.
+   * Keeps what was read of a repository's issues under its new address, as
+   * it was renamed or transferred.
    */
   renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
 }
 
 /**
- * A repository's open issues: those of the last complete read, which stay
- * while they are read again, or, until one completed, as far as the first
- * read has come. None once GitHub would no longer show the repository.
+ * A repository's issues in one state: those of the last complete read, which
+ * stay while they are read again, or, until one completed, as far as the
+ * first read has come. None once GitHub would no longer show the repository.
  */
 export interface RepositoryIssues {
-  readonly openIssueIds: ReadonlySet<string>;
-  readonly closedIssueCount: number;
+  readonly issueIds: ReadonlySet<string>;
+  /**
+   * How many closed issues the repository has, as the pages count them;
+   * unknown until one has arrived.
+   */
+  readonly closedIssueCount: number | undefined;
   /** When the last complete read started; none until a read completed. */
   readonly readAt: Moment | undefined;
   /** Whether a read is under way. */
@@ -67,7 +81,7 @@ export interface RepositoryIssues {
 }
 
 export interface IssueLoaderOptions {
-  openIssuesFailed: (
+  issuesFailed: (
     repository: RepositoryAddress,
     problem: Problem,
     readAt: Moment,
@@ -76,12 +90,15 @@ export interface IssueLoaderOptions {
   request: SendRequest;
   clock: Clock;
   /**
-   * How urgently the lists that show a repository need its open issues, or
-   * none once no list on screen shows it.
+   * How urgently the lists that show a repository need its issues in a
+   * state, or none once no list on screen shows them.
    */
-  pagesUrgency: (repository: RepositoryAddress) => Urgency | undefined;
-  /** Takes each page of a repository's open issues, read or failed. */
-  pageRead: (repository: RepositoryAddress) => void;
+  pagesUrgency: (
+    repository: RepositoryAddress,
+    state: IssueState,
+  ) => Urgency | undefined;
+  /** Takes each page of a repository's issues in a state, read or failed. */
+  pageRead: (repository: RepositoryAddress, state: IssueState) => void;
   /**
    * Takes a repository's open-issue count once all its open issues loaded,
    * with when the read started.
@@ -96,11 +113,11 @@ export interface IssueLoaderOptions {
 /** At most this many issues are read by ID in one request. */
 const issuesPerRequest = 100;
 
-/** One read of a repository's open issues, page by page. */
+/** One read of a repository's issues in a state, page by page. */
 interface Read {
   startedAt: Moment;
-  openIssueIds: Set<string>;
-  closedIssueCount: number;
+  issueIds: Set<string>;
+  closedIssueCount: number | undefined;
   done: boolean;
   problem: Problem | undefined;
 }
@@ -126,9 +143,9 @@ export function createIssueLoader({
   pagesUrgency,
   pageRead,
   openIssuesLoaded,
-  openIssuesFailed,
+  issuesFailed,
 }: IssueLoaderOptions): IssueLoader {
-  /** Each repository's reads of its open issues, by `repositoryKey`. */
+  /** Each repository's reads of its issues, by state and `repositoryKey`. */
   const repositories = new Map<string, Reads>();
   /** Reads of issues by ID under way, by issue. */
   const reading = new Map<string, ReadUnderWay>();
@@ -171,9 +188,14 @@ export function createIssueLoader({
 
   /**
    * Reads a repository's pages one after another, reporting each, until
-   * they are done, one fails, or a later read supersedes this one.
+   * they are done, one fails, or a later read supersedes this one. Only a
+   * read of its open issues counts them, for the sidebar.
    */
-  async function readPages(repository: RepositoryAddress, reads: Reads) {
+  async function readPages(
+    repository: RepositoryAddress,
+    state: IssueState,
+    reads: Reads,
+  ) {
     const thisRead = reads.latest;
     let after: string | undefined;
     /** Why GitHub left issues out of a page, if it did. */
@@ -182,16 +204,16 @@ export function createIssueLoader({
       const cursor = after;
       const askedAt = clock();
       const result = await request(
-        "fetchOpenIssues",
+        state === "open" ? "fetchOpenIssues" : "fetchClosedIssues",
         [repository, cursor],
-        () => pagesUrgency(repository),
+        () => pagesUrgency(repository, state),
       );
       // What a superseded read brings is still as new as anything.
       if (result.ok) store.put(result.value.issues, askedAt);
       if (reads.latest !== thisRead) return;
       if (result.ok) {
         for (const issue of result.value.issues) {
-          thisRead.openIssueIds.add(issue.id);
+          thisRead.issueIds.add(issue.id);
         }
         thisRead.closedIssueCount = result.value.closedIssueCount;
         after = result.value.nextPage;
@@ -206,45 +228,45 @@ export function createIssueLoader({
           if (leftOut) {
             thisRead.problem = {
               kind: "error",
-              message: `GitHub left out some open issues: ${describeGitHubError(leftOut)}`,
+              message: `GitHub left out some ${state} issues: ${describeGitHubError(leftOut)}`,
             };
-          } else {
+          } else if (state === "open") {
             openIssuesLoaded(
               repository,
-              thisRead.openIssueIds.size,
+              thisRead.issueIds.size,
               thisRead.startedAt,
             );
           }
         }
       } else {
         thisRead.problem = problemOf(result.error);
-        openIssuesFailed(repository, thisRead.problem, thisRead.startedAt);
+        issuesFailed(repository, thisRead.problem, thisRead.startedAt);
         // What GitHub no longer shows this account shows no more.
         if (thisRead.problem.kind === "unavailable") {
           reads.complete = undefined;
-          thisRead.openIssueIds.clear();
+          thisRead.issueIds.clear();
         }
       }
-      pageRead(repository);
+      pageRead(repository, state);
     } while (after !== undefined && thisRead.problem === undefined);
   }
 
   return {
-    openIssuesOf(repository) {
-      const reads = repositories.get(repositoryKey(repository));
+    issuesOf(repository, state) {
+      const reads = repositories.get(readsKey(repository, state));
       if (!reads) return undefined;
       const { complete, latest } = reads;
       const shown = complete ?? latest;
       return {
-        openIssueIds: shown.openIssueIds,
+        issueIds: shown.issueIds,
         closedIssueCount: shown.closedIssueCount,
         readAt: complete?.startedAt,
         reading: !latest.done && latest.problem === undefined,
         problem: latest.problem,
       };
     },
-    loadOpenIssues(repository, since) {
-      const key = repositoryKey(repository);
+    loadIssues(repository, state, since) {
+      const key = readsKey(repository, state);
       const known = repositories.get(key);
       if (
         known &&
@@ -255,15 +277,15 @@ export function createIssueLoader({
       }
       const latest: Read = {
         startedAt: clock(),
-        openIssueIds: new Set(),
-        closedIssueCount: 0,
+        issueIds: new Set(),
+        closedIssueCount: undefined,
         done: false,
         problem: undefined,
       };
       const reads: Reads = known ?? { complete: undefined, latest };
       reads.latest = latest;
       repositories.set(key, reads);
-      void readPages(repository, reads);
+      void readPages(repository, state, reads);
       return true;
     },
     readIssues(ids, since, urgency) {
@@ -288,10 +310,20 @@ export function createIssueLoader({
       return reading.has(id);
     },
     renameRepository(from, to) {
-      const reads = repositories.get(repositoryKey(from));
-      if (!reads || repositories.has(repositoryKey(to))) return;
-      repositories.delete(repositoryKey(from));
-      repositories.set(repositoryKey(to), reads);
+      for (const state of issueStates) {
+        const reads = repositories.get(readsKey(from, state));
+        if (!reads || repositories.has(readsKey(to, state))) continue;
+        repositories.delete(readsKey(from, state));
+        repositories.set(readsKey(to, state), reads);
+      }
     },
   };
+}
+
+/** Every state a repository's issues are read in. */
+export const issueStates: readonly IssueState[] = ["open", "closed"];
+
+/** Tells a repository's reads of its open and closed issues apart. */
+function readsKey(repository: RepositoryAddress, state: IssueState): string {
+  return `${state}:${repositoryKey(repository)}`;
 }

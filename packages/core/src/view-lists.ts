@@ -209,7 +209,7 @@ export function createViewLists({
   const states = new Map<string, ViewState>();
   /** The settings as last read. */
   let settings: Settings | undefined;
-  // Views read no repository's open issues, only issues by ID.
+  // Views read no repository's pages of issues, only issues by ID.
   const loader = createIssueLoader({
     store,
     request,
@@ -217,7 +217,7 @@ export function createViewLists({
     pagesUrgency: () => undefined,
     pageRead: () => undefined,
     openIssuesLoaded: () => undefined,
-    openIssuesFailed: () => undefined,
+    issuesFailed: () => undefined,
   });
 
   function stateOf(viewId: string): ViewState {

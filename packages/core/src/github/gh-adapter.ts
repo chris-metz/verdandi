@@ -5,6 +5,7 @@ import type {
   IssueMetadata,
   Label,
   RateLimitPool,
+  RepositoryAddress,
 } from "../contract.ts";
 import { isObject } from "../json.ts";
 import { parseRepositoryAddress } from "../repository-address.ts";
@@ -88,7 +89,7 @@ const listAvatarSize = 40;
  * sub-issues, and an issue at most 100 labels, so one page of each is all.
  */
 const issueFields = `
-  id number title state url createdAt
+  id number title state url createdAt closedAt
   author { login avatarUrl }
   repository { nameWithOwner }
   labels(first: 100) { nodes { name color } }
@@ -205,6 +206,48 @@ export function createGhAdapter({
       budget,
       viewerLogin,
     };
+  }
+
+  /** Reads one page of a repository's open or closed issues. */
+  function fetchIssuePage(
+    { owner, name }: RepositoryAddress,
+    state: "OPEN" | "CLOSED",
+    after: string | undefined,
+  ): Promise<GitHubResponse<IssuePage>> {
+    return graphql(
+      // Ordered by creation, which never changes while the pages are
+      // read; the list orders its issues itself.
+      `repository(owner: $owner, name: $name) {
+        closedIssues: issues(states: CLOSED) { totalCount }
+        issues(
+          states: ${state}
+          first: ${String(issuesPerPage)}
+          after: $after
+          orderBy: { field: CREATED_AT, direction: DESC }
+        ) {
+          pageInfo { hasNextPage endCursor }
+          nodes { ${issueFields} }
+        }
+      }`,
+      {
+        owner: { type: "String!", value: owner },
+        name: { type: "String!", value: name },
+        after: { type: "String", value: after },
+      },
+      ({ data, errors, headers }) => {
+        const page = readIssuePage(data, errors, headers);
+        if (page) return { ok: true, value: page };
+        // GitHub answered without the repository, or without its issues.
+        const aboutIt = errorsAbout(errors, ["repository"]);
+        return {
+          ok: false,
+          error:
+            aboutIt.length > 0
+              ? graphqlError(aboutIt, headers)
+              : { kind: "unexpected-response" },
+        };
+      },
+    );
   }
 
   return {
@@ -505,41 +548,11 @@ export function createGhAdapter({
         },
       );
     },
-    fetchOpenIssues({ owner, name }, after) {
-      return graphql(
-        // Ordered by creation, which never changes while the pages are
-        // read; the list orders its issues itself.
-        `repository(owner: $owner, name: $name) {
-          closedIssues: issues(states: CLOSED) { totalCount }
-          issues(
-            states: OPEN
-            first: ${String(issuesPerPage)}
-            after: $after
-            orderBy: { field: CREATED_AT, direction: DESC }
-          ) {
-            pageInfo { hasNextPage endCursor }
-            nodes { ${issueFields} }
-          }
-        }`,
-        {
-          owner: { type: "String!", value: owner },
-          name: { type: "String!", value: name },
-          after: { type: "String", value: after },
-        },
-        ({ data, errors, headers }) => {
-          const page = readIssuePage(data, errors, headers);
-          if (page) return { ok: true, value: page };
-          // GitHub answered without the repository, or without its issues.
-          const aboutIt = errorsAbout(errors, ["repository"]);
-          return {
-            ok: false,
-            error:
-              aboutIt.length > 0
-                ? graphqlError(aboutIt, headers)
-                : { kind: "unexpected-response" },
-          };
-        },
-      );
+    fetchOpenIssues(repository, after) {
+      return fetchIssuePage(repository, "OPEN", after);
+    },
+    fetchClosedIssues(repository, after) {
+      return fetchIssuePage(repository, "CLOSED", after);
     },
     fetchIssues(ids) {
       return graphql(
@@ -1024,7 +1037,7 @@ function readIssue(
 ): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
-  const { url, createdAt, author, labels, parent, subIssues } = node;
+  const { url, createdAt, closedAt, author, labels, parent, subIssues } = node;
   const subIssuesSummary = readCounts(node.subIssuesSummary, [
     "total",
     "completed",
@@ -1043,6 +1056,7 @@ function readIssue(
   if (
     typeof url !== "string" ||
     typeof createdAt !== "string" ||
+    (closedAt !== null && typeof closedAt !== "string") ||
     readAuthor === undefined ||
     !subIssuesSummary ||
     !issueDependenciesSummary ||
@@ -1057,6 +1071,7 @@ function readIssue(
     url,
     author: readAuthor ?? undefined,
     createdAt,
+    closedAt: closedAt ?? undefined,
     labels: labelList,
     parent: parentReference ?? undefined,
     subIssues: subIssueList,
@@ -1459,6 +1474,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     repository_url,
     user,
     created_at,
+    closed_at,
     labels,
     sub_issues_summary,
     issue_dependencies_summary,
@@ -1486,6 +1502,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     (state !== "open" && state !== "closed") ||
     typeof html_url !== "string" ||
     typeof created_at !== "string" ||
+    (closed_at !== null && typeof closed_at !== "string") ||
     author === undefined ||
     !repository ||
     !labelList ||
@@ -1502,6 +1519,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     url: html_url,
     author: author ?? undefined,
     createdAt: created_at,
+    closedAt: closed_at ?? undefined,
     labels: labelList as Label[],
     // GitHub leaves the pointer out of an issue without a parent issue.
     hasParent: typeof parent_issue_url === "string",

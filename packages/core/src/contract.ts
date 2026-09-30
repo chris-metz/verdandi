@@ -396,6 +396,12 @@ export type OpenIssueCount =
 export type Scope =
   { kind: "all" } | { kind: "repository"; repository: RepositoryAddress };
 
+/**
+ * Which issues of its scope a list matches: its open issues, or its closed
+ * ones. A view's state comes from its search text instead.
+ */
+export type IssueState = "open" | "closed";
+
 /** A list whose issues expand and collapse: a scope's, or a view's. */
 export type ExpandableList = Scope | { kind: "view"; viewId: string };
 
@@ -604,7 +610,10 @@ export type LoadingState =
     }
   | { status: "failed"; problem: Problem };
 
-/** A repository within a list, and how far its open issues have loaded. */
+/**
+ * A repository within a list, and how far its issues in the list's state
+ * have loaded.
+ */
 export interface RepositoryLoading {
   repository: RepositoryAddress;
   loading: LoadingState;
@@ -612,7 +621,7 @@ export interface RepositoryLoading {
 
 /**
  * How far a list has loaded, and how current it is. The counts are known only
- * once its repositories' open issues have loaded; in All, they count the
+ * once its matches have loaded; in All, they count the
  * repositories that have. Issues and repositories that could not be read show
  * where they belong, in the list or in All's `repositories`.
  *
@@ -621,12 +630,19 @@ export interface RepositoryLoading {
  * - `current`: everything it shows has loaded.
  * - `stale`: reading it again failed, e.g. GitHub could not be reached, so it
  *   shows what was read before.
- * - `failed`: its open issues could not be read, of its repository or in All
+ * - `failed`: its matches could not be read, of its repository or in All
  *   of every tracked repository, and there is nothing to show from before.
  *   What loaded before the failure stays listed, e.g. the first pages.
  */
 export type ListLoading =
-  | { status: "loading" }
+  | {
+      status: "loading";
+      /**
+       * How many closed issues have been read so far, while a closed list
+       * first loads; none for an open list.
+       */
+      progress?: ListProgress;
+    }
   | ({
       status: "refreshing" | "current";
       /**
@@ -643,39 +659,57 @@ export type ListLoading =
     } & ListCounts)
   | { status: "failed"; problem: Problem };
 
-/** What a list counts once its open issues have loaded. */
+/** How far a closed list's first read has come. */
+export interface ListProgress {
+  /** How many closed issues have been read. */
+  read: number;
+  /**
+   * How many closed issues the repository has, or in All every tracked
+   * repository together, as GitHub counted them when last asked; unknown
+   * until it has been asked for each.
+   */
+  total: number | undefined;
+}
+
+/** What a list counts once its matches have loaded. */
 export interface ListCounts {
   /**
-   * How many open issues the repository has, or in All every tracked
-   * repository together.
+   * How many matches the list has: the repository's issues in the list's
+   * state, or in All those of every tracked repository together.
    */
-  openIssues: number;
+  matches: number;
   /**
-   * How many of the repository's closed issues the list leaves out (in All,
-   * of every tracked repository's): all but the ancestors of its open issues
-   * and the sub-issues in it.
+   * How many of the repository's closed issues an open list leaves out (in
+   * All, of every tracked repository's): all but the ancestors of its open
+   * issues and the sub-issues in it. Always 0 in a closed list.
    */
   closedNotListed: number;
 }
 
 /**
- * A scope's list, as far as it has loaded: its sub-issue forest. The
- * repository's open issues and their closed ancestors in the same repository,
- * however many repositories lie in between, form the top level, parent
- * issues first, then the most recently updated; the sub-issues of each, open
- * or closed and from any repository, nest below it. All does the same with
- * every tracked repository at once, so an issue nests below its parent issue
- * whichever tracked repository either lives in. Each issue appears once.
+ * A scope's list in its state, as far as it has loaded: its sub-issue
+ * forest. The repository's issues in that state, its matches, and their
+ * ancestors in the same repository, open or closed, however many
+ * repositories lie in between, form the top level; the sub-issues of each,
+ * open or closed and from any repository, nest below it. The trees stand by
+ * the newest match inside each, most recent first: by when it was opened in
+ * an open list, and by when it was closed in a closed one. All does the same
+ * with every tracked repository at once, so an issue nests below its parent
+ * issue whichever tracked repository either lives in. Each issue appears
+ * once. An interface dims the issues in the other state than the list's:
+ * closed ones in an open list, open ones in a closed list.
  */
 export interface IssueList {
   scope: Scope;
+  /** Which of the scope's issues it matches: open, unless switched. */
+  state: IssueState;
   /** Only for a repository scope, once GitHub reports it archived. */
   archived?: true;
   trees: IssueTree[];
   loading: ListLoading;
   /**
    * The repositories All merges, once they are known, in the settings file's
-   * order, each with how far its open issues have loaded; one that failed is
+   * order, each with how far its matches have loaded; one that failed is
    * missing from the list, or shows as it was before. None in a repository's
    * list, whose loading is the list's own.
    */
@@ -1216,17 +1250,27 @@ export interface CoreRequests {
    */
   skipRepositoryPicker: () => Promise<SettingsChangeResult>;
   /**
-   * Opens a scope's list. Its current state is pushed as `listChanged` at
-   * once, then again as each page of open issues and each batch of the other
-   * issues it shows arrives. Only the opened scope is loaded: opening it again
-   * shows what is loaded or loading, and reads it again in the background
-   * when it is older than five minutes, and what of it failed at once. All loads
-   * every tracked repository side by side, and shares each repository's open
+   * Opens a scope's list, in the state it was last switched to, open unless
+   * switched. Its current state is pushed as `listChanged` at once, then
+   * again as each page of its matches and each batch of the other issues it
+   * shows arrives. Only the opened scope is loaded: opening it again shows
+   * what is loaded or loading, and reads it again in the background when it
+   * is older than five minutes, and what of it failed at once. All loads
+   * every tracked repository side by side, and shares each repository's
    * issues with that repository's list, so neither reads again what the
    * other has read in the last five minutes. The sidebar's counts are read
    * again too if they are older than five minutes.
    */
   openList: (scope: Scope) => Promise<void>;
+  /**
+   * Switches a scope's list to its open or closed issues, and opens it in
+   * that state, as `openList` does. The state lasts for the session, and
+   * opening the scope's list again opens it in that state; each state keeps
+   * its own list and expansion. A scope's closed issues are read only once
+   * it is first switched to closed, every page of them, the list filling in
+   * as they arrive.
+   */
+  switchState: (scope: Scope, state: IssueState) => Promise<void>;
   /**
    * Expands or collapses one issue's sub-issues in an opened scope's list or
    * view, then pushes it. Each keeps its expansion for the session.
@@ -1245,7 +1289,7 @@ export interface CoreRequests {
    * Reads everything on screen again now, however recently it was read: the
    * sidebar's counts, and the screen the main area shows, if any, pushing
    * them as they change. What they have shows meanwhile. A list reads its
-   * repositories' open issues and the other issues it shows, with the
+   * repositories' issues in its state and the other issues it shows, with the
    * sub-issues of expanded ones; those of collapsed ones are read again once
    * they show.
    */
@@ -1341,6 +1385,7 @@ const requests: Record<keyof CoreRequests, true> = {
   resetSettings: true,
   reorderSidebar: true,
   openList: true,
+  switchState: true,
   setExpanded: true,
   setAllExpanded: true,
   refresh: true,

@@ -88,6 +88,7 @@ function issueNode({
     state,
     url: `https://github.com/${repository}/issues/${String(number)}`,
     createdAt: "2026-09-01T12:00:00Z",
+    closedAt: state === "CLOSED" ? "2026-09-10T12:00:00Z" : null,
     author: null,
     repository: { nameWithOwner: repository },
     labels: { nodes: [] },
@@ -876,6 +877,7 @@ describe("gh adapter: more reads", () => {
                         state: "OPEN",
                         url: "https://github.com/acme/api/issues/12",
                         createdAt: "2026-09-20T08:15:00Z",
+                        closedAt: null,
                         author: {
                           login: "octo-dev",
                           avatarUrl:
@@ -928,6 +930,7 @@ describe("gh adapter: more reads", () => {
                         state: "OPEN",
                         url: "https://github.com/acme/api/issues/7",
                         createdAt: "2026-09-18T17:40:12Z",
+                        closedAt: null,
                         author: null,
                         repository: { nameWithOwner: "acme/api" },
                         labels: { nodes: [] },
@@ -1035,6 +1038,64 @@ describe("gh adapter: more reads", () => {
     expect(requests.map((request) => request.variables)).toEqual([
       { owner: "acme", name: "api" },
     ]);
+  });
+
+  it("reads a page of a repository's closed issues, with when each was closed", async () => {
+    const requests: GraphqlRequest[] = [];
+    const github = createGhAdapter({
+      gh: ghPath,
+      runCommand: ghAnswering(
+        {
+          kind: "exited",
+          exitCode: 0,
+          stdout: transcript(
+            "200 OK",
+            graphqlHeaders,
+            JSON.stringify({
+              data: {
+                viewer: { login: "octo-reader" },
+                repository: {
+                  closedIssues: { totalCount: 2140 },
+                  issues: {
+                    pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjE=" },
+                    nodes: [
+                      {
+                        ...issueNode({ number: 3, state: "CLOSED" }),
+                        closedAt: "2026-09-21T09:30:00Z",
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ),
+          stderr: "",
+        },
+        requests,
+      ),
+    });
+
+    const page = await github.fetchClosedIssues(
+      { owner: "acme", name: "api" },
+      "Y3Vyc29yOjA=",
+    );
+
+    expect(page).toMatchObject({
+      ok: true,
+      value: {
+        issues: [
+          { number: 3, state: "closed", closedAt: "2026-09-21T09:30:00Z" },
+        ],
+        closedIssueCount: 2140,
+        nextPage: "Y3Vyc29yOjE=",
+      },
+    });
+    expect(requests[0]?.query).toMatch(/issues\(\s*states: CLOSED\s/);
+    expect(requests[0]?.variables).toEqual({
+      owner: "acme",
+      name: "api",
+      after: "Y3Vyc29yOjA=",
+    });
   });
 
   it("reads the page after a cursor, up to the last one", async () => {
@@ -2675,6 +2736,7 @@ describe("gh adapter: issue search", () => {
         type: "User",
       },
       created_at: "2026-09-15T03:26:56Z",
+      closed_at: null,
       sub_issues_summary: { total: 3, completed: 1, percent_completed: 33 },
       issue_dependencies_summary: {
         blocked_by: 1,

@@ -98,6 +98,52 @@ describe("r", () => {
   });
 });
 
+describe("s", () => {
+  it("switches a repository's or All's list between open and closed, whichever pane has the keyboard", () => {
+    expect(press(key("s"), { focused: "sidebar", selected: "api" })).toEqual({
+      kind: "switch-state",
+    });
+    expect(press(key("s"), { focused: "main", selected: "api" })).toEqual({
+      kind: "switch-state",
+    });
+    expect(
+      commandForWindowKey(key("s"), {
+        focused: "main",
+        entries,
+        selected: { kind: "all" },
+        modifier: macOS,
+      }),
+    ).toEqual({ kind: "switch-state" });
+  });
+
+  it("does nothing in a view, whose state comes from its search", () => {
+    expect(
+      commandForWindowKey(key("s"), {
+        focused: "main",
+        entries,
+        selected: {
+          kind: "view",
+          view: { id: "bugs", name: "Bugs", query: "label:bug" },
+        },
+        modifier: macOS,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt, or with nothing selected", () => {
+    expect(
+      press(key("s", { metaKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("s", { ctrlKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("s", { altKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(press(key("s"))).toBeUndefined();
+  });
+});
+
 describe("a", () => {
   it("opens the repository picker, whichever pane has the keyboard", () => {
     expect(press(key("a"), { focused: "sidebar" })).toEqual({

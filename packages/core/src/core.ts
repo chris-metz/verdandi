@@ -281,7 +281,9 @@ export function createCore({
     });
     const lists = createIssueLists({
       repositoryStatus: (repository) => sidebar.statusOf(repository),
-      openIssuesFailed: (repository, problem, readAt) => {
+      // GitHub no longer showing a repository's issues, open or closed,
+      // makes it unavailable.
+      issuesFailed: (repository, problem, readAt) => {
         sidebar.openIssuesFailed(repository, problem, readAt);
       },
       store,
@@ -682,6 +684,11 @@ export function createCore({
       show({ kind: "list", scope });
       session.lists.open(scope);
       session.sidebar.revalidate();
+      return Promise.resolve();
+    },
+    switchState(scope, state) {
+      show({ kind: "list", scope });
+      session.lists.switchState(scope, state);
       return Promise.resolve();
     },
     setExpanded(list, issueId, expanded) {

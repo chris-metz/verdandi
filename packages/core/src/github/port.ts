@@ -67,6 +67,14 @@ export interface GitHubAccess {
     after?: string,
   ): Promise<GitHubResponse<IssuePage>>;
   /**
+   * Reads one page of a repository's closed issues, as `fetchOpenIssues`
+   * reads its open ones.
+   */
+  fetchClosedIssues(
+    repository: RepositoryAddress,
+    after?: string,
+  ): Promise<GitHubResponse<IssuePage>>;
+  /**
    * Reads up to 100 issues by node ID, from any repositories, e.g. closed
    * sub-issues or the parent issue of an issue already read. An issue GitHub
    * cannot resolve or read gets its own error, in its place among the
@@ -149,6 +157,7 @@ export const readPools: Record<GitHubRead, RateLimitPool> = {
   fetchBodyHtml: "graphql",
   fetchIssueByNumber: "graphql",
   fetchOpenIssues: "graphql",
+  fetchClosedIssues: "graphql",
   fetchIssues: "graphql",
   fetchRepositorySummaries: "graphql",
   fetchRepositoryAccess: "graphql",
@@ -216,6 +225,8 @@ export interface Issue {
   author: IssueActor | undefined;
   /** When it was opened, as an ISO 8601 timestamp. */
   createdAt: string;
+  /** When it was last closed, as an ISO 8601 timestamp, unless it is open. */
+  closedAt: string | undefined;
   labels: Label[];
   /** Its parent issue, if it has one. */
   parent: IssueReference | undefined;
