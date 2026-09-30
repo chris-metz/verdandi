@@ -77,3 +77,13 @@ _Avoid_: nonmatch, filler issue
 **List**:
 What the main area shows for a sidebar entry: its matches, each under its parent issue, together with the context issues needed to place them.
 _Avoid_: tree view, feed, board
+
+### Look
+
+**Theme**:
+A named set of colours for Verdandi, either light or dark. The user picks one light theme and one dark theme.
+_Avoid_: colour scheme, skin, palette
+
+**Appearance**:
+Whether Verdandi shows the user's light theme or dark theme: following the operating system, always light, or always dark. It follows the operating system unless the user chooses otherwise.
+_Avoid_: mode, dark mode, colour mode
