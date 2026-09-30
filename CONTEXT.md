@@ -22,6 +22,10 @@ _Avoid_: dashboard, workspace, smart folder
 
 ### Issues
 
+**Issue**:
+A GitHub issue, in a tracked repository or not. Pull requests share issues' numbers but are not issues, and Verdandi does not show them.
+_Avoid_: ticket, task
+
 **Author**:
 The GitHub account that opened an issue, or wrote a comment. An issue whose account has been deleted has none.
 _Avoid_: creator, reporter, opener, owner
