@@ -10,6 +10,9 @@ export const testThemes: ThemeCatalogue = {
     { id: "catppuccin-frappe", kind: "dark" },
     { id: "catppuccin-macchiato", kind: "dark" },
     { id: "catppuccin-mocha", kind: "dark" },
+    { id: "tokyo-night-day", kind: "light" },
+    { id: "tokyo-night-storm", kind: "dark" },
+    { id: "tokyo-night", kind: "dark" },
   ],
   defaults: { light: "github-light", dark: "github-dark" },
 };

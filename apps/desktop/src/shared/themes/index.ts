@@ -6,6 +6,7 @@ import {
   catppuccinMocha,
 } from "./catppuccin";
 import { githubDark, githubDarkDimmed, githubLight } from "./github";
+import { tokyoNight, tokyoNightDay, tokyoNightStorm } from "./tokyo-night";
 
 /**
  * Every colour a theme gives, each shown on the page as a CSS custom property
@@ -121,6 +122,9 @@ export const builtInThemes: readonly Theme[] = [
   catppuccinFrappe,
   catppuccinMacchiato,
   catppuccinMocha,
+  tokyoNightDay,
+  tokyoNightStorm,
+  tokyoNight,
 ];
 
 export const defaultLightTheme = githubLight;
