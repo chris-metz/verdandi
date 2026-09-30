@@ -11,7 +11,7 @@ import {
 } from "./index";
 
 describe("built-in themes", () => {
-  it("are GitHub's, Catppuccin's, Tokyo Night's and Nord's", () => {
+  it("are GitHub's, Catppuccin's, Tokyo Night's, Nord's and Rosé Pine's", () => {
     expect(
       builtInThemes.map(({ id, name, kind }) => ({ id, name, kind })),
     ).toEqual([
@@ -30,6 +30,8 @@ describe("built-in themes", () => {
       { id: "tokyo-night-storm", name: "Tokyo Night Storm", kind: "dark" },
       { id: "tokyo-night", name: "Tokyo Night", kind: "dark" },
       { id: "nord", name: "Nord", kind: "dark" },
+      { id: "rose-pine-dawn", name: "Rosé Pine Dawn", kind: "light" },
+      { id: "rose-pine-moon", name: "Rosé Pine Moon", kind: "dark" },
     ]);
   });
 
