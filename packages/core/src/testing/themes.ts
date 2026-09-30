@@ -13,6 +13,7 @@ export const testThemes: ThemeCatalogue = {
     { id: "tokyo-night-day", kind: "light" },
     { id: "tokyo-night-storm", kind: "dark" },
     { id: "tokyo-night", kind: "dark" },
+    { id: "nord", kind: "dark" },
   ],
   defaults: { light: "github-light", dark: "github-dark" },
 };

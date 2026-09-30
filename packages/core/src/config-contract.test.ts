@@ -197,7 +197,7 @@ it("ignores an unknown key and reports it, in the file's order", async () => {
     [
       'appearance = "dark"',
       'dark_them = "github-dark-dimmed"',
-      'light_theme = "nord"',
+      'light_theme = "no-such-theme"',
       "[fonts]",
       'code = "Menlo"',
     ].join("\n"),
@@ -217,7 +217,7 @@ it("ignores an unknown key and reports it, in the file's order", async () => {
         key: "light_theme",
         line: 3,
         message:
-          'config.toml, line 3: light_theme is "nord", which is not a theme. Verdandi uses "github-light" instead.',
+          'config.toml, line 3: light_theme is "no-such-theme", which is not a theme. Verdandi uses "github-light" instead.',
       },
       {
         key: "fonts",

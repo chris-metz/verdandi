@@ -6,6 +6,7 @@ import {
   catppuccinMocha,
 } from "./catppuccin";
 import { githubDark, githubDarkDimmed, githubLight } from "./github";
+import { nord } from "./nord";
 import { tokyoNight, tokyoNightDay, tokyoNightStorm } from "./tokyo-night";
 
 /**
@@ -125,6 +126,7 @@ export const builtInThemes: readonly Theme[] = [
   tokyoNightDay,
   tokyoNightStorm,
   tokyoNight,
+  nord,
 ];
 
 export const defaultLightTheme = githubLight;

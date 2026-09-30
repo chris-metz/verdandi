@@ -11,7 +11,7 @@ import {
 } from "./index";
 
 describe("built-in themes", () => {
-  it("are GitHub's, Catppuccin's and Tokyo Night's", () => {
+  it("are GitHub's, Catppuccin's, Tokyo Night's and Nord's", () => {
     expect(
       builtInThemes.map(({ id, name, kind }) => ({ id, name, kind })),
     ).toEqual([
@@ -29,6 +29,7 @@ describe("built-in themes", () => {
       { id: "tokyo-night-day", name: "Tokyo Night Day", kind: "light" },
       { id: "tokyo-night-storm", name: "Tokyo Night Storm", kind: "dark" },
       { id: "tokyo-night", name: "Tokyo Night", kind: "dark" },
+      { id: "nord", name: "Nord", kind: "dark" },
     ]);
   });
 
@@ -58,7 +59,10 @@ describe("built-in themes", () => {
 
   it("show the default for a chosen theme they do not have, or of the other kind", () => {
     expect(
-      shownTheme(true, { lightTheme: "github-light", darkTheme: "nord" }).id,
+      shownTheme(true, {
+        lightTheme: "github-light",
+        darkTheme: "no-such-theme",
+      }).id,
     ).toBe("github-dark");
     expect(
       shownTheme(false, { lightTheme: "github-dark", darkTheme: "github-dark" })
