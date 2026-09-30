@@ -1,4 +1,10 @@
 import type { Config } from "@verdandi/core/contract";
+import {
+  catppuccinFrappe,
+  catppuccinLatte,
+  catppuccinMacchiato,
+  catppuccinMocha,
+} from "./catppuccin";
 import { githubDark, githubDarkDimmed, githubLight } from "./github";
 
 /**
@@ -111,6 +117,10 @@ export const builtInThemes: readonly Theme[] = [
   githubLight,
   githubDark,
   githubDarkDimmed,
+  catppuccinLatte,
+  catppuccinFrappe,
+  catppuccinMacchiato,
+  catppuccinMocha,
 ];
 
 export const defaultLightTheme = githubLight;

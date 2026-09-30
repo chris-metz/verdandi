@@ -11,13 +11,21 @@ import {
 } from "./index";
 
 describe("built-in themes", () => {
-  it("are GitHub Light, Dark and Dark Dimmed", () => {
+  it("are GitHub's and Catppuccin's", () => {
     expect(
       builtInThemes.map(({ id, name, kind }) => ({ id, name, kind })),
     ).toEqual([
       { id: "github-light", name: "GitHub Light", kind: "light" },
       { id: "github-dark", name: "GitHub Dark", kind: "dark" },
       { id: "github-dark-dimmed", name: "GitHub Dark Dimmed", kind: "dark" },
+      { id: "catppuccin-latte", name: "Catppuccin Latte", kind: "light" },
+      { id: "catppuccin-frappe", name: "Catppuccin Frappé", kind: "dark" },
+      {
+        id: "catppuccin-macchiato",
+        name: "Catppuccin Macchiato",
+        kind: "dark",
+      },
+      { id: "catppuccin-mocha", name: "Catppuccin Mocha", kind: "dark" },
     ]);
   });
 

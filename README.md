@@ -87,9 +87,12 @@ How Verdandi looks is kept in `config.toml` in the config directory: `~/.config/
 
 ```toml
 appearance = "system"               # "system", "light" or "dark"
-light_theme = "github-light"        # github-light
-dark_theme = "github-dark-dimmed"   # github-dark or github-dark-dimmed
+light_theme = "github-light"        # one of the light themes below
+dark_theme = "github-dark-dimmed"   # one of the dark themes below
 ```
+
+- Light themes: `github-light`, `catppuccin-latte`
+- Dark themes: `github-dark`, `github-dark-dimmed`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`
 
 **Settings…** (⌘, on macOS, Ctrl+, elsewhere) picks the appearance and the themes, writing each change to the file at once: only that key changes, and your comments and formatting stay. Without a file, the first change creates it. **File → Show Config File** reveals it, or its folder while there is none. Changes by hand apply at once too. A value Verdandi cannot use falls back to its default, an unknown key is ignored, and a file that is not valid TOML means every default; the sidebar says what and where until the file is fixed.
 

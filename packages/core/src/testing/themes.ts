@@ -6,6 +6,10 @@ export const testThemes: ThemeCatalogue = {
     { id: "github-light", kind: "light" },
     { id: "github-dark", kind: "dark" },
     { id: "github-dark-dimmed", kind: "dark" },
+    { id: "catppuccin-latte", kind: "light" },
+    { id: "catppuccin-frappe", kind: "dark" },
+    { id: "catppuccin-macchiato", kind: "dark" },
+    { id: "catppuccin-mocha", kind: "dark" },
   ],
   defaults: { light: "github-light", dark: "github-dark" },
 };
