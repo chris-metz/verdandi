@@ -332,8 +332,9 @@ function collapsedIssues(list: IssueList): string[] {
 
 /**
  * A list as a user reads it: one line per issue, sub-issues indented below
- * their parent issue, with what the row says besides its title. In All, each
- * row starts with its repository chip, as `owner/name`.
+ * their parent issue, with what the row says besides its title, such as
+ * "context" for a context issue of a list its label filter narrows. In All,
+ * each row starts with its repository chip, as `owner/name`.
  */
 function outline(list: IssueList): string[] {
   const lines: string[] = [];
@@ -343,6 +344,7 @@ function outline(list: IssueList): string[] {
       list.scope.kind === "all"
         ? `${repository.owner}/${repository.name} `
         : "";
+    if (node.mark && !node.mark.match) tags.unshift("context");
     if (state === "closed") tags.unshift("closed");
     if (external) tags.unshift("external");
     lines.push(
@@ -2908,6 +2910,7 @@ describe("repository list", () => {
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
       state: "open",
+      labelFilter: [],
       trees: [],
       repositories: [],
       loading: {
@@ -3114,6 +3117,7 @@ describe("sub-issue forest", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 3,
     });
   });
@@ -3151,6 +3155,7 @@ describe("sub-issue forest", () => {
       status: "current",
       updatedAt: startTime,
       matches: 2,
+      inScope: 2,
       closedNotListed: 0,
     });
   });
@@ -3186,6 +3191,7 @@ describe("sub-issue forest", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 1,
     });
   });
@@ -3417,6 +3423,7 @@ describe("closed issues", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 0,
     });
     expect(github.received).toContain("fetchClosedIssues acme/api");
@@ -3561,6 +3568,7 @@ describe("closed issues", () => {
           status: "current",
           updatedAt: startTime,
           matches: 3,
+          inScope: 3,
           closedNotListed: 0,
         },
       },
@@ -3780,6 +3788,167 @@ describe("expansion", () => {
   });
 });
 
+describe("label filter", () => {
+  const bug = { name: "bug", color: "d73a4a" };
+
+  /**
+   * acme/api with bugs below a roadmap issue and in a tree of their own, an
+   * issue without them, and a bug outside the repository.
+   */
+  function buggyRepository() {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 7,
+        title: "Dark mode",
+        labels: [{ name: "ui", color: "0e8a16" }],
+      },
+      { number: 6, title: "Retry flakes" },
+      {
+        number: 5,
+        title: "Flaky test",
+        labels: [bug, { name: "ci", color: "fbca04" }],
+        subIssues: ["acme/api#6"],
+      },
+      { number: 4, title: "Meter requests", labels: [bug] },
+      { number: 3, title: "Usage endpoint", subIssues: ["acme/api#4"] },
+      { number: 2, title: "Rate cards", labels: [bug] },
+      {
+        number: 1,
+        title: "Launch billing",
+        labels: [{ name: "roadmap", color: "3e4b9e" }],
+        subIssues: ["acme/api#2", "acme/api#3", "other/lib#9"],
+      },
+    ]);
+    github.addRepository("other/lib", [
+      { number: 9, title: "Shared client", labels: [bug] },
+    ]);
+    return github;
+  }
+
+  it("narrows a list to the issues that carry its labels, each under its ancestors with all its sub-issues, as context issues around them", async () => {
+    const github = buggyRepository();
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    const asked = github.received.length;
+
+    const filtered = await nextList(core, acmeApi, () =>
+      core.addLabelToFilter(acmeApi, bug),
+    );
+
+    // A bug outside the repository is no match; a tree without one drops out.
+    expect(outline(filtered)).toEqual([
+      "#5 Flaky test",
+      "  #6 Retry flakes · context",
+      "#1 Launch billing · context",
+      "  #2 Rate cards",
+      "  #3 Usage endpoint · context",
+      "    #4 Meter requests",
+      "  other/lib#9 Shared client · external · context",
+    ]);
+    expect(filtered.labelFilter).toEqual([bug]);
+    expect(filtered.loading).toMatchObject({
+      status: "current",
+      matches: 3,
+      inScope: 7,
+      closedNotListed: 0,
+    });
+    // It filters what was read, asking GitHub nothing.
+    expect(github.received).toHaveLength(asked);
+  });
+
+  it("takes labels named alike as the same, whatever the case and repository, and matches only issues that carry every label", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const ui = { name: "ui", color: "0e8a16" };
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 1, title: "Crash on login", labels: [bug] },
+    ]);
+    github.addRepository("acme/web", [
+      { number: 2, title: "Wide tables", labels: [ui] },
+      {
+        number: 1,
+        title: "Broken footer",
+        createdAt: "2026-09-20T00:00:00Z",
+        labels: [{ name: "Bug", color: "ee0701" }, ui],
+      },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, all);
+
+    const bugs = await nextList(core, all, () =>
+      core.addLabelToFilter(all, { name: "Bug", color: "ee0701" }),
+    );
+    expect(outline(bugs)).toEqual([
+      "acme/web #1 Broken footer",
+      "acme/api #1 Crash on login",
+    ]);
+
+    const again = await nextList(core, all, () =>
+      core.addLabelToFilter(all, bug),
+    );
+    expect(again.labelFilter).toEqual([{ name: "Bug", color: "ee0701" }]);
+
+    const both = await nextList(core, all, () =>
+      core.addLabelToFilter(all, ui),
+    );
+    expect(both.labelFilter).toEqual([{ name: "Bug", color: "ee0701" }, ui]);
+    expect(outline(both)).toEqual(["acme/web #1 Broken footer"]);
+    expect(both.loading).toMatchObject({ matches: 1, inScope: 3 });
+  });
+
+  it("keeps a sidebar entry's label filter to its own list, in either state, until its labels are removed", async () => {
+    await writeSettings({ version: 1, repositories: [{ name: "acme/api" }] });
+    const ui = { name: "ui", color: "0e8a16" };
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 4, title: "Wide tables", labels: [ui] },
+      { number: 3, title: "Old crash", state: "closed", labels: [bug] },
+      { number: 2, title: "Stale docs", state: "closed" },
+      { number: 1, title: "Crash on login", labels: [bug, ui] },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await core.addLabelToFilter(acmeApi, bug);
+
+    const everything = await openUntilLoaded(core, all);
+    expect(everything.labelFilter).toEqual([]);
+    expect(outline(everything)).toEqual([
+      "acme/api #4 Wide tables",
+      "acme/api #1 Crash on login",
+    ]);
+
+    const closed = await switchUntilLoaded(core, acmeApi, "closed");
+    expect(closed.labelFilter).toEqual([bug]);
+    expect(outline(closed)).toEqual(["#3 Old crash · closed"]);
+    expect(closed.loading).toMatchObject({ matches: 1, inScope: 2 });
+
+    await core.addLabelToFilter(acmeApi, ui);
+    const open = await nextList(core, acmeApi, () =>
+      core.switchState(acmeApi, "open"),
+    );
+    expect(outline(open)).toEqual(["#1 Crash on login"]);
+
+    const fewer = await nextList(core, acmeApi, () =>
+      core.removeLabelFromFilter(acmeApi, "BUG"),
+    );
+    expect(fewer.labelFilter).toEqual([ui]);
+    expect(outline(fewer)).toEqual(["#4 Wide tables", "#1 Crash on login"]);
+
+    await core.addLabelToFilter(acmeApi, bug);
+    const cleared = await nextList(core, acmeApi, () =>
+      core.clearLabelFilter(acmeApi),
+    );
+    expect(cleared.labelFilter).toEqual([]);
+    expect(cleared.loading).toMatchObject({ matches: 2, inScope: 2 });
+    expect(collapsedIssues(cleared)).toEqual([]);
+    expect(cleared.trees.every((tree) => tree.mark === undefined)).toBe(true);
+  });
+});
+
 describe("All", () => {
   it("merges the open issues of every tracked repository into one forest", async () => {
     await writeSettings({
@@ -3806,6 +3975,7 @@ describe("All", () => {
       status: "current",
       updatedAt: startTime,
       matches: 3,
+      inScope: 3,
       closedNotListed: 0,
     });
   });
@@ -3985,6 +4155,7 @@ describe("All", () => {
       status: "current",
       updatedAt: startTime,
       matches: 2,
+      inScope: 2,
       closedNotListed: 3,
     });
   });
@@ -4019,6 +4190,7 @@ describe("All", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 2,
     });
   });
@@ -4211,6 +4383,7 @@ describe("All", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 0,
     });
     expect(list.repositories).toEqual([
@@ -4257,6 +4430,7 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       state: "open",
+      labelFilter: [],
       trees: [],
       repositories: [],
       loading: {
@@ -4279,12 +4453,14 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       state: "open",
+      labelFilter: [],
       trees: [],
       repositories: [],
       loading: {
         status: "current",
         updatedAt: startTime,
         matches: 0,
+        inScope: 0,
         closedNotListed: 0,
       },
     });
@@ -4328,6 +4504,7 @@ describe("All", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 0,
     });
   });
@@ -4343,6 +4520,7 @@ describe("freshness", () => {
       status: "current",
       updatedAt: startTime,
       matches: 1,
+      inScope: 1,
       closedNotListed: 0,
     });
   });
@@ -4477,6 +4655,7 @@ describe("loading states", () => {
       status: "current",
       updatedAt: startTime,
       matches: 0,
+      inScope: 0,
       closedNotListed: 1,
     });
   });
@@ -4676,6 +4855,7 @@ describe("refresh", () => {
     expect(outline(refreshed)).toEqual(["#2 Dark mode"]);
     expect(refreshed.loading).toMatchObject({
       matches: 1,
+      inScope: 1,
       closedNotListed: 1,
     });
   });
@@ -5004,6 +5184,7 @@ describe("stale content", () => {
       updatedAt: startTime,
       problem: { kind: "unreachable", message: cannotReachGitHub.message },
       matches: 1,
+      inScope: 1,
       closedNotListed: 0,
     });
   });
@@ -5084,6 +5265,7 @@ describe("failed content", () => {
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
       state: "open",
+      labelFilter: [],
       trees: [],
       repositories: [],
       loading: {
@@ -5335,6 +5517,7 @@ describe("partial content", () => {
           "GitHub left out some open issues: Unavailable or not accessible with this account: Could not resolve to a node with the global id of 'I_acme/api#2'.",
       },
       matches: 2,
+      inScope: 2,
       closedNotListed: 0,
     });
   });

@@ -1,4 +1,4 @@
-import type { IssuePage } from "@verdandi/core/contract";
+import type { IssuePage, Label } from "@verdandi/core/contract";
 import {
   useCallback,
   useEffect,
@@ -55,6 +55,8 @@ const readingTargets = "[data-issue-id], [data-scroll-anchor]";
  * the page is read again, the cursor stays on its issue, or moves to a
  * neighbour if the issue disappeared, and stays where it is on screen; while
  * the cursor is out of view, what is being read stays where it is.
+ * Clicking a label, of the issue or of a sub-issue, returns to the list with
+ * the label added to its label filter.
  */
 export function IssuePagePane({
   visit,
@@ -63,6 +65,7 @@ export function IssuePagePane({
   login,
   hasKeyboard,
   onNavigate,
+  onFilterLabel,
 }: {
   visit: IssueVisit;
   previous: IssueDestination | undefined;
@@ -71,6 +74,11 @@ export function IssuePagePane({
   login: string | undefined;
   hasKeyboard: boolean;
   onNavigate: (action: IssueNavigation) => void;
+  /**
+   * Returns to the list the page was opened from, with a label added to its
+   * label filter.
+   */
+  onFilterLabel: (label: Label) => void;
 }) {
   const page = useIssuePage(visit.issue.id);
   const screen = { kind: "issue", issueId: visit.issue.id } as const;
@@ -441,7 +449,12 @@ export function IssuePagePane({
               </h1>
             )}
           </div>
-          {page?.issue && <IssueMetadataLine issue={page.issue} />}
+          {page?.issue && (
+            <IssueMetadataLine
+              issue={page.issue}
+              onFilterLabel={onFilterLabel}
+            />
+          )}
           {!page?.issue && !failure && (
             <p role="status" className="text-muted-foreground">
               Loading issue…
@@ -506,6 +519,7 @@ export function IssuePagePane({
                     onToggle={toggle}
                     onOpen={open}
                     onRetry={retry}
+                    onFilterLabel={onFilterLabel}
                   />
                 ))}
               </div>

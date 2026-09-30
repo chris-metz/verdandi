@@ -8,7 +8,10 @@ import type { IssueNavigation, IssueVisit } from "./issue-navigation";
 import { presentScope, type SidebarScope as Scope } from "./scope";
 import { ViewPane } from "./ViewPane";
 
-/** One sidebar entry's list and the issue pages opened from it. */
+/**
+ * One sidebar entry's list and the issue pages opened from it. A label
+ * clicked on a page returns to the list, filtered by it.
+ */
 export function MainArea({
   scope,
   stack,
@@ -70,6 +73,15 @@ export function MainArea({
       login={login}
       hasKeyboard={hasKeyboard}
       onNavigate={onNavigate}
+      onFilterLabel={(label) => {
+        void window.verdandi.addLabelToFilter(
+          scope.kind === "view"
+            ? { kind: "view", viewId: scope.view.id }
+            : scope,
+          label,
+        );
+        onNavigate({ kind: "list" });
+      }}
     />
   );
 }

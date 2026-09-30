@@ -29,7 +29,8 @@ export type ListCommand =
   | { kind: "select"; issueId: string }
   | { kind: "setExpanded"; issueId: string; expanded: boolean }
   | { kind: "setAllExpanded"; expanded: boolean }
-  | { kind: "openOnGitHub"; url: string };
+  | { kind: "openOnGitHub"; url: string }
+  | { kind: "clearLabelFilter" };
 
 /**
  * The rows a forest shows: every tree, with the sub-issues of expanded ones.
@@ -140,7 +141,8 @@ export function nearestRemaining(
  * What a key does in a list, with the selection on the row at `index`:
  * `j`/`k`/↑/↓ move it, ←/→ collapse and expand (← on a sub-issue jumps to its
  * parent issue, → on an expanded issue steps into its sub-issues), `e`
- * expands or collapses every tree, and `o` opens the issue on GitHub.
+ * expands or collapses every tree, `o` opens the issue on GitHub, and Esc
+ * clears the label filter, also when nothing matches it.
  */
 export function commandForKey(
   key: string,
@@ -148,6 +150,7 @@ export function commandForKey(
   index: number,
   trees: readonly IssueTree[],
 ): ListCommand | undefined {
+  if (key === "Escape") return { kind: "clearLabelFilter" };
   const row = rows[index];
   if (!row) return undefined;
   const { node } = row;

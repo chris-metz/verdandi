@@ -6,7 +6,6 @@ import type {
   ParentIssue,
   SubIssueProgress,
   UnreadIssue,
-  ViewMark,
 } from "@verdandi/core/contract";
 import { LoaderCircle, Lock } from "lucide-react";
 import { memo, type ReactNode } from "react";
@@ -14,18 +13,20 @@ import { cn } from "@/lib/utils";
 import { Avatar } from "./Avatar";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
+import { LabelPill, MoreLabels } from "./LabelFilter";
 import type { ListRow } from "./list-navigation";
 import { problemText } from "./problem-text";
 import {
   colorStyle,
   createdCell,
   incompleteTitle,
-  labelColors,
   labelOverflow,
+  markTitle,
   progressCell,
   relationshipCell,
   repositoryChipCell,
   unreadCell,
+  type MatchedBy,
 } from "./row-cells";
 import { useNow } from "./use-now";
 
@@ -38,9 +39,10 @@ interface IssueColumn {
   /** Its width and how its cell aligns, shared with its header. */
   className: string;
   /**
-   * Whether its cell dims with a context issue outside views, as the title
-   * does: a closed issue in an open list, an open one in a closed list. In a
-   * view, every cell of a context issue dims.
+   * Whether its cell dims with a context issue in a list without a label
+   * filter, as the title does: a closed issue in an open list, an open one
+   * in a closed list. Where issues are marked, as in a view, every cell of a
+   * context issue dims.
    */
   dimsContext: boolean;
   cell: (issue: IssueSummary) => ReactNode;
@@ -121,15 +123,19 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  * Outside views, the issues in the other state than the list's are dimmed:
  * closed issues in an open list, and open ones in a closed list.
  *
- * In a view, only context issues are dimmed, as whole rows, counts
- * included; a closed match is not, and only its state icon says closed. A
- * context issue that may match too, as the results are incomplete, has a
- * "?" after its number. A collapsed issue with matches below it says how
- * many.
+ * In a view, or a list its label filter narrows, only context issues are
+ * dimmed, as whole rows, counts included; a closed match is not, and only
+ * its state icon says closed. A context issue that may match too, as the
+ * results are incomplete, has a "?" after its number. A collapsed issue
+ * with matches below it says how many.
+ *
+ * Clicking a label, or one in the popover of `+N`, filters by it instead of
+ * opening the issue.
  */
 export const IssueRow = memo(function IssueRow({
   row,
   listState = "open",
+  matchedBy,
   withRepository,
   selected,
   login,
@@ -137,6 +143,7 @@ export const IssueRow = memo(function IssueRow({
   onToggle,
   onOpen,
   onRetry,
+  onFilterLabel,
 }: {
   row: ListRow;
   /**
@@ -144,6 +151,8 @@ export const IssueRow = memo(function IssueRow({
    * matches: open unless said otherwise.
    */
   listState?: IssueState;
+  /** What makes its issue a match, where it is marked one or not. */
+  matchedBy?: MatchedBy | undefined;
   /** Whether the row names its repository with a chip, as in All. */
   withRepository: boolean;
   selected: boolean;
@@ -154,17 +163,19 @@ export const IssueRow = memo(function IssueRow({
   onOpen: (issue: IssueDestination) => void;
   /** Reads what failed on screen again. */
   onRetry: () => void;
+  /** Adds a label to the label filter of the list. */
+  onFilterLabel: (label: Label) => void;
 }) {
   const { node, depth, parent, missingParent } = row;
-  const { issue, view } = node;
+  const { issue, mark } = node;
   const hasSubIssues = node.subIssues.length > 0;
   const read = node.unread ? undefined : node.issue;
-  // In a view, dimming means only "context"; elsewhere it means in the
-  // other state than the list's.
-  const context = view !== undefined && !view.match;
-  const stateDimmed = view === undefined && issue.state !== listState;
+  // Where issues are marked, dimming means only "context"; elsewhere it
+  // means in the other state than the list's.
+  const context = mark !== undefined && !mark.match;
+  const stateDimmed = mark === undefined && issue.state !== listState;
   const inside =
-    hasSubIssues && !node.expanded ? (view?.matchesInside ?? 0) : 0;
+    hasSubIssues && !node.expanded ? (mark?.matchesInside ?? 0) : 0;
   return (
     <div
       role="treeitem"
@@ -172,7 +183,7 @@ export const IssueRow = memo(function IssueRow({
       aria-selected={selected}
       aria-expanded={hasSubIssues ? node.expanded : undefined}
       data-issue-id={issue.id}
-      title={view && viewRoleTitle(view)}
+      title={mark && matchedBy && markTitle(mark, matchedBy)}
       onClick={() => {
         onSelect(issue.id);
         onOpen(issue);
@@ -219,14 +230,14 @@ export const IssueRow = memo(function IssueRow({
         {withRepository && <RepositoryChip issue={issue} />}
         <span className="shrink-0 text-muted-foreground tabular-nums">
           {issue.reference}
-          {view?.mayMatch && (
+          {mark?.mayMatch && (
             <span aria-label="may match" className="ml-0.5 font-medium">
               ?
             </span>
           )}
         </span>
         <span className="min-w-0 truncate">{issue.title}</span>
-        {read && <Labels labels={read.labels} />}
+        {read && <Labels labels={read.labels} onFilter={onFilterLabel} />}
         {issue.external && (
           <span
             title="Not in a tracked repository"
@@ -283,14 +294,6 @@ export const IssueRow = memo(function IssueRow({
     </div>
   );
 });
-
-/** What a view's row is, in its tooltip. */
-function viewRoleTitle({ match, mayMatch }: ViewMark): string {
-  if (match) return "Match: the search returned this issue";
-  return mayMatch
-    ? "Context issue: the search results are incomplete, so it may match too"
-    : "Context issue: shown for its place in the tree; the search did not return it";
-}
 
 /** "1 match", "3 matches". */
 function countMatches(count: number): string {
@@ -422,27 +425,26 @@ export function WarningIcon({ title }: { title: string | undefined }) {
   );
 }
 
-function Labels({ labels }: { labels: Label[] }) {
+/** A row's first labels, each filtering by itself, and `+N` for the rest. */
+function Labels({
+  labels,
+  onFilter,
+}: {
+  labels: Label[];
+  onFilter: (label: Label) => void;
+}) {
   const { shown, more } = labelOverflow(labels);
   return (
     <>
       {shown.map((label) => (
-        <span
+        <LabelPill
           key={label.name}
-          style={colorStyle(labelColors(label.color))}
-          className="shrink-0 rounded-full px-1.5 text-[11px] leading-[18px] font-medium"
-        >
-          {label.name}
-        </span>
+          label={label}
+          onFilter={onFilter}
+          className="px-1.5 text-[11px] leading-[18px]"
+        />
       ))}
-      {more && (
-        <span
-          title={more.names}
-          className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-[18px] font-medium text-muted-foreground"
-        >
-          +{more.count}
-        </span>
-      )}
+      {more && <MoreLabels labels={labels} more={more} onFilter={onFilter} />}
     </>
   );
 }

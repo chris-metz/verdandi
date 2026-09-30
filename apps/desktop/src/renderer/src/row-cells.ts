@@ -1,6 +1,7 @@
 import type {
   IssueSummary,
   Label,
+  MatchMark,
   Problem,
   RelationshipCount,
   SubIssueProgress,
@@ -26,6 +27,37 @@ export function labelOverflow(labels: readonly Label[]): {
         }
       : undefined,
   };
+}
+
+/**
+ * What makes a row a match: a view's search, a view's search and its label
+ * filter, or a list's label filter.
+ */
+export type MatchedBy = "search" | "search and labels" | "labels";
+
+/** Why a row is a match or a context issue, as its tooltip says. */
+export function markTitle(
+  { match, mayMatch }: MatchMark,
+  matchedBy: MatchedBy,
+): string {
+  if (match) {
+    switch (matchedBy) {
+      case "search":
+        return "Match: the search returned this issue";
+      case "search and labels":
+        return "Match: the search returned this issue, and it has every label of the label filter";
+      case "labels":
+        return "Match: it has every label of the label filter";
+    }
+  }
+  if (mayMatch) {
+    return "Context issue: the search results are incomplete, so it may match too";
+  }
+  // With a label filter, the search may have returned an issue that lacks a
+  // label.
+  return matchedBy === "search"
+    ? "Context issue: shown for its place in the tree; the search did not return it"
+    : "Context issue: shown for its place in the tree";
 }
 
 /** The colours of a filled pill or chip: behind, and of its text. */

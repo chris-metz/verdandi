@@ -6,6 +6,7 @@ import {
   incompleteTitle,
   labelColors,
   labelOverflow,
+  markTitle,
   ownerColors,
   progressCell,
   relationshipCell,
@@ -278,5 +279,38 @@ describe("the created column", () => {
 
   it("reads an issue opened after the clock's time as just opened", () => {
     expect(ago(-120)).toBe("now");
+  });
+});
+
+describe("a row's tooltip as a match or a context issue", () => {
+  const match = { match: true, mayMatch: false, matchesInside: 0 };
+  const context = { match: false, mayMatch: false, matchesInside: 0 };
+  const mayMatch = { match: false, mayMatch: true, matchesInside: 0 };
+
+  it("says what a view's search returned", () => {
+    expect(markTitle(match, "search")).toBe(
+      "Match: the search returned this issue",
+    );
+    expect(markTitle(context, "search")).toBe(
+      "Context issue: shown for its place in the tree; the search did not return it",
+    );
+    expect(markTitle(mayMatch, "search")).toBe(
+      "Context issue: the search results are incomplete, so it may match too",
+    );
+  });
+
+  it("names the label filter where it narrows the matches", () => {
+    expect(markTitle(match, "search and labels")).toBe(
+      "Match: the search returned this issue, and it has every label of the label filter",
+    );
+    expect(markTitle(match, "labels")).toBe(
+      "Match: it has every label of the label filter",
+    );
+    expect(markTitle(context, "search and labels")).toBe(
+      "Context issue: shown for its place in the tree",
+    );
+    expect(markTitle(context, "labels")).toBe(
+      "Context issue: shown for its place in the tree",
+    );
   });
 });

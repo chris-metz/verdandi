@@ -646,13 +646,13 @@ function outline(trees: readonly ViewTree[]): string[] {
   function add(node: IssueNode, depth: number) {
     const { owner, name } = node.issue.repository;
     const hasSubIssues = node.subIssues.length > 0;
-    const inside = node.view?.matchesInside ?? 0;
+    const inside = node.mark?.matchesInside ?? 0;
     rows.push(
       [
         `${"  ".repeat(depth)}${owner}/${name}${node.issue.reference}`,
-        node.view?.match
+        node.mark?.match
           ? "match"
-          : node.view?.mayMatch
+          : node.mark?.mayMatch
             ? "context?"
             : "context",
         ...(hasSubIssues ? [node.expanded ? "▾" : "▸"] : []),
@@ -1229,6 +1229,162 @@ it("knows a context issue does not match only while the search results are compl
   expect(new Set(searches(github).map((read) => read.split(" ")[3]))).toEqual(
     new Set(["label:invoices"]),
   );
+});
+
+it("narrows a view to the matches with every label of its label filter, knowing that an issue lacking one does not match, however complete the results", async () => {
+  const bug = { name: "bug", color: "d73a4a" };
+  const billing = { name: "billing", color: "0075ca" };
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    {
+      number: 10,
+      title: "Billing",
+      labels: [billing],
+      subIssues: ["acme/api#11", "acme/api#12", "other/lib#20"],
+    },
+    {
+      number: 11,
+      title: "Invoices",
+      labels: [billing, bug],
+      subIssues: ["acme/api#13"],
+    },
+    { number: 12, title: "Refunds", state: "closed", labels: [billing] },
+    { number: 13, title: "PDF export", labels: [bug] },
+    { number: 14, title: "Unrelated", labels: [bug] },
+  ]);
+  github.addRepository("other/lib", [{ number: 20, title: "Currency" }]);
+  github.setSearch("is:issue", {
+    matches: ["acme/api#11", "acme/api#12", "acme/api#14"],
+    incomplete: true,
+  });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "all", name: "Everything", query: "is:issue" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "all" } as const;
+  const unfiltered = await nextView(core, () => core.openView("all"), settled);
+  expect(outline(unfiltered.trees)).toEqual([
+    "acme/api#10 context? ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 match",
+    "  other/lib#20 context?",
+    "acme/api#14 match",
+  ]);
+
+  const filtered = await nextView(
+    core,
+    () => core.addLabelToFilter(view, bug),
+    settled,
+  );
+
+  expect(outline(filtered.trees)).toEqual([
+    "acme/api#10 context ▾",
+    "  acme/api#11 match ▸",
+    "  acme/api#12 context",
+    "  other/lib#20 context",
+    "acme/api#14 match",
+  ]);
+  expect(filtered).toMatchObject({
+    labelFilter: [bug],
+    matchesShown: 2,
+    inScope: 3,
+    view: { query: "is:issue" },
+  });
+  // Issues the search did not return may still match if they have the label.
+  const expanded = await nextView(
+    core,
+    () => core.setExpanded(view, "I_acme/api#11", true),
+    settled,
+  );
+  expect(outline(expanded.trees)[2]).toBe("    acme/api#13 context?");
+  expect(searches(github)).toHaveLength(1);
+});
+
+it("reads an issue the search returned that lacks a label of the filter once it shows as context", async () => {
+  const bug = { name: "bug", color: "d73a4a" };
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    { number: 1, title: "Parent", labels: [bug], subIssues: ["acme/api#2"] },
+    { number: 2, title: "Child", subIssues: ["acme/api#3"] },
+    { number: 3, title: "Grandchild", subIssues: ["acme/api#4"] },
+    { number: 4, title: "Great-grandchild" },
+  ]);
+  github.setSearch("is:open", { matches: ["acme/api#1"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [{ id: "open", name: "Open", query: "is:open" }],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "open" } as const;
+  await nextView(core, () => core.openView("open"), settled);
+  await core.addLabelToFilter(view, bug);
+
+  // The search now returns #3 too, which has not been read.
+  github.setSearch("is:open", { matches: ["acme/api#1", "acme/api#3"] });
+  await nextView(
+    core,
+    () => core.refresh(view),
+    (list) => settled(list) && list.inScope === 2,
+  );
+  const expanded = await nextView(
+    core,
+    () => core.setAllExpanded(view, true),
+    settled,
+  );
+
+  expect(outline(expanded.trees)).toEqual([
+    "acme/api#1 match ▾",
+    "  acme/api#2 context ▾",
+    "    acme/api#3 context ▾",
+    "      acme/api#4 context",
+  ]);
+});
+
+it("keeps each view's label filter for the session until its labels are removed", async () => {
+  const bug = { name: "bug", color: "d73a4a" };
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", [
+    { number: 2, title: "Crash on login", labels: [bug] },
+    { number: 1, title: "Dark mode" },
+  ]);
+  github.setSearch("is:open", { matches: ["acme/api#2", "acme/api#1"] });
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }],
+    views: [
+      { id: "open", name: "Open", query: "is:open" },
+      { id: "again", name: "Open again", query: "is:open" },
+    ],
+  });
+  const core = createTestCore(github);
+  const view = { kind: "view", viewId: "open" } as const;
+  await nextView(core, () => core.openView("open"), settled);
+  await core.addLabelToFilter(view, { name: "BUG", color: "ee0701" });
+
+  const other = await nextView(core, () => core.openView("again"), settled);
+  expect(other.labelFilter).toEqual([]);
+  expect(outline(other.trees)).toEqual([
+    "acme/api#2 match",
+    "acme/api#1 match",
+  ]);
+
+  const reopened = await nextView(core, () => core.openView("open"), settled);
+  expect(reopened.labelFilter).toEqual([{ name: "BUG", color: "ee0701" }]);
+  expect(outline(reopened.trees)).toEqual(["acme/api#2 match"]);
+
+  const removed = await nextView(core, () =>
+    core.removeLabelFromFilter(view, "bug"),
+  );
+  expect(outline(removed.trees)).toEqual([
+    "acme/api#2 match",
+    "acme/api#1 match",
+  ]);
+  await core.addLabelToFilter(view, bug);
+  const cleared = await nextView(core, () => core.clearLabelFilter(view));
+  expect(cleared).toMatchObject({ labelFilter: [], matchesShown: 2 });
 });
 
 it("runs a search GitHub answered in part again on Retry", async () => {

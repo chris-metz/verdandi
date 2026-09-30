@@ -1,4 +1,5 @@
 import type {
+  Label,
   LoadingState,
   Problem,
   SavedView,
@@ -51,7 +52,9 @@ import { buildViewForest } from "./view-forest.ts";
  * at a time; what would show only below collapsed issues after the rest.
  * Only the view on screen asks GitHub for anything. What a view shows comes
  * from its search text alone, never from the tracked repositories, which
- * only tell its external issues apart.
+ * only tell its external issues apart. Each view has a label filter for the
+ * session, which narrows it to what its search returned, and never changes
+ * its search text.
  */
 export interface ViewLists {
   /**
@@ -92,6 +95,14 @@ export interface ViewLists {
   setExpanded(viewId: string, issueId: string, expanded: boolean): void;
   /** Expands or collapses every issue in an opened view, and pushes it. */
   setAllExpanded(viewId: string, expanded: boolean): void;
+  /**
+   * Changes a view's label filter, e.g. adding a label to it, and pushes the
+   * view.
+   */
+  changeLabelFilter(
+    viewId: string,
+    apply: (labelFilter: Label[]) => Label[],
+  ): void;
 }
 
 export interface ViewListsOptions {
@@ -182,6 +193,8 @@ interface ViewState {
    */
   pendingRequests: number;
   expansion: Expansion;
+  /** The labels a match carries every one of; none without a label filter. */
+  labelFilter: Label[];
 }
 
 /**
@@ -232,6 +245,7 @@ export function createViewLists({
         requested: new Set(),
         pendingRequests: 0,
         expansion: { chosen: new Map(), all: undefined, onPath: new Set() },
+        labelFilter: [],
       };
       states.set(viewId, state);
     }
@@ -323,9 +337,10 @@ export function createViewLists({
       ),
     );
     const { expansion } = state;
-    const matches = run?.matches ?? [];
+    const returned = run?.matches ?? [];
     const forest = buildViewForest({
-      matches,
+      returned,
+      labelFilter: state.labelFilter,
       complete,
       lookup: (id) => store.get(id),
       readSinceSearch: (id) => {
@@ -354,7 +369,9 @@ export function createViewLists({
       // A match's parent issue must be as new as the search's pointer to it.
       const outdated = [
         ...forest.shownIssues.filter((id) => olderThan(id, state.validFrom)),
-        ...matches.flatMap(({ id }) => (olderThan(id, run.readAt) ? [id] : [])),
+        ...returned.flatMap(({ id }) =>
+          olderThan(id, run.readAt) ? [id] : [],
+        ),
       ].map((id) => ({ id }));
       const needed = [
         ...forest.missing,
@@ -373,6 +390,7 @@ export function createViewLists({
     }
     return {
       view,
+      labelFilter: state.labelFilter,
       matchCount: run?.total,
       pullRequests: run?.pullRequests ?? 0,
       complete,
@@ -382,6 +400,7 @@ export function createViewLists({
       loading: loadingOf(view),
       trees: forest.trees,
       matchesShown: forest.matchesShown,
+      inScope: forest.inScope,
       readingContext: run !== undefined && state.pendingRequests > 0,
     };
   }
@@ -624,6 +643,11 @@ export function createViewLists({
       state.expansion.chosen.clear();
       state.expansion.all = expanded;
       state.background = false;
+      update(viewId);
+    },
+    changeLabelFilter(viewId, apply) {
+      const state = stateOf(viewId);
+      state.labelFilter = apply(state.labelFilter);
       update(viewId);
     },
   };

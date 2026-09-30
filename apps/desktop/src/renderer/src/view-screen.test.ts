@@ -30,8 +30,10 @@ describe("a view's strips", () => {
   function list(changes: Partial<ViewList>): ViewList {
     return {
       view: { id: "v", name: "Bugs", query: "label:bug" },
+      labelFilter: [],
       trees: [],
       matchesShown: 7,
+      inScope: 7,
       readingContext: false,
       matchCount: 7,
       pullRequests: 0,
@@ -49,7 +51,14 @@ describe("a view's strips", () => {
   });
 
   it("asks to narrow a search beyond the 1,000-match ceiling, naming what decides which 1,000", () => {
-    const limited = { matchCount: 4209, matchesShown: 1000, complete: false };
+    // A label filter narrows what is listed, not what the search returned.
+    const limited = {
+      matchCount: 4209,
+      inScope: 1000,
+      matchesShown: 12,
+      labelFilter: [{ name: "ui", color: "0e8a16" }],
+      complete: false,
+    };
 
     expect(viewStrips(list(limited))).toEqual([
       {
@@ -86,6 +95,7 @@ describe("a view's strips", () => {
         list({
           matchCount: 4209,
           matchesShown: 100,
+          inScope: 100,
           complete: false,
           loading: { status: "loading" },
         }),

@@ -402,7 +402,10 @@ export type Scope =
  */
 export type IssueState = "open" | "closed";
 
-/** A list whose issues expand and collapse: a scope's, or a view's. */
+/**
+ * A list whose issues expand and collapse, and which a label filter
+ * narrows: a scope's, or a view's.
+ */
 export type ExpandableList = Scope | { kind: "view"; viewId: string };
 
 /** The selected sidebar entry, with the current view text when it is a view. */
@@ -495,8 +498,11 @@ export interface ReadIssueNode {
    */
   expanded: boolean;
   unread?: undefined;
-  /** How a view shows it; none outside views. */
-  view?: ViewMark;
+  /**
+   * How a view, or a list its label filter narrows, shows it; none in a
+   * list without a label filter, nor on pages.
+   */
+  mark?: MatchMark;
 }
 
 /**
@@ -508,21 +514,27 @@ export interface UnreadIssueNode {
   subIssues: [];
   expanded: false;
   unread: UnreadIssue;
-  /** How a view shows it; none outside views. */
-  view?: ViewMark;
+  /**
+   * How a view, or a list its label filter narrows, shows it; none in a
+   * list without a label filter, nor on pages.
+   */
+  mark?: MatchMark;
 }
 
 /**
- * How a view shows an issue in its tree: as a match, which its search
- * returned, or as a context issue, which shows only as an ancestor or
- * sub-issue of a match. Context issues are dimmed; closed matches are not.
+ * How a view, or a list its label filter narrows, shows an issue in its
+ * tree: as a match, or as a context issue, which shows only as an ancestor
+ * or sub-issue of a match. In a view, a match is an issue its search
+ * returned; with a label filter, only one that carries every label of it.
+ * Context issues are dimmed; closed matches are not.
  */
-export interface ViewMark {
+export interface MatchMark {
   match: boolean;
   /**
-   * Whether a context issue may match too: the search's results are not
-   * complete, so that it did not return the issue proves nothing. Never for
-   * a match.
+   * Whether a context issue in a view may match too: the search's results
+   * are not complete, so that it did not return the issue proves nothing,
+   * and the issue lacks no label of the label filter, as far as it has been
+   * read. Never for a match, nor outside views.
    */
   mayMatch: boolean;
   /**
@@ -674,14 +686,20 @@ export interface ListProgress {
 /** What a list counts once its matches have loaded. */
 export interface ListCounts {
   /**
-   * How many matches the list has: the repository's issues in the list's
-   * state, or in All those of every tracked repository together.
+   * How many matches the list has: of its scope's issues, those that carry
+   * every label of its label filter, or all of them without one.
    */
   matches: number;
   /**
+   * How many issues its scope has: the repository's issues in the list's
+   * state, or in All those of every tracked repository together.
+   */
+  inScope: number;
+  /**
    * How many of the repository's closed issues an open list leaves out (in
    * All, of every tracked repository's): all but the ancestors of its open
-   * issues and the sub-issues in it. Always 0 in a closed list.
+   * issues and the sub-issues in it. Always 0 in a closed list, and in a
+   * list its label filter narrows.
    */
   closedNotListed: number;
 }
@@ -698,11 +716,23 @@ export interface ListCounts {
  * issue whichever tracked repository either lives in. Each issue appears
  * once. An interface dims the issues in the other state than the list's:
  * closed ones in an open list, open ones in a closed list.
+ *
+ * A label filter narrows it to the matches that carry every label of it,
+ * each under its ancestors with all its sub-issues below, as the trees stand
+ * by the newest match inside each; every other issue shows as a context
+ * issue, and trees without a match drop out. Each issue is marked a match
+ * or a context issue then, and an interface dims the context issues
+ * instead.
  */
 export interface IssueList {
   scope: Scope;
   /** Which of the scope's issues it matches: open, unless switched. */
   state: IssueState;
+  /**
+   * The scope's label filter, in both its states: its labels in the order
+   * they were added, each as it was clicked; none without one.
+   */
+  labelFilter: Label[];
   /** Only for a repository scope, once GitHub reports it archived. */
   archived?: true;
   trees: IssueTree[];
@@ -727,6 +757,10 @@ export interface IssueList {
  * the first match anywhere inside each. Until their parent issues have
  * loaded, the matches show on their own, in the search's order.
  *
+ * A label filter narrows the matches to the issues the search returned that
+ * carry every label of it; trees without a match drop out. An issue that
+ * lacks one is known not to match, however complete the search's results.
+ *
  * A path to a match expands the first time it shows; a match without a
  * matching sub-issue starts collapsed. Once expanded or collapsed, by the
  * view or the user, an issue stays so for the session, as its search runs
@@ -735,9 +769,23 @@ export interface IssueList {
 export interface ViewList {
   /** The view, as the settings file names it now. */
   view: SavedView;
+  /**
+   * Its label filter: its labels in the order they were added, each as it
+   * was clicked; none without one. It never changes the view's search text.
+   */
+  labelFilter: Label[];
   trees: ViewTree[];
-  /** How many matches the trees show, each once. */
+  /**
+   * How many matches the trees show, each once: of the issues the search
+   * returned, those that carry every label of the label filter, or all of
+   * them without one.
+   */
   matchesShown: number;
+  /**
+   * How many issues the search returned, each once, as far as it has run:
+   * the view's scope. Pull requests are not among them.
+   */
+  inScope: number;
   /**
    * Whether the matches' parent issues and sub-issues are being read, once
    * the search has answered.
@@ -1286,6 +1334,24 @@ export interface CoreRequests {
    */
   setAllExpanded: (list: ExpandableList, expanded: boolean) => Promise<void>;
   /**
+   * Adds a label to the label filter of a scope's list, in both its states,
+   * or of a view, unless it has one of that name already, whatever the case
+   * and whichever repository it comes from; then pushes the list if it has
+   * been opened. The label filter narrows the list to what has been read,
+   * and asks GitHub nothing. It lasts for the session.
+   */
+  addLabelToFilter: (list: ExpandableList, label: Label) => Promise<void>;
+  /**
+   * Removes the label of a name, whatever the case, from a list's label
+   * filter, then pushes the list if it has been opened.
+   */
+  removeLabelFromFilter: (list: ExpandableList, name: string) => Promise<void>;
+  /**
+   * Removes every label from a list's label filter, then pushes the list if
+   * it has been opened.
+   */
+  clearLabelFilter: (list: ExpandableList) => Promise<void>;
+  /**
    * Reads everything on screen again now, however recently it was read: the
    * sidebar's counts, and the screen the main area shows, if any, pushing
    * them as they change. What they have shows meanwhile. A list reads its
@@ -1388,6 +1454,9 @@ const requests: Record<keyof CoreRequests, true> = {
   switchState: true,
   setExpanded: true,
   setAllExpanded: true,
+  addLabelToFilter: true,
+  removeLabelFromFilter: true,
+  clearLabelFilter: true,
   refresh: true,
   revalidate: true,
   retry: true,

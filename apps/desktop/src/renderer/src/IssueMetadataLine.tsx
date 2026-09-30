@@ -1,14 +1,24 @@
-import type { IssueMetadata, IssueSummary } from "@verdandi/core/contract";
+import type {
+  IssueMetadata,
+  IssueSummary,
+  Label,
+} from "@verdandi/core/contract";
 import { cn } from "@/lib/utils";
 import { Avatar } from "./Avatar";
 import { ageOf } from "./freshness";
-import { colorStyle, labelColors, relationshipCell } from "./row-cells";
+import { LabelPill } from "./LabelFilter";
+import { relationshipCell } from "./row-cells";
 
-/** The page's complete metadata, including labels hidden by list overflow. */
+/**
+ * The page's complete metadata, including labels hidden by list overflow,
+ * each of which filters the list the page was opened from by itself.
+ */
 export function IssueMetadataLine({
   issue,
+  onFilterLabel,
 }: {
   issue: IssueSummary & IssueMetadata;
+  onFilterLabel: (label: Label) => void;
 }) {
   const notPlanned =
     issue.state === "closed" && issue.stateReason === "not-planned";
@@ -53,13 +63,12 @@ export function IssueMetadataLine({
         );
       })}
       {issue.labels.map((label) => (
-        <span
+        <LabelPill
           key={label.name}
-          style={colorStyle(labelColors(label.color))}
-          className="rounded-full px-2 py-1 font-medium"
-        >
-          {label.name}
-        </span>
+          label={label}
+          onFilter={onFilterLabel}
+          className="px-2 py-1"
+        />
       ))}
       {issue.assignees.length > 0 && (
         <span className="flex -space-x-1" aria-label="Assignees">

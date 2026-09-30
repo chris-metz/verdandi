@@ -3,6 +3,8 @@ import type {
   Contract,
   CoreEventName,
   CoreEvents,
+  ExpandableList,
+  Label,
   RepositoryAddress,
   SavedView,
   Screen,
@@ -20,6 +22,7 @@ import {
 import { createIssueLists, type IssueLists } from "./issue-lists.ts";
 import { createIssuePages, type IssuePages } from "./issue-pages.ts";
 import { createIssueStore } from "./issue-store.ts";
+import { withLabel, withoutLabel } from "./label-filter.ts";
 import { createClock } from "./moments.ts";
 import { isTransient, problemOf } from "./problems.ts";
 import {
@@ -403,6 +406,16 @@ export function createCore({
     });
   }
 
+  /** Changes the label filter of a scope's list or of a view. */
+  function changeLabelFilter(
+    list: ExpandableList,
+    apply: (labelFilter: Label[]) => Label[],
+  ) {
+    if (list.kind === "view") {
+      session.views.changeLabelFilter(list.viewId, apply);
+    } else session.lists.changeLabelFilter(list, apply);
+  }
+
   const selection = createSidebarSelection(settings, localState);
   async function settingsChanged() {
     session.views.settingsChanged((await settings.read()).value);
@@ -701,6 +714,18 @@ export function createCore({
       if (list.kind === "view") {
         session.views.setAllExpanded(list.viewId, expanded);
       } else session.lists.setAllExpanded(list, expanded);
+      return Promise.resolve();
+    },
+    addLabelToFilter(list, label) {
+      changeLabelFilter(list, (labelFilter) => withLabel(labelFilter, label));
+      return Promise.resolve();
+    },
+    removeLabelFromFilter(list, name) {
+      changeLabelFilter(list, (labelFilter) => withoutLabel(labelFilter, name));
+      return Promise.resolve();
+    },
+    clearLabelFilter(list) {
+      changeLabelFilter(list, () => []);
       return Promise.resolve();
     },
     refresh(screen) {

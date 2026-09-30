@@ -29,7 +29,8 @@ const selectedRow = '[aria-selected="true"]';
  * follows its issue as the trees change, or moves to a neighbour if the
  * issue disappeared, and stays where it is on screen, and the selection and
  * scroll position remembered per entry for the session. Expanding and
- * collapsing is the list's own, if it can.
+ * collapsing is the list's own, if it can, and so is clearing its label
+ * filter with Esc.
  */
 export function useListPane({
   scope,
@@ -39,6 +40,7 @@ export function useListPane({
   onOpen,
   onSetExpanded,
   onSetAllExpanded,
+  onClearLabelFilter,
 }: {
   scope: SidebarScope;
   /** The list as last pushed, or none before it arrives. */
@@ -52,6 +54,8 @@ export function useListPane({
   onOpen: (issue: IssueDestination) => void;
   onSetExpanded?: (issueId: string, expanded: boolean) => void;
   onSetAllExpanded?: (expanded: boolean) => void;
+  /** Clears the list's label filter, while it has one. */
+  onClearLabelFilter?: (() => void) | undefined;
 }) {
   const [place] = useState(() => rememberedPlace(scope));
   const [selectedId, setSelectedId] = useState(place.selectedId);
@@ -79,6 +83,7 @@ export function useListPane({
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const command = commandForKey(event.key, rows, selected, trees);
     if (!command) return;
+    if (command.kind === "clearLabelFilter" && !onClearLabelFilter) return;
     event.preventDefault();
     switch (command.kind) {
       case "openIssue":
@@ -98,6 +103,9 @@ export function useListPane({
         break;
       case "openOnGitHub":
         window.desktop.openExternal(command.url);
+        break;
+      case "clearLabelFilter":
+        onClearLabelFilter?.();
         break;
     }
   }

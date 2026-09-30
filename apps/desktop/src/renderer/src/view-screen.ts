@@ -39,7 +39,7 @@ export interface ViewStrip {
 export function viewStrips(
   list: Pick<
     ViewList,
-    "view" | "matchCount" | "matchesShown" | "incomplete" | "loading"
+    "view" | "matchCount" | "inScope" | "incomplete" | "loading"
   >,
 ): ViewStrip[] {
   const { matchCount, loading } = list;
@@ -48,7 +48,7 @@ export function viewStrips(
   if (matchCount !== undefined && matchCount > 1000) {
     const sort = /(?:^|\s)(sort:\S+)/.exec(list.view.query)?.[1];
     strips.push({
-      text: `${count(list.matchesShown)} of ${count(matchCount)} matches shown · narrow the search`,
+      text: `${count(list.inScope)} of ${count(matchCount)} matches shown · narrow the search`,
       hint: `${
         sort
           ? `${sort} in the search decides which 1,000`

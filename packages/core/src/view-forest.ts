@@ -1,22 +1,27 @@
 import type {
   IssueNode,
+  Label,
   RepositoryAddress,
   UnreadIssue,
   ViewTree,
 } from "./contract.ts";
 import type { Issue, IssueReference, SearchMatch } from "./github/port.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
+import { carriesEvery } from "./label-filter.ts";
 
 /** A view's matches, arranged into their trees. */
 export interface ViewForest {
   trees: ViewTree[];
   /** How many matches the trees show, each once. */
   matchesShown: number;
+  /** How many issues the search returned, each once. */
+  inScope: number;
   /**
    * Issues the forest needs but has not read: the matches, whose parent
-   * issues and sub-issues only reading them tells, their ancestors, and the
-   * sub-issues it shows or would show once one collapsed issue expands.
-   * Those below a context issue further down are read once they come near.
+   * issues and sub-issues only reading them tells, their ancestors, the other
+   * issues the search returned that it shows, and the sub-issues it shows or
+   * would show once one collapsed issue expands. Those below a context issue
+   * further down are read once they come near.
    */
   missing: IssueReference[];
   /** Of the missing issues, those that would show only below collapsed ones. */
@@ -31,11 +36,16 @@ export interface ViewForest {
 }
 
 export interface ViewForestOptions {
-  /** The matches, in the search's order. */
-  matches: readonly SearchMatch[];
+  /** The issues the search returned, in its order. */
+  returned: readonly SearchMatch[];
   /**
-   * Whether the matches are all the search's matches, so that the context
-   * issues are known not to match.
+   * The labels a match carries every one of, besides being returned; none
+   * without a label filter.
+   */
+  labelFilter: readonly Label[];
+  /**
+   * Whether the search returned all it matches, so that the context issues
+   * it did not return are known not to match.
    */
   complete: boolean;
   /** An issue read earlier, with its relationships. */
@@ -66,13 +76,19 @@ const notVisible: UnreadIssue = {
  * Arranges a view's matches into trees: each match under its whole
  * ancestry, as far as it has been read, up to its top-level issue, and below
  * each issue its sub-issues in GitHub's order, matches or context issues.
- * Each issue appears once. A match whose relationships have not been read
- * shows as the search answered it, as a tree of its own unless an issue
- * shown names it as a sub-issue. The trees are in the order of the search's
- * rank of the first match anywhere inside each.
+ * Each issue appears once. An issue the search returned whose relationships
+ * have not been read shows as the search answered it, a match as a tree of
+ * its own unless an issue shown names it as a sub-issue. The trees are in
+ * the order of the search's rank of the first match anywhere inside each.
+ *
+ * The matches are the issues the search returned that carry every label of
+ * the label filter, as last read. An issue that lacks one is known not to
+ * match; one the search did not return may match only while the search's
+ * results are not complete.
  */
 export function buildViewForest({
-  matches,
+  returned,
+  labelFilter,
   complete,
   lookup,
   readSinceSearch,
@@ -80,12 +96,18 @@ export function buildViewForest({
   isTracked,
   isExpanded,
 }: ViewForestOptions): ViewForest {
+  /** Whether an issue carries every label of the label filter. */
+  const hasEveryLabel = (issue: Pick<Issue, "labels">) =>
+    carriesEvery(issue.labels, labelFilter);
+  const returnedById = new Map<string, SearchMatch>();
   const ranks = new Map<string, number>();
   const matchById = new Map<string, SearchMatch>();
-  for (const [rank, match] of matches.entries()) {
-    if (ranks.has(match.id)) continue;
-    ranks.set(match.id, rank);
-    matchById.set(match.id, match);
+  for (const [rank, answer] of returned.entries()) {
+    if (returnedById.has(answer.id)) continue;
+    returnedById.set(answer.id, answer);
+    if (!hasEveryLabel(lookup(answer.id) ?? answer)) continue;
+    ranks.set(answer.id, rank);
+    matchById.set(answer.id, answer);
   }
   const missing = new Map<string, IssueReference>();
   const outdatedAncestors = new Set<string>();
@@ -166,10 +188,11 @@ export function buildViewForest({
   } {
     const { id } = reference;
     placed.add(id);
-    const match = matchById.get(id);
+    const answer = returnedById.get(id);
+    const match = matchById.has(id);
     const rank = ranks.get(id) ?? Infinity;
     const issue = lookup(id);
-    if (!issue && !match) {
+    if (!issue && !answer) {
       missing.set(id, reference);
       return {
         node: {
@@ -180,7 +203,7 @@ export function buildViewForest({
           subIssues: [],
           expanded: false,
           unread: unread(reference),
-          view: { match: false, mayMatch: !complete, matchesInside: 0 },
+          mark: { match: false, mayMatch: !complete, matchesInside: 0 },
         },
         firstRank: rank,
       };
@@ -194,11 +217,13 @@ export function buildViewForest({
       subIssues.push(sub.node);
       firstRank = Math.min(firstRank, sub.firstRank);
       matchesInside +=
-        Number(sub.node.view?.match) + (sub.node.view?.matchesInside ?? 0);
+        Number(sub.node.mark?.match) + (sub.node.mark?.matchesInside ?? 0);
     }
-    // A match not read yet shows as the search answered it.
+    // An issue returned but not read yet shows as the search answered it,
+    // and is read for its relationships, a match or not.
+    if (!issue) missing.set(id, reference);
     const shown: Issue = issue ?? {
-      ...(match as SearchMatch),
+      ...(answer as SearchMatch),
       parent: undefined,
       subIssues: [],
       incomplete: undefined,
@@ -211,9 +236,9 @@ export function buildViewForest({
         ),
         subIssues,
         expanded: isExpanded(id, matchesInside > 0),
-        view: {
-          match: match !== undefined,
-          mayMatch: match === undefined && !complete,
+        mark: {
+          match,
+          mayMatch: !answer && !complete && hasEveryLabel(shown),
           matchesInside,
         },
       },
@@ -262,6 +287,7 @@ export function buildViewForest({
   return {
     trees,
     matchesShown: matchById.size,
+    inScope: returnedById.size,
     missing: [...missing.values()],
     belowCollapsed,
     outdatedAncestors: [...outdatedAncestors],

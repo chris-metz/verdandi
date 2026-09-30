@@ -1,6 +1,7 @@
 import type {
   IssueList,
   IssueState,
+  Label,
   RepositoryAddress,
   RepositoryEntry,
   TrackedRepository,
@@ -12,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { listFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
+import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
 import { listStatus } from "./list-status";
 import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
@@ -22,10 +24,11 @@ import { useListPane } from "./use-list-pane";
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
  * the core pushes it, driven by keyboard and mouse. A switch beside its name
- * shows its open or its closed issues. The selection and scroll
- * position are remembered per scope for the session. When the list is read
- * again, the selection stays on its issue, or moves to a neighbour if the
- * issue disappeared, and stays where it is on screen.
+ * shows its open or its closed issues, and chips after it the labels of its
+ * label filter, which a label clicked in a row adds to and Esc clears. The
+ * selection and scroll position are remembered per scope for the session.
+ * When the list is read again, the selection stays on its issue, or moves to
+ * a neighbour if the issue disappeared, and stays where it is on screen.
  */
 export function IssueListPane({
   scope,
@@ -57,6 +60,10 @@ export function IssueListPane({
 }) {
   const list = useList(scope);
   const trees = useMemo(() => list?.trees ?? [], [list]);
+  const labelFilter = list?.labelFilter ?? [];
+  const clearLabelFilter = useCallback(() => {
+    void window.verdandi.clearLabelFilter(scope);
+  }, [scope]);
   const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
     {
       scope,
@@ -70,6 +77,7 @@ export function IssueListPane({
       onSetAllExpanded: (expanded) => {
         void window.verdandi.setAllExpanded(scope, expanded);
       },
+      onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
     },
   );
   const toggle = useCallback(
@@ -81,6 +89,12 @@ export function IssueListPane({
   const retry = useCallback(() => {
     void window.verdandi.retry({ kind: "list", scope });
   }, [scope]);
+  const filterLabel = useCallback(
+    (label: Label) => {
+      void window.verdandi.addLabelToFilter(scope, label);
+    },
+    [scope],
+  );
 
   const { label, repositoryChips } = presentScope(scope);
   const repository =
@@ -99,7 +113,7 @@ export function IssueListPane({
   return (
     <>
       <header className="shrink-0 border-b">
-        <div className="flex h-12 items-center gap-2 pr-2 pl-4">
+        <div className="flex min-h-12 items-center gap-2 py-1.5 pr-2 pl-4">
           <h1 className="min-w-0 truncate font-medium">{label}</h1>
           {list && (
             <StateSwitch
@@ -109,6 +123,12 @@ export function IssueListPane({
               }}
             />
           )}
+          <LabelFilterChips
+            labels={labelFilter}
+            onRemove={(name) => {
+              void window.verdandi.removeLabelFromFilter(scope, name);
+            }}
+          />
           <span className="flex-1" />
           {list?.archived && (
             <span className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -189,6 +209,7 @@ export function IssueListPane({
                   key={row.node.issue.id}
                   row={row}
                   listState={list.state}
+                  matchedBy={labelFilter.length > 0 ? "labels" : undefined}
                   withRepository={repositoryChips}
                   selected={index === selected}
                   login={login}
@@ -196,26 +217,36 @@ export function IssueListPane({
                   onSelect={select}
                   onToggle={toggle}
                   onRetry={retry}
+                  onFilterLabel={filterLabel}
                 />
               ))}
-              <p
-                role={failure ? "alert" : "status"}
-                className={cn(
-                  "px-4 py-3 whitespace-pre-line text-muted-foreground",
-                  failure && "text-warning",
-                )}
-              >
-                {listStatus(list.loading, list.state)}
-                {failure && (
-                  <button
-                    type="button"
-                    onClick={retry}
-                    className="ml-2 underline underline-offset-2"
-                  >
-                    Retry
-                  </button>
-                )}
-              </p>
+              {labelFilter.length > 0 &&
+              "matches" in list.loading &&
+              list.loading.matches === 0 ? (
+                <NoLabelMatches
+                  status={listStatus(list.loading, list.state, labelFilter)}
+                  onClear={clearLabelFilter}
+                />
+              ) : (
+                <p
+                  role={failure ? "alert" : "status"}
+                  className={cn(
+                    "px-4 py-3 whitespace-pre-line text-muted-foreground",
+                    failure && "text-warning",
+                  )}
+                >
+                  {listStatus(list.loading, list.state, labelFilter)}
+                  {failure && (
+                    <button
+                      type="button"
+                      onClick={retry}
+                      className="ml-2 underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </p>
+              )}
             </>
           )
         )}
@@ -382,6 +413,7 @@ function useList(scope: Scope): IssueList | undefined {
         setList((shown) => ({
           scope,
           state: shown?.state ?? "open",
+          labelFilter: shown?.labelFilter ?? [],
           trees: [],
           loading: { status: "failed", problem: { kind: "error", message } },
           repositories: [],

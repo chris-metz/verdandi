@@ -266,6 +266,13 @@ describe("keys", () => {
   it("ignore other keys", () => {
     expect(press("x", 1)).toBeUndefined();
   });
+
+  it("clear the label filter with Esc, also once nothing matches", () => {
+    expect(press("Escape", 4)).toEqual({ kind: "clearLabelFilter" });
+    expect(press("Escape", undefined, [])).toEqual({
+      kind: "clearLabelFilter",
+    });
+  });
 });
 
 it("opens the selected issue in the app on Enter", () => {

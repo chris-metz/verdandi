@@ -2,6 +2,7 @@ import type {
   IssueList,
   IssueNode,
   IssueState,
+  Label,
   ListLoading,
   ListProgress,
   LoadingState,
@@ -21,6 +22,7 @@ import {
   type RepositoryIssues,
 } from "./issue-loader.ts";
 import type { Failure, IssueStore } from "./issue-store.ts";
+import { carriesEvery } from "./label-filter.ts";
 import {
   atOrAfter,
   fiveMinutesAgo,
@@ -54,7 +56,9 @@ import type { SettingsStorage } from "./settings/port.ts";
  * GitHub for anything: what it shows first, then what it would show below
  * collapsed issues, and, when it has grown old, all of it in the background.
  * A list left before it has loaded keeps what it has, marked interrupted
- * where it lacks something, until it shows again.
+ * where it lacks something, until it shows again. Each scope has a label
+ * filter for the session, which narrows its list in either state to what
+ * has been read.
  */
 export interface IssueLists {
   /** Updates lists when the startup count query learns repository availability. */
@@ -63,8 +67,8 @@ export interface IssueLists {
   settingsChanged(): Promise<void>;
   /**
    * Keeps a repository's lists, what was read of its issues, their
-   * expansion and its state, under its new address, as it was renamed or
-   * transferred.
+   * expansion, its state and its label filter, under its new address, as it
+   * was renamed or transferred.
    */
   renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
   /**
@@ -96,6 +100,14 @@ export interface IssueLists {
   setExpanded(scope: Scope, issueId: string, expanded: boolean): void;
   /** Expands or collapses every issue in an opened list, and pushes it. */
   setAllExpanded(scope: Scope, expanded: boolean): void;
+  /**
+   * Changes a scope's label filter, e.g. adding a label to it, and pushes its
+   * list if it has been opened.
+   */
+  changeLabelFilter(
+    scope: Scope,
+    apply: (labelFilter: Label[]) => Label[],
+  ): void;
 }
 
 export interface IssueListsOptions {
@@ -201,6 +213,8 @@ export function createIssueLists({
   const lists = new Map<string, ListState>();
   /** The state each scope shows its list in, by `scopeKey`, unless open. */
   const states = new Map<string, IssueState>();
+  /** Each scope's label filter, by `scopeKey`, unless it has none. */
+  const labelFilters = new Map<string, Label[]>();
   const loader = createIssueLoader({
     store,
     request,
@@ -226,6 +240,11 @@ export function createIssueLists({
   /** The state a scope shows its list in. */
   function stateOf(scope: Scope): IssueState {
     return states.get(scopeKey(scope)) ?? "open";
+  }
+
+  /** A scope's label filter, empty without one. */
+  function labelFilterOf(scope: Scope): Label[] {
+    return labelFilters.get(scopeKey(scope)) ?? [];
   }
 
   /**
@@ -345,9 +364,10 @@ export function createIssueLists({
     return buildForest({
       scope: list.scope,
       state: list.state,
-      matchIds: repositoriesOf(list).flatMap((repository) => [
+      scopeIds: repositoriesOf(list).flatMap((repository) => [
         ...(issuesOf(repository, list.state)?.issueIds ?? []),
       ]),
+      labelFilter: labelFilterOf(list.scope),
       lookup: (id) => {
         const issue = store.get(id);
         return issue && !repositoryStatus(issue.repository).unavailable
@@ -374,6 +394,7 @@ export function createIssueLists({
       return {
         scope,
         state,
+        labelFilter: labelFilterOf(scope),
         trees: [],
         loading: { status: "loading" },
         repositories: [],
@@ -409,6 +430,7 @@ export function createIssueLists({
     return {
       scope,
       state,
+      labelFilter: labelFilterOf(scope),
       ...(scope.kind === "repository" &&
       repositoryStatus(scope.repository).archived
         ? { archived: true as const }
@@ -637,14 +659,23 @@ export function createIssueLists({
       return { status: "failed", problem: firstFailure };
     }
     list.loaded = true;
+    const labelFilter = labelFilterOf(list.scope);
     let matches = 0;
+    let inScope = 0;
     let closedIssues = 0;
     let problem: Problem | undefined;
     // The list is as old as the oldest of what it shows.
     let updatedAt = Infinity;
     for (const load of loads) {
       if (!load || (!showsEarlierRead(load) && load.problem)) continue;
-      matches += load.issueIds.size;
+      inScope += load.issueIds.size;
+      if (labelFilter.length === 0) matches += load.issueIds.size;
+      else {
+        for (const id of load.issueIds) {
+          const labels = store.get(id)?.labels;
+          if (labels && carriesEvery(labels, labelFilter)) matches++;
+        }
+      }
       closedIssues += load.closedIssueCount ?? 0;
       updatedAt = Math.min(updatedAt, load.readAt?.time ?? Infinity);
       problem ??= load.problem;
@@ -660,8 +691,9 @@ export function createIssueLists({
     const loaded = {
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : list.checkedAt,
       matches,
+      inScope,
       closedNotListed:
-        list.state === "open"
+        list.state === "open" && labelFilter.length === 0
           ? Math.max(0, closedIssues - forest.closedShown)
           : 0,
     };
@@ -749,6 +781,7 @@ export function createIssueLists({
         ) {
           lists.delete(key);
           states.delete(scopeKey(scope));
+          labelFilters.delete(scopeKey(scope));
           continue;
         }
         list.tracked = value.repositories;
@@ -760,11 +793,8 @@ export function createIssueLists({
       loader.renameRepository(from, to);
       const old: Scope = { kind: "repository", repository: from };
       const scope: Scope = { kind: "repository", repository: { ...to } };
-      const shown = states.get(scopeKey(old));
-      if (shown && !states.has(scopeKey(scope))) {
-        states.delete(scopeKey(old));
-        states.set(scopeKey(scope), shown);
-      }
+      moveScope(states, old, scope);
+      moveScope(labelFilters, old, scope);
       for (const state of issueStates) {
         const list = lists.get(listKey(old, state));
         if (!list || lists.has(listKey(scope, state))) continue;
@@ -807,6 +837,14 @@ export function createIssueLists({
     setAllExpanded(scope, expanded) {
       change(scope, (list) => {
         list.expansion = { expanded, except: new Set() };
+        list.background = false;
+      });
+    },
+    changeLabelFilter(scope, apply) {
+      const labelFilter = apply(labelFilterOf(scope));
+      if (labelFilter.length === 0) labelFilters.delete(scopeKey(scope));
+      else labelFilters.set(scopeKey(scope), labelFilter);
+      change(scope, (list) => {
         list.background = false;
       });
     },
@@ -860,6 +898,17 @@ function scopeKey(scope: Scope): string {
   return scope.kind === "all"
     ? "all"
     : `repository:${repositoryKey(scope.repository)}`;
+}
+
+/**
+ * Keeps what a map holds for one scope under another, unless it holds
+ * something for that one already.
+ */
+function moveScope<T>(byScope: Map<string, T>, from: Scope, to: Scope) {
+  const kept = byScope.get(scopeKey(from));
+  if (kept === undefined || byScope.has(scopeKey(to))) return;
+  byScope.delete(scopeKey(from));
+  byScope.set(scopeKey(to), kept);
 }
 
 /** Tells a scope's open and closed lists apart. */

@@ -116,11 +116,12 @@ const commands = {
    */
   async issue(reference) {
     const shown = reference.includes("#") ? reference : `#${reference}`;
-    const row = window()
+    // Its number, as the middle of a row may be a label, which filters.
+    await window()
       .locator('[role="treeitem"]')
-      .filter({ has: window().getByText(shown, { exact: true }) })
-      .first();
-    await row.click({ timeout });
+      .getByText(shown, { exact: true })
+      .first()
+      .click({ timeout });
     await window().waitForSelector('section[aria-label="Description"]', {
       timeout,
     });

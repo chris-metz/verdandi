@@ -30,6 +30,7 @@ function allLoading(loaded: number, total: number): IssueList {
   return {
     scope: { kind: "all" },
     state: "open",
+    labelFilter: [],
     trees: [],
     loading: { status: "loading" },
     repositories: Array.from({ length: total }, (_, index) => ({
@@ -49,6 +50,7 @@ function repositoryList(loading: ListLoading): IssueList {
       repository: { owner: "acme", name: "api" },
     },
     state: "open",
+    labelFilter: [],
     trees: [],
     loading,
     repositories: [],
@@ -81,6 +83,7 @@ describe("a list's header", () => {
     const loaded = {
       updatedAt: now - 3 * minute,
       matches: 2,
+      inScope: 2,
       closedNotListed: 0,
     };
     expect(
@@ -108,6 +111,7 @@ describe("a list's header", () => {
           updatedAt: now - 30 * minute,
           problem: cannotReachGitHub,
           matches: 2,
+          inScope: 2,
           closedNotListed: 0,
         }),
         now,
@@ -128,6 +132,7 @@ describe("a list's header", () => {
           updatedAt: new Date(2026, 8, 26, 9, 5).getTime(),
           problem: cannotReachGitHub,
           matches: 2,
+          inScope: 2,
           closedNotListed: 0,
         }),
         now,
@@ -142,6 +147,7 @@ describe("a list's header", () => {
         status: "current",
         updatedAt: now - 3 * minute,
         matches: 2,
+        inScope: 2,
         closedNotListed: 0,
       },
       repositories: [
@@ -396,8 +402,10 @@ describe("a view's freshness", () => {
   ): ViewList {
     return {
       view: { id: "v", name: "V", query: "is:open" },
+      labelFilter: [],
       trees,
       matchesShown: trees.length,
+      inScope: trees.length,
       readingContext,
       matchCount: trees.length,
       pullRequests: 0,

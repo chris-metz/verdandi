@@ -1,4 +1,5 @@
 import type {
+  Label,
   SavedView,
   SearchProblem,
   ViewList,
@@ -17,6 +18,8 @@ import { cn } from "@/lib/utils";
 import { viewFreshness } from "./freshness";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow, MissingParentRow } from "./IssueRow";
+import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
+import { labelFilterStatus } from "./list-status";
 import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
@@ -35,6 +38,10 @@ import { matchesLabel, viewStrips, type ViewStrip } from "./view-screen";
  * Strips under the header say what the matches leave out: more than the
  * 1,000 GitHub returns, or what GitHub did not return. A search GitHub
  * failed says why in place of the matches, with **Edit view**.
+ *
+ * Chips after its name show the labels of its label filter, which a label
+ * clicked in a row adds to and Esc clears; a line under the matches then
+ * counts them among the issues the search returned.
  */
 export function ViewPane({
   view,
@@ -59,6 +66,10 @@ export function ViewPane({
   );
   const list = useViewList(view);
   const trees = useMemo(() => list?.trees ?? [], [list]);
+  const labelFilter = list?.labelFilter ?? [];
+  const clearLabelFilter = useCallback(() => {
+    void window.verdandi.clearLabelFilter(screen);
+  }, [screen]);
   const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
     {
       scope,
@@ -72,6 +83,7 @@ export function ViewPane({
       onSetAllExpanded: (expanded) => {
         void window.verdandi.setAllExpanded(screen, expanded);
       },
+      onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
     },
   );
   const toggle = useCallback(
@@ -83,14 +95,30 @@ export function ViewPane({
   const retry = useCallback(() => {
     void window.verdandi.retry(screen);
   }, [screen]);
+  const filterLabel = useCallback(
+    (label: Label) => {
+      void window.verdandi.addLabelToFilter(screen, label);
+    },
+    [screen],
+  );
 
   const failure =
     list?.loading.status === "failed" ? list.loading.problem : undefined;
+  const filterStatus = labelFilterStatus(
+    { matches: list?.matchesShown ?? 0, inScope: list?.inScope ?? 0 },
+    labelFilter,
+  );
   return (
     <>
       <header className="shrink-0 border-b">
-        <div className="flex h-12 items-center gap-2 pr-2 pl-4">
+        <div className="flex min-h-12 items-center gap-2 py-1.5 pr-2 pl-4">
           <h1 className="min-w-0 shrink truncate font-medium">{view.name}</h1>
+          <LabelFilterChips
+            labels={labelFilter}
+            onRemove={(name) => {
+              void window.verdandi.removeLabelFromFilter(screen, name);
+            }}
+          />
           <button
             type="button"
             title="Edit view (E)"
@@ -106,7 +134,7 @@ export function ViewPane({
                   matchCount: list.matchCount,
                   pullRequests: list.pullRequests,
                 },
-                list.matchesShown,
+                list.inScope,
               )}
             </span>
           )}
@@ -181,6 +209,9 @@ export function ViewPane({
                   )}
                   <IssueRow
                     row={row}
+                    matchedBy={
+                      labelFilter.length > 0 ? "search and labels" : "search"
+                    }
                     withRepository
                     selected={index === selected}
                     login={login}
@@ -188,10 +219,24 @@ export function ViewPane({
                     onSelect={select}
                     onToggle={toggle}
                     onRetry={retry}
+                    onFilterLabel={filterLabel}
                   />
                 </Fragment>
               ))}
-              {list.loading.status !== "loading" && rows.length === 0 && (
+              {labelFilter.length > 0 &&
+                list.loading.status !== "loading" &&
+                list.inScope > 0 &&
+                (rows.length === 0 ? (
+                  <NoLabelMatches
+                    status={filterStatus}
+                    onClear={clearLabelFilter}
+                  />
+                ) : (
+                  <p role="status" className="px-4 py-3 text-muted-foreground">
+                    {filterStatus}
+                  </p>
+                ))}
+              {list.loading.status !== "loading" && list.inScope === 0 && (
                 <BodyState title="No matching issues" role="status">
                   <p>GitHub found nothing for this search.</p>
                   <ul className="list-disc space-y-1 pl-5">
@@ -380,8 +425,10 @@ function useViewList(view: SavedView): ViewList | undefined {
       if (current) {
         setList({
           view,
+          labelFilter: [],
           trees: [],
           matchesShown: 0,
+          inScope: 0,
           readingContext: false,
           matchCount: undefined,
           pullRequests: 0,
