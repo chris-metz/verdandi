@@ -27,6 +27,7 @@ import {
   Menu,
   nativeTheme,
   shell,
+  type MenuItemConstructorOptions,
   type OpenDialogOptions,
 } from "electron";
 import {
@@ -91,7 +92,7 @@ function start() {
   app.on("will-quit", () => {
     core.dispose();
   });
-  let opening: Promise<void> | undefined;
+  let opening: Promise<BrowserWindow> | undefined;
   function openWindow() {
     opening ??= createWindow(core, windowBackground(config), () => {
       // A close delayed for its state write also delayed app.quit on macOS.
@@ -111,6 +112,7 @@ function start() {
   });
   ipcMain.handle(ipcChannels.showSettingsFolder, showSettingsFolder);
   ipcMain.handle(ipcChannels.showConfigFile, showConfigFile);
+  ipcMain.handle(ipcChannels.openConfigFile, openConfigFile);
   // The renderer's one way to open a link, e.g. `o` on an issue.
   ipcMain.on(ipcChannels.openExternal, (_event, url: unknown) => {
     if (typeof url === "string") openExternal(url);
@@ -128,14 +130,41 @@ function start() {
     if (process.platform === "darwin" && !app.isPackaged) {
       app.dock?.setIcon(icon);
     }
+    const settings: MenuItemConstructorOptions = {
+      label: "Settings…",
+      accelerator: "CmdOrCtrl+,",
+      click: () => {
+        void openSettings();
+      },
+    };
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
         ...(process.platform === "darwin"
-          ? [{ role: "appMenu" as const }]
+          ? [
+              {
+                label: app.name,
+                submenu: [
+                  { role: "about" },
+                  { type: "separator" },
+                  settings,
+                  { type: "separator" },
+                  { role: "services" },
+                  { type: "separator" },
+                  { role: "hide" },
+                  { role: "hideOthers" },
+                  { role: "unhide" },
+                  { type: "separator" },
+                  { role: "quit" },
+                ],
+              } satisfies MenuItemConstructorOptions,
+            ]
           : []),
         {
           label: "File",
           submenu: [
+            ...(process.platform === "darwin"
+              ? []
+              : [settings, { type: "separator" as const }]),
             {
               label: "Show Settings File",
               click: () => {
@@ -200,6 +229,33 @@ function start() {
         }
       });
     }
+  }
+
+  /**
+   * Opens the settings dialog in the window, opening one first if there is
+   * none, e.g. on macOS once the last was closed.
+   */
+  async function openSettings() {
+    const window =
+      BrowserWindow.getFocusedWindow() ??
+      BrowserWindow.getAllWindows()[0] ??
+      (await openWindow());
+    const send = () => {
+      window.webContents.send(ipcChannels.openSettings);
+    };
+    if (window.webContents.isLoading())
+      window.webContents.once("did-finish-load", send);
+    else send();
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  }
+
+  /** Opens config.toml in the default editor for it. */
+  async function openConfigFile() {
+    const { file, status } = await core.getConfig();
+    if (status === "missing") throw new Error("There is no config.toml yet.");
+    const error = await shell.openPath(file);
+    if (error) throw new Error(error);
   }
 
   /**
@@ -336,6 +392,7 @@ async function createWindow(
   const devServer = process.env.ELECTRON_RENDERER_URL;
   if (devServer) void window.loadURL(devServer);
   else void window.loadFile(join(__dirname, "../renderer/index.html"));
+  return window;
 }
 
 /** Opens a link in the browser, but only an `https://` one. */

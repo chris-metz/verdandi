@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -35,6 +35,29 @@ it("watches for its folder without creating it, and sees the file once it is mad
     });
   } finally {
     stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("creates its folder with the first change", async () => {
+  const root = await mkdtemp(join(tmpdir(), "verdandi-config-folder-"));
+  const host = {
+    platform: process.platform,
+    env: {
+      XDG_CONFIG_HOME: join(root, "config"),
+      APPDATA: join(root, "roaming"),
+    },
+    homedir: root,
+  };
+  const storage = createConfigFile(host, testThemes);
+  try {
+    expect(await storage.change({ lightTheme: "github-light" })).toEqual({
+      ok: true,
+    });
+    expect(
+      await readFile(join(configDirectory(host), "config.toml"), "utf8"),
+    ).toBe('light_theme = "github-light"\n');
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

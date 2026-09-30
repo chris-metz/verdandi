@@ -1,6 +1,5 @@
-import type { ConfigState } from "@verdandi/core/contract";
-import { useEffect, useState } from "react";
-import { followConfig } from "./config";
+import { useState } from "react";
+import { useConfig } from "./config";
 
 /**
  * What in `config.toml` Verdandi cannot use, and what it uses instead, until
@@ -36,11 +35,4 @@ export function ConfigProblems() {
       )}
     </div>
   );
-}
-
-/** `config.toml` as the core last read or pushed it. */
-function useConfig(): ConfigState | undefined {
-  const [state, setState] = useState<ConfigState>();
-  useEffect(() => followConfig(window.verdandi, setState).stop, []);
-  return state;
 }

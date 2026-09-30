@@ -19,6 +19,10 @@ export const ipcChannels = {
   loadImage: "desktop:load-image",
   showSettingsFolder: "desktop:show-settings-folder",
   showConfigFile: "desktop:show-config-file",
+  /** Renderer → main: `()` to open config.toml in the default editor. */
+  openConfigFile: "desktop:open-config-file",
+  /** Main → renderer: `()` from the menu, to open the settings dialog. */
+  openSettings: "desktop:open-settings",
 } as const;
 
 /**
@@ -57,6 +61,14 @@ export interface DesktopApi {
    * be, while there is no file.
    */
   showConfigFile: () => Promise<void>;
+  /** Opens config.toml in the default editor for it, if there is a file. */
+  openConfigFile: () => Promise<void>;
+  /**
+   * Calls `listener` whenever the menu's Settings… asks to open the settings
+   * dialog, until the returned function is called. A request made before
+   * there was a listener goes to the first one.
+   */
+  onOpenSettings: (listener: () => void) => () => void;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**

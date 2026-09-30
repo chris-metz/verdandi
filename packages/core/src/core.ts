@@ -684,6 +684,11 @@ export function createCore({
     getConfig() {
       return config.read();
     },
+    async changeConfig(change) {
+      const result = await config.change(change);
+      if (result.ok) events.emit("configChanged", await config.read());
+      return result;
+    },
     checkSetupAgain() {
       return setup.checkAgain();
     },

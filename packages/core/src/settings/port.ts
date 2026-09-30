@@ -4,6 +4,8 @@ import type {
   SavedView,
   SidebarEntryKey,
   SidebarDestination,
+  Config,
+  ConfigChangeResult,
   ConfigState,
   SettingsChangeResult,
   SettingsStatus,
@@ -148,6 +150,13 @@ export interface ConfigStorage {
    * replacing it are seen too.
    */
   watch(changed: () => void): () => void;
+  /**
+   * Sets each value given under its key in the file as it is now, changing
+   * nothing else in it, and writes it whole. Without a file, it creates the
+   * file and its folder. It writes nothing while the file cannot be read as
+   * TOML, nor a value that cannot be used.
+   */
+  change(change: Partial<Config>): Promise<ConfigChangeResult>;
 }
 
 /**

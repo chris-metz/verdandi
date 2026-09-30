@@ -9,6 +9,7 @@ import type {
 } from "@verdandi/core/contract";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useConfig } from "./config";
 import { navigateIssues } from "./issue-navigation";
 import { MainArea } from "./MainArea";
 import { Notices } from "./Notices";
@@ -28,6 +29,7 @@ import {
   scopeLabel,
   type SidebarScope as Scope,
 } from "./scope";
+import { SettingsDialog } from "./SettingsDialog";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder, followSelection } from "./sidebar-entries";
@@ -86,8 +88,13 @@ export function App() {
   const renamed = useRef(new Map<string, RepositoryAddress>());
   /** The view dialog, open for a new view, or to edit or duplicate a view. */
   const [viewDialog, setViewDialog] = useState<ViewDialogPurpose>();
+  const config = useConfig();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const dialogOpen =
-    picking || removing !== undefined || viewDialog !== undefined;
+    picking ||
+    removing !== undefined ||
+    viewDialog !== undefined ||
+    settingsOpen;
   const login =
     setup?.status === "ready" && setup.account.status === "known"
       ? setup.account.account.login
@@ -112,10 +119,15 @@ export function App() {
     if (!blocked) setPicking(true);
   }
 
+  /** Gives the pane that had the keyboard it again, as a dialog closes. */
+  function refocusPane() {
+    focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+  }
+
   /** Closes the picker, giving the pane that had the keyboard it again. */
   function closePicker() {
     setPicking(false);
-    focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+    refocusPane();
   }
 
   /** Asks to confirm removing a repository or view, if settings are writable. */
@@ -191,7 +203,23 @@ export function App() {
   /** Closes the view dialog, giving the pane that had the keyboard it again. */
   function closeViewDialog() {
     setViewDialog(undefined);
-    focusPane((focused === "sidebar" ? sidebarPane : mainPane).current);
+    refocusPane();
+  }
+
+  // Settings… in the menu opens the settings dialog, unless another dialog
+  // or the setup blocker is up.
+  useEffect(
+    () =>
+      window.desktop.onOpenSettings(() => {
+        if (!blocked && !dialogOpen) setSettingsOpen(true);
+      }),
+    [blocked, dialogOpen],
+  );
+
+  /** Closes the settings, giving the pane that had the keyboard it again. */
+  function closeSettings() {
+    setSettingsOpen(false);
+    refocusPane();
   }
 
   /** Shows a view just saved, with its list in front of any issue page. */
@@ -554,6 +582,9 @@ export function App() {
           }}
           onClose={closeViewDialog}
         />
+      )}
+      {settingsOpen && config && (
+        <SettingsDialog config={config} onClose={closeSettings} />
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices onOpenView={openNoticeView} />

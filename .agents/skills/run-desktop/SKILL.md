@@ -31,6 +31,7 @@ It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub
 | `entry <owner/name \| All>`           | Selects a sidebar entry                                                                                |
 | `issue <number \| owner/name#number>` | Opens an issue from the list shown, and waits until its page has read the issue                        |
 | `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                             |
+| `menu <label>`                        | Chooses an application menu item by its label, e.g. `Settings…`; key presses never reach the menu      |
 | `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                 |
 | `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                              |
 | `loaded`                              | Waits until the screen shown has loaded or failed, and prints its header's status                      |
@@ -63,6 +64,8 @@ EOF
 ```
 
 `theme` switches the appearance as the operating system would, overriding the file's until it changes again.
+
+The settings dialog opens with `menu Settings…`; its tiles and the appearance control are `[role="radio"]` in `[role="radiogroup"]`.
 
 ## Gotchas
 

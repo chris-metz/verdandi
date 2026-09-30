@@ -1,15 +1,20 @@
 import {
+  chmod,
+  lstat,
   mkdir,
   mkdtemp,
+  readFile,
   readdir,
   rename,
   rm,
+  stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import type { ConfigState } from "./contract.ts";
+import type { Appearance, ConfigState } from "./contract.ts";
 import { createCore } from "./core.ts";
 import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
@@ -50,6 +55,7 @@ afterAll(async () => {
 });
 const file = () => join(home, "config.toml");
 const write = (text: string) => writeFile(file(), text);
+const read = () => readFile(file(), "utf8");
 
 it("uses every default without a file, and does not create it", async () => {
   expect(await core.getConfig()).toEqual({
@@ -301,4 +307,184 @@ it("pushes each change to the file: created, fixed, replaced and deleted", async
       status: "missing",
       problems: [],
     });
+});
+
+it("writes a change into the file, keeping everything else in it as it was", async () => {
+  await write(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"   # at night too',
+      "",
+      "# Themes",
+      "light_theme = 'github-light'",
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\r\n"),
+  );
+  expect(await core.changeConfig({ appearance: "light" })).toEqual({
+    ok: true,
+  });
+  expect(await read()).toBe(
+    [
+      "# How Verdandi looks",
+      'appearance = "light"   # at night too',
+      "",
+      "# Themes",
+      "light_theme = 'github-light'",
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\r\n"),
+  );
+});
+
+it("pushes the changed file at once", async () => {
+  await write('appearance = "dark"\n');
+  await core.getConfig();
+  const pushed: ConfigState[] = [];
+  const stop = core.on("configChanged", (state) => pushed.push(state));
+  try {
+    await core.changeConfig({ lightTheme: "github-light" });
+    expect(pushed.at(-1)).toEqual({
+      config: { ...defaults, appearance: "dark" },
+      file: file(),
+      status: "read",
+      problems: [],
+    });
+    await core.changeConfig({ darkTheme: "github-dark-dimmed" });
+    expect(pushed.at(-1)).toMatchObject({
+      config: { darkTheme: "github-dark-dimmed" },
+    });
+  } finally {
+    stop();
+  }
+});
+
+it("adds a key the file does not have with the others, before any table", async () => {
+  await write(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"',
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\n"),
+  );
+  expect(await core.changeConfig({ darkTheme: "github-dark-dimmed" })).toEqual({
+    ok: true,
+  });
+  expect(await read()).toBe(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"',
+      'dark_theme = "github-dark-dimmed"',
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\n"),
+  );
+});
+
+it("creates the file holding only the key changed", async () => {
+  expect(await core.changeConfig({ appearance: "dark" })).toEqual({
+    ok: true,
+  });
+  expect(await read()).toBe('appearance = "dark"\n');
+  expect(await core.getConfig()).toMatchObject({
+    config: { ...defaults, appearance: "dark" },
+    status: "read",
+  });
+});
+
+it("writes nothing while the file is not valid TOML", async () => {
+  const text = 'appearance = "dark"\ndark_theme = \n';
+  await write(text);
+  expect(await core.changeConfig({ darkTheme: "github-dark-dimmed" })).toEqual({
+    ok: false,
+    message:
+      "config.toml, line 2, is not valid TOML: Expected value, reached EOF. Nothing is written to it until it is fixed.",
+  });
+  expect(await read()).toBe(text);
+});
+
+it("writes nothing while the file cannot be read", async () => {
+  await mkdir(file());
+  expect(await core.changeConfig({ appearance: "dark" })).toEqual({
+    ok: false,
+    message: expect.stringMatching(
+      /^Cannot read config\.toml: .+\. Nothing is written to it until it can be\.$/,
+    ) as unknown,
+  });
+  expect(await readdir(file())).toEqual([]);
+});
+
+it("replaces a value that cannot be used", async () => {
+  await write('dark_theme = "solarized" # from another app\n');
+  expect(await core.changeConfig({ darkTheme: "github-dark-dimmed" })).toEqual({
+    ok: true,
+  });
+  expect(await read()).toBe(
+    'dark_theme = "github-dark-dimmed" # from another app\n',
+  );
+  expect(await core.getConfig()).toMatchObject({
+    config: { darkTheme: "github-dark-dimmed" },
+    problems: [],
+  });
+});
+
+it.each([
+  [
+    { darkTheme: "github-light" },
+    'dark_theme is "github-light", which is a light theme. Nothing was written.',
+  ],
+  [
+    { lightTheme: "solarized" },
+    'light_theme is "solarized", which is not a theme. Nothing was written.',
+  ],
+  [
+    { appearance: "auto" as Appearance },
+    'appearance is "auto", but can only be "system", "light" or "dark". Nothing was written.',
+  ],
+])("writes nothing it could not use itself: %j", async (change, message) => {
+  const text = 'appearance = "dark"\n';
+  await write(text);
+  expect(await core.changeConfig(change)).toEqual({ ok: false, message });
+  expect(await read()).toBe(text);
+});
+
+it("writes through a link to the file, which stays a link", async () => {
+  const dotfiles = join(home, "dotfiles");
+  await mkdir(dotfiles, { recursive: true });
+  const target = join(dotfiles, "verdandi.toml");
+  await writeFile(target, 'appearance = "dark"\n');
+  await symlink(target, file());
+  expect(await core.changeConfig({ appearance: "light" })).toEqual({
+    ok: true,
+  });
+  expect((await lstat(file())).isSymbolicLink()).toBe(true);
+  expect(await readFile(target, "utf8")).toBe('appearance = "light"\n');
+});
+
+it.skipIf(process.platform === "win32")(
+  "keeps who may read the file",
+  async () => {
+    await write('appearance = "dark"\n');
+    await chmod(file(), 0o600);
+    await core.changeConfig({ appearance: "light" });
+    expect((await stat(file())).mode & 0o777).toBe(0o600);
+  },
+);
+
+it("leaves the file alone when it has the value already", async () => {
+  await write('appearance = "dark"\n');
+  const before = await stat(file());
+  expect(await core.changeConfig({ appearance: "dark" })).toEqual({
+    ok: true,
+  });
+  expect((await stat(file())).ino).toBe(before.ino);
 });

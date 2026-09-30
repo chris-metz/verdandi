@@ -1,12 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SidebarDestination, SidebarEntryKey } from "../contract.ts";
 import { userDataDirectory, type HostEnvironment } from "../directories.ts";
@@ -26,6 +19,7 @@ import type {
   SettingsStorage,
 } from "./port.ts";
 import { watchFile } from "./watch-file.ts";
+import { renameOver, writeWhole } from "./write-whole.ts";
 
 /** Portable user data. A change always starts from the file as it is now. */
 export function createSettingsFile(
@@ -83,32 +77,12 @@ export function createSettingsFile(
     }
   }
 
-  /** Windows virus scanners and sync clients briefly hold files open. */
-  async function replace(from: string, to: string) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await renameFile(from, to);
-        return;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (attempt >= 4 || (code !== "EPERM" && code !== "EBUSY")) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt));
-      }
-    }
-  }
-
   async function writeDocument(document: Document) {
     await mkdir(folder, { recursive: true });
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, {
-        flag: "wx",
-        mode: 0o600,
-      });
-      await replace(temporary, file);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    await writeWhole(file, `${JSON.stringify(document, null, 2)}\n`, {
+      mode: 0o600,
+      rename: renameFile,
+    });
   }
 
   return {
@@ -189,9 +163,10 @@ export function createSettingsFile(
             }
           }
           const stamp = new Date().toISOString().replaceAll(":", "-");
-          await replace(
+          await renameOver(
             file,
             `${file}.broken-${stamp}-${randomUUID().slice(0, 8)}`,
+            renameFile,
           );
           await writeDocument({ version: 1, repositories: [], views: [] });
           lastValid = { repositories: [], views: [] };

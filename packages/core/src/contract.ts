@@ -276,6 +276,9 @@ export interface ConfigState {
   problems: ConfigProblem[];
 }
 
+/** Whether a change to `config.toml` was written, and why not. */
+export type ConfigChangeResult = { ok: true } | { ok: false; message: string };
+
 /** Something in `config.toml` Verdandi cannot use, and what it does instead. */
 export interface ConfigProblem {
   /** The key, when it is one key's value or an unknown key. */
@@ -1388,6 +1391,15 @@ export interface CoreRequests {
    * cannot use. Changes to the file are pushed as `configChanged`.
    */
   getConfig: () => Promise<ConfigState>;
+  /**
+   * Writes each value given to `config.toml` under its key, as the settings
+   * dialog changes one. Nothing else in the file changes: the user's
+   * comments, key order and formatting stay as they are, and a value that
+   * cannot be used is replaced. Without a file, it creates the file, and its
+   * folder, holding only these keys. While the file cannot be read as TOML,
+   * nothing is written. The new state is pushed as `configChanged` at once.
+   */
+  changeConfig: (change: Partial<Config>) => Promise<ConfigChangeResult>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -1472,6 +1484,7 @@ const requests: Record<keyof CoreRequests, true> = {
   removeView: true,
   openView: true,
   getConfig: true,
+  changeConfig: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,

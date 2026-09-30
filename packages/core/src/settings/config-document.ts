@@ -1,4 +1,9 @@
-import { parseDocument } from "@decimalturn/toml-patch";
+import {
+  parse,
+  parseDocument,
+  patch,
+  stringify,
+} from "@decimalturn/toml-patch";
 import type {
   Appearance,
   Config,
@@ -31,7 +36,8 @@ export function readConfig(
   text: string,
   catalogue: ThemeCatalogue,
 ): Pick<ConfigState, "config" | "status" | "problems"> {
-  const config = defaultConfig(catalogue);
+  const defaults = defaultConfig(catalogue);
+  const config = { ...defaults };
   let values: Record<string, unknown>;
   let lines: Map<string, number>;
   try {
@@ -39,14 +45,14 @@ export function readConfig(
     values = document.toJsObject as Record<string, unknown>;
     lines = keyLines(document.cst);
   } catch (error) {
-    const { line, reason } = syntaxError(error);
+    const { line, sentence } = syntaxError(error);
     return {
       config,
       status: "unreadable",
       problems: [
         {
           ...(line === undefined ? {} : { line }),
-          message: `${place(line)}${line === undefined ? "" : ","} is not valid TOML: ${reason}. Verdandi uses every default until it is fixed.`,
+          message: `${sentence} Verdandi uses every default until it is fixed.`,
         },
       ],
     };
@@ -61,44 +67,108 @@ export function readConfig(
         message: `${place(line)}: ${message}`,
       });
     };
-    const theme = (kind: "light" | "dark") => {
-      const instead = `Verdandi uses "${catalogue.defaults[kind]}" instead.`;
-      if (typeof value !== "string") {
-        problem(
-          `${key} is ${shown(value)}, but must be the ID of a ${kind} theme, in quotes. ${instead}`,
-        );
-        return undefined;
-      }
-      const found = catalogue.themes.find(({ id }) => id === value);
-      if (found?.kind === kind) return value;
+    const checked = checkValue(key, value, catalogue);
+    if (checked === undefined)
+      problem(`Verdandi does not know the key ${key}, and ignores it.`);
+    else if ("problem" in checked)
       problem(
-        `${key} is ${shown(value)}, which is ${found ? `a ${found.kind} theme` : "not a theme"}. ${instead}`,
+        `${checked.problem} Verdandi uses "${defaults[checked.field]}" instead.`,
       );
-      return undefined;
-    };
-    switch (key) {
-      case "appearance":
-        if (appearances.includes(value))
-          config.appearance = value as Appearance;
-        else
-          problem(
-            `appearance is ${shown(value)}, but can only be "system", "light" or "dark". Verdandi uses "${config.appearance}" instead.`,
-          );
-        break;
-      case "light_theme":
-        config.lightTheme = theme("light") ?? config.lightTheme;
-        break;
-      case "dark_theme":
-        config.darkTheme = theme("dark") ?? config.darkTheme;
-        break;
-      default:
-        problem(`Verdandi does not know the key ${key}, and ignores it.`);
-    }
+    else Object.assign(config, checked.use);
   }
   // A key's place in the object is not always its place in the file.
   const last = Number.MAX_SAFE_INTEGER;
   problems.sort((a, b) => (a.line ?? last) - (b.line ?? last));
   return { config, status: "read", problems };
+}
+
+/** Each setting's key in the file. */
+const fileKeys = {
+  appearance: "appearance",
+  lightTheme: "light_theme",
+  darkTheme: "dark_theme",
+} as const satisfies Record<keyof Config, string>;
+
+/**
+ * What Verdandi makes of a key in the file and its value: what it sets, or
+ * which setting cannot use it and why. A key it does not know sets nothing.
+ */
+function checkValue(
+  key: string,
+  value: unknown,
+  catalogue: ThemeCatalogue,
+):
+  | { use: Partial<Config> }
+  | { field: keyof Config; problem: string }
+  | undefined {
+  const theme = (field: "lightTheme" | "darkTheme") => {
+    const kind = field === "lightTheme" ? "light" : "dark";
+    if (typeof value !== "string")
+      return {
+        field,
+        problem: `${key} is ${shown(value)}, but must be the ID of a ${kind} theme, in quotes.`,
+      };
+    const found = catalogue.themes.find(({ id }) => id === value);
+    if (found?.kind === kind) return { use: { [field]: value } };
+    return {
+      field,
+      problem: `${key} is ${shown(value)}, which is ${found ? `a ${found.kind} theme` : "not a theme"}.`,
+    };
+  };
+  switch (key) {
+    case fileKeys.appearance:
+      return appearances.includes(value)
+        ? { use: { appearance: value as Appearance } }
+        : {
+            field: "appearance",
+            problem: `appearance is ${shown(value)}, but can only be "system", "light" or "dark".`,
+          };
+    case fileKeys.lightTheme:
+      return theme("lightTheme");
+    case fileKeys.darkTheme:
+      return theme("darkTheme");
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The text of `config.toml` with each value given set under its key, and
+ * nothing else in it changed: comments, key order and formatting stay as
+ * they are. Without a file, the text holds only these keys. Text that is
+ * not valid TOML is not changed, nor is any text for a value that cannot be
+ * used.
+ */
+export function changeConfigText(
+  text: string | undefined,
+  change: Partial<Config>,
+  catalogue: ThemeCatalogue,
+): { ok: true; text: string } | { ok: false; message: string } {
+  const updates: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(change) as [string, unknown][]) {
+    const key = (fileKeys as Record<string, string | undefined>)[field];
+    const checked =
+      key === undefined ? undefined : checkValue(key, value, catalogue);
+    if (checked === undefined)
+      return {
+        ok: false,
+        message: `Verdandi has no setting ${field}. Nothing was written.`,
+      };
+    if ("problem" in checked)
+      return { ok: false, message: `${checked.problem} Nothing was written.` };
+    updates[key as string] = value;
+  }
+  if (text === undefined) return { ok: true, text: stringify(updates) };
+  let values: Record<string, unknown>;
+  try {
+    values = parse(text) as Record<string, unknown>;
+  } catch (error) {
+    return {
+      ok: false,
+      message: `${syntaxError(error).sentence} Nothing is written to it until it is fixed.`,
+    };
+  }
+  return { ok: true, text: patch(text, { ...values, ...updates }) };
 }
 
 /** "config.toml, line 3", or only the file when the line is not known. */
@@ -141,12 +211,14 @@ interface SyntaxBlock {
 }
 
 /**
- * Where the parser stopped, and why. Its message quotes the line with a
- * caret, then gives the reason on the last line.
+ * Where the parser stopped, if it says, and a sentence saying why, e.g.
+ * "config.toml, line 2, is not valid TOML: Expected value, reached EOF."
+ * Its message quotes the line with a caret, then gives the reason on the
+ * last line.
  */
 function syntaxError(error: unknown): {
   line: number | undefined;
-  reason: string;
+  sentence: string;
 } {
   const text = error instanceof Error ? error.message : String(error);
   const line =
@@ -157,5 +229,8 @@ function syntaxError(error: unknown): {
       ? error.line
       : undefined;
   const reason = (text.trim().split("\n").at(-1) ?? text).replace(/\.$/, "");
-  return { line, reason };
+  return {
+    line,
+    sentence: `${place(line)}${line === undefined ? "" : ","} is not valid TOML: ${reason}.`,
+  };
 }

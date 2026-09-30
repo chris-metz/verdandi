@@ -140,6 +140,28 @@ const commands = {
     return `clicked "${text}"`;
   },
 
+  /**
+   * Chooses an item of the application menu by its label, e.g. Settings…,
+   * as a click on it would: key presses never reach native menus.
+   */
+  async menu(label) {
+    if (!app) throw new Error("launch first");
+    await app.evaluate(({ Menu }, label) => {
+      const find = (items) => {
+        for (const item of items) {
+          if (item.label === label) return item;
+          const found = item.submenu && find(item.submenu.items);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      const item = find(Menu.getApplicationMenu()?.items ?? []);
+      if (!item) throw new Error(`no menu item ${label}`);
+      item.click();
+    }, label);
+    return `chose ${label}`;
+  },
+
   /** Presses a key, e.g. Escape or r, where the keyboard is. */
   async press(key) {
     await window().keyboard.press(key);
@@ -333,7 +355,8 @@ const prompt = () => {
 };
 prompt();
 for await (const line of lines) {
-  const [name = "", ...rest] = line.trim().split(/\s+/);
+  // The rest of the line as written, e.g. the spaces in a config's text.
+  const [, name = "", rest = ""] = /^(\S*)\s*(.*)$/.exec(line.trim()) ?? [];
   const command = commands[name];
   if (name === "" || name.startsWith("//")) {
     prompt();
@@ -344,7 +367,7 @@ for await (const line of lines) {
     failed = true;
   } else {
     try {
-      console.log(await command(rest.join(" ")));
+      console.log(await command(rest));
     } catch (error) {
       failed = true;
       console.log(`ERROR ${name}: ${error.message.split("\n")[0]}`);

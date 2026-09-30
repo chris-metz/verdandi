@@ -1,4 +1,5 @@
 import type { ConfigState } from "@verdandi/core/contract";
+import { useEffect, useState } from "react";
 import type { RendererContract } from "../../shared/ipc";
 
 /**
@@ -30,4 +31,11 @@ export function followConfig(
       unsubscribe();
     },
   };
+}
+
+/** `config.toml` as the core last read or pushed it. */
+export function useConfig(): ConfigState | undefined {
+  const [state, setState] = useState<ConfigState>();
+  useEffect(() => followConfig(window.verdandi, setState).stop, []);
+  return state;
 }

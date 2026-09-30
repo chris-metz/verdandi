@@ -32,12 +32,34 @@ const api = {
 
 contextBridge.exposeInMainWorld("verdandi", api);
 
+// Settings… may be chosen before the page listens, e.g. as the menu opens
+// a window for it.
+let settingsListener: (() => void) | undefined;
+let settingsRequested = false;
+ipcRenderer.on(ipcChannels.openSettings, () => {
+  if (settingsListener) settingsListener();
+  else settingsRequested = true;
+});
+
 const desktop: DesktopApi = {
   showSettingsFolder() {
     return ipcRenderer.invoke(ipcChannels.showSettingsFolder) as Promise<void>;
   },
   showConfigFile() {
     return ipcRenderer.invoke(ipcChannels.showConfigFile) as Promise<void>;
+  },
+  openConfigFile() {
+    return ipcRenderer.invoke(ipcChannels.openConfigFile) as Promise<void>;
+  },
+  onOpenSettings(listener) {
+    settingsListener = listener;
+    if (settingsRequested) {
+      settingsRequested = false;
+      listener();
+    }
+    return () => {
+      if (settingsListener === listener) settingsListener = undefined;
+    };
   },
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
