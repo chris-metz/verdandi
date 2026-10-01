@@ -72,9 +72,8 @@ private struct StateCommands: View {
         isOn: Binding(
           get: { list?.state == state },
           set: { isOn in
-            guard isOn, let item, let list, list.state != state else { return }
-            list.state = state
-            Task { await model.lists.refresh(item) }
+            guard isOn, let list, list.state != state else { return }
+            list.setState(state)
           })
       )
       .disabled(list == nil)
