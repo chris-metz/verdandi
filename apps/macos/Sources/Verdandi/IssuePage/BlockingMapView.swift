@@ -28,7 +28,7 @@ struct BlockingMapBand: View {
     let layout = BlockingMapLayout(map, cardsPerColumn: 6, expanded: page.expandedColumns)
     let cursor = layout.contains(page.mapCursor) ? page.mapCursor : .issue(page.issueID)
     VStack(alignment: .leading, spacing: 4) {
-      header
+      header(hasCycle: layout.edges.contains { $0.cycle })
         .issuePageColumn()
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {
@@ -86,11 +86,20 @@ struct BlockingMapBand: View {
     .accessibilityLabel("Blocking map")
   }
 
-  private var header: some View {
+  private func header(hasCycle: Bool) -> some View {
     HStack(spacing: 8) {
       IssuePageSectionTitle("Blocking", systemImage: "point.3.connected.trianglepath.dotted")
       if page.mapPhase.isLoading {
         ProgressView().controlSize(.mini)
+      }
+      if hasCycle {
+        Label("Cycle", systemImage: "arrow.trianglehead.2.clockwise")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.orange)
+          .padding(.horizontal, 7)
+          .padding(.vertical, 2)
+          .background(.orange.opacity(0.14), in: Capsule())
+          .help("Some of these issues block each other in a circle: the dotted arrows")
       }
       Spacer()
       if !page.blockingFailures.isEmpty, !page.mapPhase.isLoading {
