@@ -9,11 +9,11 @@ A keyboard-first desktop client for GitHub issues across many repositories, focu
   <img src="docs/screenshots/issue-dark.png" width="49%" alt="The same issue page, dark">
 </p>
 
-## Two apps
+## Two apps, for now
 
-Verdandi comes as two apps, each complete in its own folder:
+Verdandi is a personal project, shared in the open. For now it comes as two apps while we find out which one to go on with; either may stand still or be dropped. There are no releases, support or roadmap to rely on.
 
 - [`electron/`](electron/): for macOS, Windows and Linux, in TypeScript and Electron. See [`electron/README.md`](electron/README.md).
-- [`macos/`](macos/): an experimental native macOS app in SwiftUI, with Liquid Glass and without Node. See [`macos/README.md`](macos/README.md).
+- [`macos/`](macos/): a native macOS app in SwiftUI, with Liquid Glass and without Node. See [`macos/README.md`](macos/README.md).
 
 Both read GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`). Both read and write the same `settings.json`, so they show the same tracked repositories and views; run one of them at a time.
