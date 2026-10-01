@@ -49,11 +49,12 @@ struct IssuePagesStoreTests {
   }
 
   /// Reading the relationships of a step's cards crashed the app now and
-  /// then, as a child task of the task group finished, and read wrong ones
-  /// before: a bug of Swift 6.4, which a child that awaited inside the
-  /// tuple it returned set off. It shows in release builds only:
-  /// `swift test -c release -Xswiftc -enable-testing` failed this test
-  /// every time before the fix.
+  /// then, and put them under the wrong cards before. Each child task of
+  /// the task group returned its card's ID in a tuple with an await inside
+  /// it, and optimized builds never wrote the ID
+  /// (https://github.com/swiftlang/swift/issues/92698). It shows in
+  /// release builds only: `swift test -c release -Xswiftc -enable-testing`
+  /// failed this test every time before the fix.
   @Test func readsManyMapsOneAfterAnother() async {
     let github = github()
     for _ in 0..<2000 {

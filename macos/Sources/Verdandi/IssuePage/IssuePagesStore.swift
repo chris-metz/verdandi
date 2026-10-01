@@ -290,8 +290,9 @@ final class IssuePagesStore {
       for id in ids {
         group.addTask {
           do throws(GitHubError) {
-            // Awaiting inside the tuple returned crashed the app as the
-            // task finished, a bug of Swift 6.4: read the page first.
+            // Optimized builds never write the ID into a tuple returned with
+            // an await inside it, which crashed the app: read the page
+            // first (https://github.com/swiftlang/swift/issues/92698).
             let read = try await client.relationships(of: id, side: side, after: nil, first: 50)
             return (id, .success(read))
           } catch {
