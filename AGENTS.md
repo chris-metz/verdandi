@@ -2,6 +2,8 @@
 
 `electron/` holds the Electron app and the TypeScript core, a pnpm workspace whose commands run in `electron/`. `macos/` holds a native macOS app, a Swift package with its own Swift core. They are independent: a change to one app stays in that app, unless the user asks for both. They share only the format of `settings.json`.
 
+Every task names its app: the issue's `electron` or `macos` label (both labels: both apps), or the user's words. When neither names one, ask which app before changing code. A new issue gets the label of its app, or none while that is open.
+
 ## Git workflow
 
 For now, commit and push directly to `main`. Before every push to `main`, run the checks of each app the commits touch, and push only when they pass:
