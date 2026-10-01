@@ -67,7 +67,7 @@ Whether an issue is open or closed. A tracked repository and All show one state 
 _Avoid_: status
 
 **Label filter**:
-The labels the user has picked from a list to narrow it to issues that carry all of them. Each sidebar entry has its own, and it lasts until the user removes it or quits.
+The labels the user has picked from a list to narrow it to issues that carry all of them. Each sidebar entry has its own, which lasts until the user removes it or quits, though the macOS app keeps the one of the entry chosen last for its next launch.
 _Avoid_: tag, label search
 
 **Match**:
