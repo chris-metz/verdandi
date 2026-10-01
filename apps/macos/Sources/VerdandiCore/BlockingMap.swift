@@ -165,7 +165,7 @@ public struct BlockingMap: Hashable, Sendable {
       let unread = outermost.reduce(0) { $0 + $1.unread }
       for card in outermost where card.unread > 0 {
         let (from, to) = side == .blocking ? (BlockingNode.issue(card.id), BlockingNode.further(side)) : (.further(side), .issue(card.id))
-        Self.add(Edge(from: from, to: to), to: &edges)
+        Self.add(Edge(from: from, to: to, closed: card.issue.state == .closed), to: &edges)
       }
       if folded > 0 || unread > 0 {
         further[side] = Further(folded: folded, unread: unread)

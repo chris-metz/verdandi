@@ -346,13 +346,13 @@ private struct MapCardView: View {
   }
 }
 
-/// A node standing for cards the map does not show.
+/// A node standing for cards the map does not show: a control on glass,
+/// which shows them.
 private struct MapPlaceholderView: View {
   var title: String
   var subtitle: String?
   var systemImage: String
   var hasCursor: Bool
-  @State private var hovering = false
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: MapMetrics.cornerRadius, style: .continuous)
@@ -365,13 +365,14 @@ private struct MapPlaceholderView: View {
       }
       Spacer(minLength: 0)
       Image(systemName: systemImage)
+        .fontWeight(.semibold)
         .foregroundStyle(.secondary)
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 9)
+    .padding(.horizontal, 14)
+    .padding(.vertical, 10)
     .frame(width: MapMetrics.cardWidth, alignment: .leading)
-    .background(shape.fill(hovering ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.fill.quaternary)))
-    .overlay(shape.strokeBorder(.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+    .contentShape(shape)
+    .glassEffect(.regular.interactive(), in: shape)
     .overlay {
       if hasCursor {
         RoundedRectangle(cornerRadius: MapMetrics.cornerRadius + 4, style: .continuous)
@@ -379,8 +380,6 @@ private struct MapPlaceholderView: View {
           .padding(-5)
       }
     }
-    .contentShape(shape)
-    .onHover { hovering = $0 }
   }
 }
 

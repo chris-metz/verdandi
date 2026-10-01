@@ -141,7 +141,16 @@ final class IssuePagesStore {
       page.detailsPhase = .failed(error)
       return
     }
-    await loadAncestry(page, client: client, again: again)
+    // The list's copy of the issue may have said it had no map.
+    if let issue = page.details?.issue, issue.totalBlockedBy + issue.totalBlocking > 0,
+      page.blockingLists.isEmpty, !page.mapPhase.isLoading
+    {
+      async let map: Void = loadMap(page, client: client, again: false)
+      await loadAncestry(page, client: client, again: again)
+      await map
+    } else {
+      await loadAncestry(page, client: client, again: again)
+    }
   }
 
   /// Reads the issue's parent issue, its parent, and so on up to the top,
@@ -152,11 +161,12 @@ final class IssuePagesStore {
       let known = ancestry(of: page.issueID).map(\.id)
       if !known.isEmpty { await model.issues.fetch(known, with: client, again: true) }
     }
-    // Each read reveals the next parent up; a chain is never this long.
-    for _ in 0..<12 {
-      guard let unread = ancestry(of: page.issueID).first(where: { model.issues[$0.id] == nil }),
-        model.issues.failures[unread.id] == nil
-      else { break }
+    // Each read reveals the next parent up, until one has none or cannot
+    // be read.
+    var tried: Set<String> = []
+    while let unread = ancestry(of: page.issueID).first(where: { model.issues[$0.id] == nil }),
+      tried.insert(unread.id).inserted
+    {
       await model.issues.fetch([unread.id], with: client)
     }
     let failure = ancestry(of: page.issueID).lazy.compactMap { self.model.issues.failures[$0.id] }.first
