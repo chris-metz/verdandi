@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "repositories": [
+    { "name": "chris-metz/verdandi" },
+    { "name": "chris-metz/dotfiles" },
+    { "name": "cli/cli" }
+  ],
+  "views": [
+    {
+      "id": "verdandi-ready",
+      "name": "Verdandi ready for agent",
+      "query": "repo:chris-metz/verdandi is:issue is:open label:ready-for-agent"
+    },
+    {
+      "id": "cli-bugs",
+      "name": "gh bugs",
+      "query": "repo:cli/cli is:issue is:open label:bug"
+    }
+  ]
+}
