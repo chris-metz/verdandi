@@ -34,6 +34,8 @@ struct AppCommands: Commands {
     CommandMenu("Go") {
       ReadyButton(model: model, title: "Go to Issue…") { model.sheet = .goToIssue }
         .keyboardShortcut("k")
+      BackButton(model: model)
+        .keyboardShortcut("[")
     }
 
     CommandGroup(replacing: .help) {
@@ -42,6 +44,16 @@ struct AppCommands: Commands {
         Link("Report an Issue…", destination: repository.appending(path: "issues/new"))
       }
     }
+  }
+}
+
+/// Back from an issue page to the page before it, or to the list.
+private struct BackButton: View {
+  var model: AppModel
+
+  var body: some View {
+    Button("Back") { model.goBack() }
+      .disabled(model.issuePath.isEmpty)
   }
 }
 

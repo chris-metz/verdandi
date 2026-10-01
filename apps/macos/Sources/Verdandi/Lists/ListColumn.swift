@@ -1,7 +1,7 @@
 import SwiftUI
 import VerdandiCore
 
-/// The middle column: the selected sidebar entry's list.
+/// The selected sidebar entry's list, below any issue pages opened from it.
 struct ListColumn: View {
   @Environment(AppModel.self) private var model
 

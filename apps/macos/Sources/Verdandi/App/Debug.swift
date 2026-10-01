@@ -8,7 +8,7 @@ import VerdandiCore
 /// - `VERDANDI_APPEARANCE`: `light` or `dark`, over the one chosen in
 ///   Settings, without changing it
 /// - `VERDANDI_SELECT`: `all`, `repo:owner/name` or `view:<id>`
-/// - `VERDANDI_ISSUE`: `owner/name#12`, the issue the detail column shows
+/// - `VERDANDI_ISSUE`: `owner/name#12`, the issue whose page opens over the list
 /// - `VERDANDI_SHEET`: `repository-picker`, `new-view` or `go-to-issue`
 /// - `VERDANDI_GO_TO`: what is typed in Go to Issue as it opens; with
 ///   `VERDANDI_GO_TO_SUBMIT=1`, as if Return was pressed

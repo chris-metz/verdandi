@@ -75,10 +75,19 @@ final class AppModel {
 
   // MARK: Navigation
 
-  /// The sidebar's selection.
-  var selection: SidebarItem? = .all
-  /// The issue the detail column shows.
+  /// The sidebar's selection. Choosing another entry shows its list, with
+  /// no issue page over it.
+  var selection: SidebarItem? = .all {
+    didSet {
+      if selection != oldValue { issuePath = [] }
+    }
+  }
+  /// The list's cursor: the issue its keys move between, and Return opens.
   var selectedIssueID: String?
+  /// The issue pages opened over the list, oldest first: the last one shows.
+  /// While it is empty, the list shows. Following an issue from a page adds
+  /// one; going back takes the last one away.
+  var issuePath: [String] = []
   /// The sheet over the window, if any.
   var sheet: AppSheet?
 
@@ -180,17 +189,29 @@ final class AppModel {
 
   // MARK: Navigation
 
-  /// Shows an issue in the detail column.
+  /// The issue whose page shows, if one does.
+  var shownIssueID: String? { issuePath.last }
+
+  /// Opens an issue's page over what shows now.
   func openIssue(_ id: String) {
-    selectedIssueID = id
+    if issuePath.last != id { issuePath.append(id) }
   }
 
-  /// Reads again what the window shows: the sidebar's counts, the list and
-  /// the issue page.
+  /// Goes back to what showed before the current issue page: the page
+  /// before it, or the list.
+  func goBack() {
+    if !issuePath.isEmpty { issuePath.removeLast() }
+  }
+
+  /// Reads again what the window shows: the sidebar's counts, and the issue
+  /// page or else the list.
   func refreshShown() async {
     async let summaries: Void = sidebar.refreshSummaries()
-    if let selection { await lists.refresh(selection) }
-    if let selectedIssueID { await pages.refresh(selectedIssueID) }
+    if let shownIssueID {
+      await pages.refresh(shownIssueID)
+    } else if let selection {
+      await lists.refresh(selection)
+    }
     await summaries
   }
 

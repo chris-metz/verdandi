@@ -2,13 +2,14 @@ import SwiftUI
 import VerdandiCore
 
 /// A sidebar entry's list: its matches, each under its parent issue, with
-/// the context issues needed to place them. Selecting a row opens its issue
-/// in the detail column.
+/// the context issues needed to place them. Clicking a row opens its issue's
+/// page over the list.
 ///
-/// Keys, while the list has focus: `j`/`k` and ↑/↓ move, ←/→ collapse and
-/// expand (← on a sub-issue goes to its parent issue), `e` expands or
-/// collapses everything, Esc clears the label filter, `r` refreshes, `s`
-/// switches between open and closed, `o` opens the issue on GitHub.
+/// Keys, while the list has focus: `j`/`k` and ↑/↓ move, Return opens the
+/// issue's page, ←/→ collapse and expand (← on a sub-issue goes to its
+/// parent issue), `e` expands or collapses everything, Esc clears the label
+/// filter, `r` refreshes, `s` switches between open and closed, `o` opens the
+/// issue on GitHub.
 struct IssueListView: View {
   @Environment(AppModel.self) private var model
   var item: SidebarItem
@@ -42,6 +43,11 @@ private struct IssueListContent: View {
       .onChange(of: model.selectedIssueID) { _, id in
         // Reveal the selection, wherever it was made: a key, the issue page.
         if let id { withAnimation(.smooth) { scroller.scrollTo(id) } }
+      }
+      .onChange(of: model.issuePath.isEmpty) { _, listShows in
+        // Back from the issue pages, the keyboard is where it was, on the
+        // row of the issue opened.
+        if listShows { focused = true }
       }
       .onChange(of: list.labelFilter) {
         // Keep the selection in sight as the list narrows or widens.
@@ -85,6 +91,10 @@ private struct IssueListContent: View {
     }
 
     switch press.key {
+    case .return:
+      guard let row else { return .ignored }
+      model.openIssue(row.id)
+      return .handled
     case .escape:
       guard !list.labelFilter.isEmpty else { return .ignored }
       withAnimation(.smooth) { list.clearLabelFilter() }
@@ -136,6 +146,7 @@ private struct IssueListContent: View {
 /// The rows of a forest: each issue, and below one with sub-issues a
 /// disclosure group of theirs.
 private struct ForestRows: View {
+  @Environment(AppModel.self) private var model
   var nodes: [ForestNode]
   var list: IssueListModel
 
@@ -156,8 +167,18 @@ private struct ForestRows: View {
   private func row(_ node: ForestNode) -> some View {
     var shown = node
     shown.subIssues = []
-    return IssueRow(node: shown, naming: list.naming, listState: list.isView ? nil : list.state, list: list)
-      .tag(node.id)
+    // The whole row opens the issue's page on a click; its chips, buttons
+    // of their own, take their clicks first.
+    return Button {
+      model.selectedIssueID = node.id
+      model.openIssue(node.id)
+    } label: {
+      IssueRow(node: shown, naming: list.naming, listState: list.isView ? nil : list.state, list: list)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .tag(node.id)
   }
 
   private func expansion(of node: ForestNode) -> Binding<Bool> {

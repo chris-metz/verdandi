@@ -14,7 +14,9 @@ import VerdandiCore
 ///   once the list has loaded
 /// - `VERDANDI_LIST_KEYS`: keys to press in the window once the list has
 ///   loaded, separated by spaces, e.g. `j j left e esc`, to try the keyboard
-///   where no other app may type into this one
+///   where no other app may type into this one. `delete` is ⌫, `wait` waits
+///   a second, and `click@x,y` clicks at a point of the window, from its top
+///   left corner.
 enum ListLaunchOptions {
   /// Whether they have been applied, which they are once.
   private static var applied = false
@@ -64,11 +66,19 @@ extension ListLaunchOptions {
     guard let keys = LaunchOptions.environment["VERDANDI_LIST_KEYS"] else { return }
     let named: [String: (String, UInt16)] = [
       "left": ("\u{F702}", 123), "right": ("\u{F703}", 124), "down": ("\u{F701}", 125),
-      "up": ("\u{F700}", 126), "esc": ("\u{1B}", 53), "return": ("\r", 36),
+      "up": ("\u{F700}", 126), "esc": ("\u{1B}", 53), "return": ("\r", 36), "delete": ("\u{7F}", 51),
     ]
-    let letters: [Character: UInt16] = ["j": 38, "k": 40, "e": 14, "r": 15, "s": 1, "o": 31]
+    let letters: [Character: UInt16] = ["j": 38, "k": 40, "e": 14, "r": 15, "s": 1, "o": 31, "[": 33]
     for key in keys.split(separator: " ").map(String.init) {
       try? await Task.sleep(for: .milliseconds(500))
+      if key == "wait" {
+        try? await Task.sleep(for: .seconds(1))
+        continue
+      }
+      if key.hasPrefix("click@") {
+        click(at: key.dropFirst(6))
+        continue
+      }
       guard let (characters, code) = named[key] ?? key.first.flatMap({ letters[$0] }).map({ (key, $0) }),
         let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible)
       else { continue }
@@ -82,6 +92,24 @@ extension ListLaunchOptions {
         window.sendEvent(event)
       }
     }
+  }
+}
+
+/// Clicks at `x,y`, in points from the window's top left corner.
+@MainActor
+private func click(at point: Substring) {
+  let parts = point.split(separator: ",").compactMap { Double($0) }
+  guard parts.count == 2, let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible) else { return }
+  let location = NSPoint(x: parts[0], y: window.frame.height - parts[1])
+  for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+    guard
+      let event = NSEvent.mouseEvent(
+        with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+    else { continue }
+    // Queued, not sent: a list tracks the mouse from its press until it is
+    // released, reading the release from the queue.
+    NSApp.postEvent(event, atStart: false)
   }
 }
 

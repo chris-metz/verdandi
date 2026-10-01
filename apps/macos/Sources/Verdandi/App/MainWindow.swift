@@ -1,8 +1,9 @@
 import SwiftUI
 import VerdandiCore
 
-/// The window: the setup screen until gh works, then sidebar, list and
-/// issue page side by side, with notices over both.
+/// The window: the setup screen until gh works, then the sidebar beside
+/// the list, with the issue pages opened over the list, and notices over
+/// both.
 struct MainWindow: View {
   @Environment(AppModel.self) private var model
   @Environment(\.openSettings) private var openSettings
@@ -42,7 +43,7 @@ struct MainWindow: View {
   }
 }
 
-/// Sidebar, list and issue page, with Go to Issue over them.
+/// The sidebar beside the main area, with Go to Issue over them.
 struct BrowserView: View {
   @Environment(AppModel.self) private var model
   @State private var columns = NavigationSplitViewVisibility.all
@@ -52,12 +53,8 @@ struct BrowserView: View {
     NavigationSplitView(columnVisibility: $columns) {
       SidebarView()
         .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
-
-    } content: {
-      ListColumn()
-        .navigationSplitViewColumnWidth(min: 360, ideal: 420, max: 640)
     } detail: {
-      DetailColumn()
+      MainArea()
     }
     .sheet(item: sheet) { sheet in
       switch sheet {

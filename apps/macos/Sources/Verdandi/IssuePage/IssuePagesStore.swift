@@ -69,16 +69,12 @@ final class IssuePageModel {
   }
 }
 
-/// The issue pages opened so far, and the detail column's history: each
-/// issue it showed, whether chosen in the list or followed from a page, so
-/// Back and Forward retrace them.
+/// The issue pages opened so far.
 @Observable
 final class IssuePagesStore {
   @ObservationIgnored unowned let model: AppModel
   /// Made as views ask for them, so not observed: each page is.
   @ObservationIgnored private(set) var pages: [String: IssuePageModel] = [:]
-  private(set) var history: [String] = []
-  private(set) var historyIndex = -1
 
   /// A page older than this is read again when it shows.
   static let freshness: TimeInterval = 5 * 60
@@ -324,33 +320,9 @@ final class IssuePagesStore {
 
   // MARK: Navigation
 
-  var canGoBack: Bool { historyIndex > 0 }
-  var canGoForward: Bool { historyIndex + 1 < history.count }
-
-  /// Shows an issue in the detail column.
+  /// Opens an issue's page over the one showing.
   func show(_ issueID: String) {
     model.openIssue(issueID)
-  }
-
-  /// Notes that the detail column shows an issue, however it came to, as
-  /// the next step of its history unless Back or Forward went there.
-  func didShow(_ issueID: String?) {
-    guard let issueID else { return }
-    if history.indices.contains(historyIndex), history[historyIndex] == issueID { return }
-    history = Array(history.prefix(historyIndex + 1)) + [issueID]
-    historyIndex = history.count - 1
-  }
-
-  func goBack() {
-    guard canGoBack else { return }
-    historyIndex -= 1
-    model.openIssue(history[historyIndex])
-  }
-
-  func goForward() {
-    guard canGoForward else { return }
-    historyIndex += 1
-    model.openIssue(history[historyIndex])
   }
 
   /// Follows a link in a body or comment: one to an issue opens it here,
