@@ -33,11 +33,27 @@ enum AppSheet: Identifiable, Hashable {
   var id: Self { self }
 }
 
-/// A message shown over the window until dismissed, e.g. a failed request.
+/// A message shown over the window for a while, e.g. a failed request.
 struct Notice: Identifiable, Equatable {
+  /// What a notice is about, which picks its icon.
+  enum Kind: Equatable {
+    case problem
+    /// GitHub could not be reached.
+    case offline
+    /// A rate limit held a request back.
+    case rateLimited
+    case info
+  }
+
   let id = UUID()
+  var kind: Kind = .problem
   var title: String
   var message: String
+  /// How often it was reported while shown: the same notice again only
+  /// counts up.
+  var count = 1
+  /// When it was last reported, from which it shows for a while again.
+  var reportedAt = Date.now
 }
 
 /// The app's state: setup, settings, navigation, and the stores of the
@@ -177,11 +193,31 @@ final class AppModel {
 
   // MARK: Notices
 
-  func report(_ title: String, _ message: String) {
-    notices.append(Notice(title: title, message: message))
+  /// Shows a notice, or counts up the same one while it shows.
+  func report(_ title: String, _ message: String, kind: Notice.Kind = .problem) {
+    if let index = notices.firstIndex(where: { $0.kind == kind && $0.title == title && $0.message == message }) {
+      notices[index].count += 1
+      notices[index].reportedAt = .now
+    } else {
+      notices.append(Notice(kind: kind, title: title, message: message))
+    }
   }
 
   func report(_ title: String, _ error: GitHubError) {
-    report(title, error.message)
+    let kind: Notice.Kind =
+      switch error {
+      case .rateLimited: .rateLimited
+      case .ghFailed: .offline
+      default: .problem
+      }
+    report(title, error.message, kind: kind)
+  }
+
+  // MARK: Launch options
+
+  /// Shows a setup state without asking gh, as `VERDANDI_SETUP` asks for
+  /// screenshots of the setup screen.
+  func pretendSetup(_ state: SetupState) {
+    setup = state
   }
 }

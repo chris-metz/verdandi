@@ -30,6 +30,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key><string>io.github.chris-metz.verdandi.native</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleName</key><string>Verdandi</string>
   <key>CFBundleDisplayName</key><string>Verdandi</string>
   <key>CFBundleExecutable</key><string>Verdandi</string>
@@ -41,6 +42,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Chris Metz</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict>
 </plist>
