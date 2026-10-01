@@ -2,13 +2,6 @@ import Foundation
 import Observation
 import VerdandiCore
 
-/// One of the places the sidebar opens: All, a tracked repository, or a view.
-enum SidebarItem: Hashable, Codable {
-  case all
-  case repository(RepositoryAddress)
-  case view(id: String)
-}
-
 /// Whether Verdandi can reach GitHub through gh.
 enum SetupState: Equatable {
   case checking
@@ -76,10 +69,13 @@ final class AppModel {
   // MARK: Navigation
 
   /// The sidebar's selection. Choosing another entry shows its list, with
-  /// no issue page over it.
+  /// no issue page over it. The app opens on it again at the next launch.
   var selection: SidebarItem? = .all {
     didSet {
-      if selection != oldValue { issuePath = [] }
+      if selection != oldValue {
+        issuePath = []
+        keepLastEntry()
+      }
     }
   }
   /// The list's cursor: the issue its keys move between, and Return opens.
@@ -90,6 +86,9 @@ final class AppModel {
   var issuePath: [String] = []
   /// The sheet over the window, if any.
   var sheet: AppSheet?
+  /// Whether the entry chosen last has been selected again, which waits
+  /// until settings.json can be read. Until then nothing is kept.
+  @ObservationIgnored private var hasRestoredLastEntry = false
 
   // MARK: Shared state
 
@@ -162,6 +161,7 @@ final class AppModel {
     do {
       settings = try settingsFile.read()
       settingsProblem = nil
+      restoreLastEntry()
     } catch {
       settingsProblem = error.localizedDescription
     }
@@ -201,6 +201,25 @@ final class AppModel {
   /// before it, or the list.
   func goBack() {
     if !issuePath.isEmpty { issuePath.removeLast() }
+  }
+
+  /// Selects the entry chosen last again, with its label filter, the first
+  /// time settings.json is read, unless the launch options select another.
+  private func restoreLastEntry() {
+    guard !hasRestoredLastEntry else { return }
+    hasRestoredLastEntry = true
+    guard LaunchOptions.selection == nil else { return }
+    let last = LastEntry.load(in: settings)
+    lists.list(for: last.item).addLabels(last.labelFilter)
+    selection = last.item
+  }
+
+  /// Keeps the selected entry and its label filter on this Mac, to open on
+  /// them again at the next launch. A launch whose launch options select an
+  /// entry keeps nothing: it is for screenshots.
+  func keepLastEntry() {
+    guard hasRestoredLastEntry, LaunchOptions.selection == nil, let selection else { return }
+    LastEntry(item: selection, labelFilter: lists.list(for: selection).labelFilter).save(in: settings)
   }
 
   /// Reads again what the window shows: the sidebar's counts, and the issue

@@ -48,7 +48,10 @@ another, and where settings.json is.
 
 What is not in settings.json stays on this Mac, in UserDefaults
 (`io.github.chris-metz.verdandi.native`): `appearance`, `ghPath` (the gh the
-user chose) and `recentIssues` (the last eight issues Go to Issue went to).
+user chose), `recentIssues` (the last eight issues Go to Issue went to) and
+`lastEntry` (the sidebar entry chosen last, with its label filter, which the
+app opens on again). A profile under `VERDANDI_HOME` keeps its own last
+entry, as `lastEntry:` followed by its absolute path.
 
 ## Screenshots
 
@@ -66,6 +69,9 @@ VERDANDI_POPOVER=rate-limits VERDANDI_RATE_LIMITS=low scripts/snap.sh /tmp/limit
 VERDANDI_SHEET=go-to-issue VERDANDI_GO_TO='#12' scripts/snap.sh /tmp/go.png 4
 VERDANDI_NOTICES=sample scripts/snap.sh /tmp/notices.png 4
 ```
+
+Without `VERDANDI_SELECT`, the window opens on the entry chosen last in
+that profile, with its label filter. With it, the launch keeps nothing.
 
 `VERDANDI_SETUP` shows a setup state without asking gh or changing it. It
 saves the window that the options open: Settings, About, or the popover with

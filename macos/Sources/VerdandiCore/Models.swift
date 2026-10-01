@@ -46,7 +46,7 @@ public enum IssueState: String, Sendable, Hashable, Codable, CaseIterable {
   }
 }
 
-public struct Label: Hashable, Sendable, Identifiable {
+public struct Label: Hashable, Sendable, Codable, Identifiable {
   public var name: String
   /// GitHub's colour, six hex digits without `#`.
   public var color: String

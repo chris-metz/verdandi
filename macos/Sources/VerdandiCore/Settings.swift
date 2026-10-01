@@ -56,12 +56,16 @@ public enum SettingsError: Error, LocalizedError {
 
 /// Where Verdandi keeps its files, as the Electron app does.
 public enum Directories {
+  /// The directory `VERDANDI_HOME` names, for a profile other than the
+  /// user's own, if it names one.
+  public static var home: URL? {
+    guard let home = ProcessInfo.processInfo.environment["VERDANDI_HOME"], !home.isEmpty else { return nil }
+    return URL(fileURLWithPath: home).standardizedFileURL
+  }
+
   /// `VERDANDI_HOME`, or Application Support.
   public static var userData: URL {
-    if let home = ProcessInfo.processInfo.environment["VERDANDI_HOME"], !home.isEmpty {
-      return URL(fileURLWithPath: home)
-    }
-    return FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Verdandi")
+    home ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Verdandi")
   }
 
   public static var settingsFile: URL { userData.appending(path: "settings.json") }

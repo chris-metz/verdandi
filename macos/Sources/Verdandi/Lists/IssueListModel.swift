@@ -39,8 +39,13 @@ final class IssueListModel {
   /// The state it shows, in All and a repository's list; a view's comes
   /// from its search.
   private(set) var state: IssueState = .open
-  /// The labels its matches carry every one of.
-  private(set) var labelFilter: [VerdandiCore.Label] = []
+  /// The labels its matches carry every one of. The selected entry's is
+  /// kept for the next launch.
+  private(set) var labelFilter: [VerdandiCore.Label] = [] {
+    didSet {
+      if item == model.selection { model.keepLastEntry() }
+    }
+  }
   private(set) var expansion = Expansion()
 
   // A view's search.
@@ -311,6 +316,10 @@ final class IssueListModel {
 
   func addLabel(_ label: VerdandiCore.Label) {
     labelFilter = labelFilter.adding(label)
+  }
+
+  func addLabels(_ labels: [VerdandiCore.Label]) {
+    labelFilter = labels.reduce(labelFilter) { $0.adding($1) }
   }
 
   func removeLabel(named name: String) {

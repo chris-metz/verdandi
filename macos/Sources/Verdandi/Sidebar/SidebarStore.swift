@@ -174,17 +174,26 @@ final class SidebarStore {
   }
 
   /// Stores tracked repositories' new addresses and IDs in settings.json,
-  /// and keeps a selected one selected under its new address.
+  /// and follows them there.
   private func identify(_ found: [RepositoryAddress: TrackedRepository]) {
     guard !found.isEmpty, canChange else { return }
     change { $0.identify(found) }
-    for (old, current) in found where old != current.address {
-      summaries[old] = nil
-      problems[old] = nil
+    for (old, current) in found {
+      if old != current.address {
+        summaries[old] = nil
+        problems[old] = nil
+      }
+      follow(old, to: current.address)
     }
-    if case .repository(let selected) = model.selection, let current = found[selected] {
-      model.selection = .repository(current.address)
-    }
+    // With the IDs now known, the entry chosen last is found after a rename.
+    model.keepLastEntry()
+  }
+
+  /// Follows a tracked repository to its new address: its list keeps its
+  /// label filter, and it stays selected if it was.
+  private func follow(_ old: RepositoryAddress, to new: RepositoryAddress) {
+    if old != new { model.lists.carryLabelFilter(from: .repository(old), to: .repository(new)) }
+    if model.selection == .repository(old) { model.selection = .repository(new) }
   }
 
   /// Counts the matches of searches, one at a time, as the search API
@@ -381,12 +390,14 @@ final class SidebarStore {
     switch model.selection {
     case .repository(let address) where !model.settings.repositories.contains(where: { $0.address == address }):
       let moved = selectedId.flatMap { id in model.settings.repositories.first { $0.githubId == id } }
-      model.selection = moved.map { .repository($0.address) } ?? .all
+      if let moved { follow(address, to: moved.address) } else { model.selection = .all }
     case .view(let id) where model.view(id: id) == nil:
       model.selection = .all
     default:
       break
     }
+    // An ID known now finds the entry chosen last after a rename.
+    model.keepLastEntry()
     if let pendingRemoval, !entries.contains(pendingRemoval) { self.pendingRemoval = nil }
   }
 }

@@ -121,6 +121,13 @@ final class ListsStore {
     return list
   }
 
+  /// Gives the list of an entry's new item the label filter of its old one,
+  /// as when a tracked repository is renamed.
+  func carryLabelFilter(from old: SidebarItem, to new: SidebarItem) {
+    guard let filter = lists[old]?.labelFilter else { return }
+    list(for: new).addLabels(filter)
+  }
+
   /// A repository's issues in a state, shared by every list that shows them.
   func issues(of repository: RepositoryAddress, state: IssueState) -> RepositoryIssues {
     let key = RepositoryKey(repository: repository, state: state)
