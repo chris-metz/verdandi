@@ -18,6 +18,9 @@ struct SidebarView: View {
       .navigationTitle("Verdandi")
       .contextMenu(forSelectionType: SidebarItem.self) { items in
         SidebarMenu(items: items)
+      } primaryAction: { items in
+        // Double-click or Return on a view edits it.
+        if items.count == 1, case .view(let id) = items.first, sidebar.canChange { sidebar.edit(id) }
       }
       .onDeleteCommand { sidebar.requestRemoval(model.selection) }
       .confirmationDialog(

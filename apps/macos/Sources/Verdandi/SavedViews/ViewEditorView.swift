@@ -32,8 +32,7 @@ struct ViewEditorView: View {
     VStack(spacing: 0) {
       header
         .padding(.horizontal, 24)
-        .padding(.top, 22)
-        .padding(.bottom, 6)
+        .padding(.top, 20)
       Form {
         fields
         Section {
@@ -50,7 +49,7 @@ struct ViewEditorView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
     }
-    .frame(width: 600, height: 690)
+    .frame(width: 600, height: 700)
     .task(id: trimmedQuery) { await runPreview() }
     .onAppear { focus = isEditing ? .query : .name }
   }
@@ -78,21 +77,15 @@ struct ViewEditorView: View {
 
   private var fields: some View {
     Section {
-      LabeledContent("Name") {
+      FieldRow("Name") {
         TextField("Name", text: $name, prompt: Text("e.g. Assigned to me"))
-          .labelsHidden()
-          .multilineTextAlignment(.leading)
-          .frame(maxWidth: .infinity, alignment: .leading)
           .focused($focus, equals: .name)
           .onSubmit { focus = .query }
       }
-      LabeledContent("Search") {
+      FieldRow("Search") {
         TextField("Search", text: $query, prompt: Text("is:open assignee:@me"), axis: .vertical)
-          .labelsHidden()
-          .multilineTextAlignment(.leading)
           .font(.body.monospaced())
           .lineLimit(2...6)
-          .frame(maxWidth: .infinity, alignment: .leading)
           .focused($focus, equals: .query)
           .onSubmit(save)
       }
@@ -186,6 +179,29 @@ struct ViewEditorView: View {
     }
     model.sidebar.saveView(saved, after: duplicate ? view?.id : nil)
     dismiss()
+  }
+}
+
+/// A field with its label in a column of its own, so that the field starts
+/// at the same place in every row and fills the rest.
+private struct FieldRow<Field: View>: View {
+  var label: String
+  @ViewBuilder var field: Field
+
+  init(_ label: String, @ViewBuilder field: () -> Field) {
+    self.label = label
+    self.field = field()
+  }
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 12) {
+      Text(label)
+        .frame(width: 52, alignment: .leading)
+      field
+        .labelsHidden()
+        .textFieldStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
   }
 }
 

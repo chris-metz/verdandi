@@ -77,6 +77,8 @@ struct RepositoryPickerView: View {
       TextField("Filter, or type owner/name", text: $picker.text)
         .textFieldStyle(.plain)
         .font(.title3)
+        // Repository names are no words to complete or correct.
+        .autocorrectionDisabled()
         .focused($searchFocused)
         .onSubmit { add(rows: rows) }
         .onKeyPress(.downArrow) {
@@ -247,12 +249,11 @@ private struct RepositoryRows: View {
               .padding(.top, section.id == sections.first?.id ? 4 : 14)
               .padding(.bottom, 4)
             ForEach(section.rows) { row in
-              PickerRowView(row: row, isHighlighted: picker.highlighted == row.id)
-                .id(row.id)
-                .onTapGesture {
-                  picker.highlighted = row.id
-                  withAnimation(.snappy) { picker.toggle(row) }
-                }
+              PickerRowView(row: row, isHighlighted: picker.highlighted == row.id) {
+                picker.highlighted = row.id
+                withAnimation(.snappy) { picker.toggle(row) }
+              }
+              .id(row.id)
             }
           }
         }
@@ -306,6 +307,7 @@ private struct SectionTitle: View {
 private struct PickerRowView: View {
   var row: PickerRow
   var isHighlighted: Bool
+  var toggle: () -> Void
 
   var body: some View {
     HStack(spacing: 10) {
@@ -337,6 +339,7 @@ private struct PickerRowView: View {
     .padding(.vertical, 7)
     .background(background, in: .rect(cornerRadius: 9, style: .continuous))
     .contentShape(.rect)
+    .onTapGesture(perform: toggle)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(row.isChecked ? [.isButton, .isSelected] : .isButton)
     .accessibilityHint(row.canToggle ? "Toggles whether it is added" : "")
@@ -360,17 +363,14 @@ private struct PickerRowView: View {
         .foregroundStyle(.tertiary)
         .frame(width: 20, height: 20)
     case .available, .tracked:
-      Image(systemName: row.isChecked ? "checkmark.circle.fill" : "circle")
-        .font(.title3)
-        .foregroundStyle(checkStyle)
-        .contentTransition(.symbolEffect(.replace))
+      Toggle(row.address.description, isOn: Binding(get: { row.isChecked }, set: { _ in toggle() }))
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+        .disabled(!row.canToggle)
+        // The whole row toggles, the checkbox only shows it.
+        .allowsHitTesting(false)
         .frame(width: 20, height: 20)
     }
-  }
-
-  private var checkStyle: AnyShapeStyle {
-    guard row.isChecked else { return AnyShapeStyle(.tertiary) }
-    return row.status == .tracked ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint)
   }
 
   private var note: String? {

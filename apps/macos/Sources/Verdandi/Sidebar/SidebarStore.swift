@@ -178,6 +178,10 @@ final class SidebarStore {
   private func identify(_ found: [RepositoryAddress: TrackedRepository]) {
     guard !found.isEmpty, canChange else { return }
     change { $0.identify(found) }
+    for (old, current) in found where old != current.address {
+      summaries[old] = nil
+      problems[old] = nil
+    }
     if case .repository(let selected) = model.selection, let current = found[selected] {
       model.selection = .repository(current.address)
     }
@@ -368,10 +372,16 @@ final class SidebarStore {
   /// selected.
   func reloadSettings() {
     if let read = try? model.settingsFile.read(), read == model.settings, model.settingsProblem == nil { return }
+    // A selected repository stays selected under a new address, by its ID.
+    var selectedId: Int?
+    if case .repository(let address) = model.selection {
+      selectedId = model.settings.repositories.first { $0.address == address }?.githubId
+    }
     model.loadSettings()
     switch model.selection {
     case .repository(let address) where !model.settings.repositories.contains(where: { $0.address == address }):
-      model.selection = .all
+      let moved = selectedId.flatMap { id in model.settings.repositories.first { $0.githubId == id } }
+      model.selection = moved.map { .repository($0.address) } ?? .all
     case .view(let id) where model.view(id: id) == nil:
       model.selection = .all
     default:
