@@ -99,7 +99,8 @@ final class AppModel {
   // MARK: Feature stores
 
   @ObservationIgnored private(set) lazy var lists = ListsStore(model: self)
-  @ObservationIgnored private(set) lazy var pages = IssuePagesStore(model: self)
+  @ObservationIgnored private(set) lazy var pages = IssuePagesStore(
+    issues: issues, client: { [unowned self] in client }, openIssue: { [unowned self] in openIssue($0) })
   @ObservationIgnored private(set) lazy var sidebar = SidebarStore(model: self)
 
   init() {

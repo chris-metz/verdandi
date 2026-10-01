@@ -31,7 +31,7 @@ final class IssueStore {
 
   /// Reads the issues not read yet, or all of them when `again`, 100 at a
   /// time. Those already being read are not asked for twice.
-  func fetch(_ ids: some Sequence<String>, with client: GitHubClient, again: Bool = false) async {
+  func fetch(_ ids: some Sequence<String>, with client: any GitHubAccess, again: Bool = false) async {
     let wanted = Array(Set(ids).filter { (again || (issues[$0] == nil && failures[$0] == nil)) && !fetching.contains($0) })
     guard !wanted.isEmpty else { return }
     fetching.formUnion(wanted)
@@ -41,7 +41,7 @@ final class IssueStore {
     }
   }
 
-  private func fetchBatch(_ batch: [String], with client: GitHubClient) async {
+  private func fetchBatch(_ batch: [String], with client: any GitHubAccess) async {
     do {
       let results = try await client.issues(ids: batch)
       for (id, result) in zip(batch, results) {

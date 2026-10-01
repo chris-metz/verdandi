@@ -17,5 +17,7 @@ let package = Package(
       swiftSettings: [.defaultIsolation(MainActor.self)]
     ),
     .testTarget(name: "VerdandiCoreTests", dependencies: ["VerdandiCore"]),
+    // The app's stores, against a GitHub the tests declare.
+    .testTarget(name: "VerdandiTests", dependencies: ["Verdandi", "VerdandiCore"]),
   ]
 )

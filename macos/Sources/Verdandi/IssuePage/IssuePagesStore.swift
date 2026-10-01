@@ -69,7 +69,12 @@ final class IssuePageModel {
 /// The issue pages opened so far.
 @Observable
 final class IssuePagesStore {
-  @ObservationIgnored unowned let model: AppModel
+  /// Every issue read so far, which pages read into and look up.
+  @ObservationIgnored let issues: IssueStore
+  /// How GitHub is read, while it can be.
+  @ObservationIgnored private let client: () -> (any GitHubAccess)?
+  /// Opens an issue's page over the one showing.
+  @ObservationIgnored private let openIssue: (String) -> Void
   /// Made as views ask for them, so not observed: each page is.
   @ObservationIgnored private(set) var pages: [String: IssuePageModel] = [:]
 
@@ -81,8 +86,12 @@ final class IssuePagesStore {
   /// any more, but show how the work went.
   static let followsClosedIssues = true
 
-  init(model: AppModel) {
-    self.model = model
+  init(
+    issues: IssueStore, client: @escaping () -> (any GitHubAccess)?, openIssue: @escaping (String) -> Void
+  ) {
+    self.issues = issues
+    self.client = client
+    self.openIssue = openIssue
   }
 
   func page(for issueID: String) -> IssuePageModel {
@@ -116,18 +125,18 @@ final class IssuePagesStore {
   }
 
   private func load(_ page: IssuePageModel, again: Bool) async {
-    guard let client = model.client else { return }
+    guard let client = client() else { return }
     async let details: Void = loadDetails(page, client: client, again: again)
     async let comments: Void = loadComments(page, client: client)
     async let map: Void = loadMap(page, client: client, again: again)
     _ = await (details, comments, map)
   }
 
-  private func loadDetails(_ page: IssuePageModel, client: GitHubClient, again: Bool) async {
+  private func loadDetails(_ page: IssuePageModel, client: any GitHubAccess, again: Bool) async {
     page.detailsPhase = .loading
     do {
       let details = try await client.issueDetails(id: page.issueID)
-      model.issues.store(details.issue)
+      issues.store(details.issue)
       page.details = details
       page.detailsPhase = .loaded(.now)
     } catch {
@@ -148,25 +157,25 @@ final class IssuePagesStore {
 
   /// Reads the issue's parent issue, its parent, and so on up to the top,
   /// those not read yet, or all of them again.
-  private func loadAncestry(_ page: IssuePageModel, client: GitHubClient, again: Bool) async {
+  private func loadAncestry(_ page: IssuePageModel, client: any GitHubAccess, again: Bool) async {
     page.ancestryPhase = .loading
     if again {
       let known = ancestry(of: page.issueID).map(\.id)
-      if !known.isEmpty { await model.issues.fetch(known, with: client, again: true) }
+      if !known.isEmpty { await issues.fetch(known, with: client, again: true) }
     }
     // Each read reveals the next parent up, until one has none or cannot
     // be read.
     var tried: Set<String> = []
-    while let unread = ancestry(of: page.issueID).first(where: { model.issues[$0.id] == nil }),
+    while let unread = ancestry(of: page.issueID).first(where: { issues[$0.id] == nil }),
       tried.insert(unread.id).inserted
     {
-      await model.issues.fetch([unread.id], with: client)
+      await issues.fetch([unread.id], with: client)
     }
-    let failure = ancestry(of: page.issueID).lazy.compactMap { self.model.issues.failures[$0.id] }.first
+    let failure = ancestry(of: page.issueID).lazy.compactMap { self.issues.failures[$0.id] }.first
     page.ancestryPhase = failure.map { .failed($0) } ?? .loaded(.now)
   }
 
-  private func loadComments(_ page: IssuePageModel, client: GitHubClient) async {
+  private func loadComments(_ page: IssuePageModel, client: any GitHubAccess) async {
     let firstRead = page.commentsPhase == .idle || page.comments.isEmpty
     page.commentsPhase = .loading
     var comments: [IssueComment] = []
@@ -187,8 +196,8 @@ final class IssuePagesStore {
 
   // MARK: Blocking map
 
-  private func loadMap(_ page: IssuePageModel, client: GitHubClient, again: Bool) async {
-    let issue = model.issues[page.issueID]
+  private func loadMap(_ page: IssuePageModel, client: any GitHubAccess, again: Bool) async {
+    let issue = issues[page.issueID]
     // An issue known to have no blocking relationships needs no map.
     if let issue, !issue.hasBlockingRelationships, !again {
       page.mapPhase = .loaded(.now)
@@ -204,7 +213,7 @@ final class IssuePagesStore {
 
   /// Reads the map further out on one side, two steps more.
   func extendMap(_ page: IssuePageModel, side: BlockingSide) async {
-    guard let client = model.client, !page.mapPhase.isLoading else { return }
+    guard let client = client(), !page.mapPhase.isLoading else { return }
     page.mapSteps[side, default: 2] += 2
     page.mapPhase = .loading
     await loadSide(side, of: page, client: client, again: false)
@@ -215,7 +224,7 @@ final class IssuePagesStore {
   /// relationships, then the first page of those of each issue on the
   /// steps before the last, so the last step's cards know how many lie
   /// beyond.
-  private func loadSide(_ side: BlockingSide, of page: IssuePageModel, client: GitHubClient, again: Bool) async {
+  private func loadSide(_ side: BlockingSide, of page: IssuePageModel, client: any GitHubAccess, again: Bool) async {
     let root = page.issueID
     var frontier = [root]
     var seen: Set<String> = [root]
@@ -224,7 +233,7 @@ final class IssuePagesStore {
         let key = BlockingListKey(id, side)
         guard again || page.blockingLists[key] == nil else { return false }
         if id == root { return true }
-        guard let issue = model.issues[id] else { return false }
+        guard let issue = issues[id] else { return false }
         return (Self.followsClosedIssues || issue.state == .open) && issue.blockingTotal(side) > 0
       }
       .prefix(Self.listsPerStep)
@@ -241,15 +250,15 @@ final class IssuePagesStore {
   }
 
   /// Reads every page of the map's own issue's relationships on a side.
-  private func readAllPages(of id: String, side: BlockingSide, page: IssuePageModel, client: GitHubClient) async {
+  private func readAllPages(of id: String, side: BlockingSide, page: IssuePageModel, client: any GitHubAccess) async {
     let key = BlockingListKey(id, side)
     var ids: [String] = []
     var after: String?
     do {
       // Ten pages are a thousand issues, more than a map can show.
       for _ in 0..<10 {
-        let next = try await client.relationships(of: id, side: side, after: after)
-        model.issues.store(next.issues)
+        let next = try await client.relationships(of: id, side: side, after: after, first: 100)
+        issues.store(next.issues)
         ids += next.issues.map(\.id)
         page.blockingLists[key] = BlockingList(ids: ids, totalCount: next.totalCount)
         page.blockingFailures[key] = nil
@@ -264,7 +273,7 @@ final class IssuePagesStore {
   private func store(_ result: Result<RelationshipPage, GitHubError>, as key: BlockingListKey, in page: IssuePageModel) {
     switch result {
     case .success(let read):
-      model.issues.store(read.issues)
+      issues.store(read.issues)
       page.blockingLists[key] = BlockingList(ids: read.issues.map(\.id), totalCount: read.totalCount)
       page.blockingFailures[key] = nil
     case .failure(let error):
@@ -275,13 +284,16 @@ final class IssuePagesStore {
   /// Reads the first page of several issues' relationships on a side at
   /// once; the client limits how many run together.
   nonisolated private static func readFirstPages(
-    of ids: [String], side: BlockingSide, client: GitHubClient
+    of ids: [String], side: BlockingSide, client: any GitHubAccess
   ) async -> [(String, Result<RelationshipPage, GitHubError>)] {
     await withTaskGroup(of: (String, Result<RelationshipPage, GitHubError>).self) { group in
       for id in ids {
         group.addTask {
           do throws(GitHubError) {
-            return (id, .success(try await client.relationships(of: id, side: side, first: 50)))
+            // Awaiting inside the tuple returned crashed the app as the
+            // task finished, a bug of Swift 6.4: read the page first.
+            let read = try await client.relationships(of: id, side: side, after: nil, first: 50)
+            return (id, .success(read))
           } catch {
             return (id, .failure(error))
           }
@@ -297,7 +309,7 @@ final class IssuePagesStore {
   func map(of page: IssuePageModel) -> BlockingMap {
     BlockingMap(
       root: page.issueID, steps: page.mapSteps, followsClosed: Self.followsClosedIssues,
-      issue: { self.model.issues[$0] },
+      issue: { self.issues[$0] },
       list: { page.blockingLists[$0] })
   }
 
@@ -313,10 +325,10 @@ final class IssuePagesStore {
   /// they have been read: a parent not read yet ends it.
   func ancestry(of issueID: String) -> [IssueReference] {
     var chain: [IssueReference] = []
-    var next = model.issues[issueID]?.parent
+    var next = issues[issueID]?.parent
     while let parent = next, !chain.contains(where: { $0.id == parent.id }), parent.id != issueID {
-      chain.append(model.issues[parent.id]?.reference ?? parent)
-      next = model.issues[parent.id]?.parent
+      chain.append(issues[parent.id]?.reference ?? parent)
+      next = issues[parent.id]?.parent
     }
     return chain.reversed()
   }
@@ -327,7 +339,7 @@ final class IssuePagesStore {
   /// issues, the issue with its blocking map if it has one, and its
   /// sub-issues.
   func targets(of page: IssuePageModel) -> PageTargets {
-    let issue = model.issues[page.issueID] ?? page.details?.issue
+    let issue = issues[page.issueID] ?? page.details?.issue
     return PageTargets(
       issueID: page.issueID, parents: ancestry(of: page.issueID).map(\.id),
       map: issue?.hasBlockingRelationships == true ? mapLayout(of: page) : nil,
@@ -337,14 +349,14 @@ final class IssuePagesStore {
   /// Where GitHub shows an issue on a page, also a parent issue or
   /// sub-issue known only by reference.
   func webURL(of id: String, on page: IssuePageModel) -> URL? {
-    if let issue = model.issues[id] { return issue.url }
-    let subIssues = (model.issues[page.issueID] ?? page.details?.issue)?.subIssues ?? []
+    if let issue = issues[id] { return issue.url }
+    let subIssues = (issues[page.issueID] ?? page.details?.issue)?.subIssues ?? []
     return (ancestry(of: page.issueID) + subIssues).first { $0.id == id }?.webURL
   }
 
   /// Opens an issue's page over the one showing.
   func show(_ issueID: String) {
-    model.openIssue(issueID)
+    openIssue(issueID)
   }
 
   /// Follows a link in a body or comment: one to an issue opens it here,
@@ -354,11 +366,11 @@ final class IssuePagesStore {
       if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url) }
       return
     }
-    if let known = model.issues.issues.values.first(where: { $0.repository == link.repository && $0.number == link.number }) {
+    if let known = issues.issues.values.first(where: { $0.repository == link.repository && $0.number == link.number }) {
       show(known.id)
       return
     }
-    guard let client = model.client else {
+    guard let client = client() else {
       NSWorkspace.shared.open(url)
       return
     }
