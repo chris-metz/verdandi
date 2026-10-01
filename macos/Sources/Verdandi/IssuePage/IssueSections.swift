@@ -50,13 +50,18 @@ struct SubIssuesSection: View {
 /// One sub-issue, which opens its page.
 private struct SubIssueRow: View {
   @Environment(AppModel.self) private var model
+  @Environment(IssueVisit.self) private var visit
+  @Environment(\.pageCursor) private var cursor
   var subIssue: IssueReference
   var repository: RepositoryAddress
   @State private var hovering = false
 
   var body: some View {
     let issue = model.issues[subIssue.id]
-    Button { model.pages.show(subIssue.id) } label: {
+    let hasCursor = cursor == .subIssue(subIssue.id)
+    Button {
+      model.pages.open(.subIssue(subIssue.id), in: visit)
+    } label: {
       HStack(spacing: 10) {
         IssueStateIcon(state: subIssue.state)
         Text(subIssue.title)
@@ -83,9 +88,18 @@ private struct SubIssueRow: View {
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
       .background(hovering ? AnyShapeStyle(.fill.quaternary) : AnyShapeStyle(.clear))
+      .overlay {
+        if hasCursor {
+          RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(Color.accentColor.opacity(0.1))
+            .strokeBorder(Color.accentColor, lineWidth: 2)
+            .padding(3)
+        }
+      }
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .id(PageCursor.subIssue(subIssue.id))
     .onHover { hovering = $0 }
     .contextMenu {
       if let issue {

@@ -14,8 +14,9 @@ import VerdandiCore
 ///   once the list has loaded
 /// - `VERDANDI_LIST_KEYS`: keys to press in the window once the list has
 ///   loaded, separated by spaces, e.g. `j j left e esc`, to try the keyboard
-///   where no other app may type into this one. `delete` is ⌫, `wait` waits
-///   a second, and `click@x,y` clicks at a point of the window, from its top
+///   where no other app may type into this one. `delete` is ⌫, `space` the
+///   space bar, `shift-` before a key presses it with ⇧, `wait` waits a
+///   second, and `click@x,y` clicks at a point of the window, from its top
 ///   left corner.
 enum ListLaunchOptions {
   /// Whether they have been applied, which they are once.
@@ -67,9 +68,14 @@ extension ListLaunchOptions {
     let named: [String: (String, UInt16)] = [
       "left": ("\u{F702}", 123), "right": ("\u{F703}", 124), "down": ("\u{F701}", 125),
       "up": ("\u{F700}", 126), "esc": ("\u{1B}", 53), "return": ("\r", 36), "delete": ("\u{7F}", 51),
+      "space": (" ", 49),
     ]
-    let letters: [Character: UInt16] = ["j": 38, "k": 40, "e": 14, "r": 15, "s": 1, "o": 31, "[": 33]
-    for key in keys.split(separator: " ").map(String.init) {
+    let letters: [Character: UInt16] = [
+      "h": 4, "j": 38, "k": 40, "l": 37, "e": 14, "r": 15, "s": 1, "o": 31, "[": 33,
+    ]
+    for pressed in keys.split(separator: " ").map(String.init) {
+      let shifted = pressed.hasPrefix("shift-")
+      let key = shifted ? String(pressed.dropFirst(6)) : pressed
       try? await Task.sleep(for: .milliseconds(500))
       if key == "wait" {
         try? await Task.sleep(for: .seconds(1))
@@ -85,7 +91,8 @@ extension ListLaunchOptions {
       for type in [NSEvent.EventType.keyDown, .keyUp] {
         guard
           let event = NSEvent.keyEvent(
-            with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            with: type, location: .zero, modifierFlags: shifted ? .shift : [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil, characters: characters,
             charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
         else { continue }

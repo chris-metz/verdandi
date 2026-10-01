@@ -5,7 +5,7 @@ import Testing
 
 /// A made-up set of issues and their blocking relationships, each issue
 /// named by its ID.
-private struct Graph {
+struct Graph {
   var issues: [String: VerdandiCore.Issue] = [:]
   var lists: [BlockingListKey: BlockingList] = [:]
 

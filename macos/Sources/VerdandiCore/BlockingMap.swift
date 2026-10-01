@@ -37,6 +37,10 @@ extension Issue {
   public func blockingOpen(_ side: BlockingSide) -> Int {
     side == .blockedBy ? blockedBy : blocking
   }
+
+  /// Whether it blocks or is blocked by any issue, open or closed, so that
+  /// its page shows a blocking map.
+  public var hasBlockingRelationships: Bool { totalBlockedBy + totalBlocking > 0 }
 }
 
 /// A place on a blocking map: an issue's card, or one standing for cards

@@ -11,8 +11,8 @@ struct MainArea: View {
     @Bindable var model = model
     NavigationStack(path: $model.issuePath) {
       ListColumn()
-        .navigationDestination(for: String.self) { issueID in
-          IssuePageScreen(issueID: issueID)
+        .navigationDestination(for: IssueVisit.self) { visit in
+          IssuePageScreen(visit: visit)
         }
     }
   }

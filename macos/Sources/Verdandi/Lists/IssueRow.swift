@@ -480,6 +480,7 @@ private struct RowMenu: View {
 extension ForestNode {
   /// Where GitHub shows the issue, also one known only by reference.
   var webURL: URL? {
-    issue?.url ?? URL(string: "https://github.com/\(reference.repository)/issues/\(reference.number)")
+    issue?.url ?? reference.webURL
   }
 }
+

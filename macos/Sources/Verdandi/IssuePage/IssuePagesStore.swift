@@ -45,8 +45,6 @@ final class IssuePageModel {
   var mapSteps: [BlockingSide: Int] = [.blockedBy: 2, .blocking: 2]
   /// The steps whose columns show all their cards.
   var expandedColumns: Set<Int> = []
-  /// What the keyboard is on in the map.
-  var mapCursor: BlockingNode
 
   /// The measured heights of bodies, by the ID of their issue or comment,
   /// so a body shown again takes its place at once.
@@ -54,7 +52,6 @@ final class IssuePageModel {
 
   init(issueID: String) {
     self.issueID = issueID
-    mapCursor = .issue(issueID)
   }
 
   /// Whether any part of it is being read.
@@ -138,7 +135,7 @@ final class IssuePagesStore {
       return
     }
     // The list's copy of the issue may have said it had no map.
-    if let issue = page.details?.issue, issue.totalBlockedBy + issue.totalBlocking > 0,
+    if let issue = page.details?.issue, issue.hasBlockingRelationships,
       page.blockingLists.isEmpty, !page.mapPhase.isLoading
     {
       async let map: Void = loadMap(page, client: client, again: false)
@@ -193,7 +190,7 @@ final class IssuePagesStore {
   private func loadMap(_ page: IssuePageModel, client: GitHubClient, again: Bool) async {
     let issue = model.issues[page.issueID]
     // An issue known to have no blocking relationships needs no map.
-    if let issue, issue.totalBlockedBy == 0, issue.totalBlocking == 0, !again {
+    if let issue, !issue.hasBlockingRelationships, !again {
       page.mapPhase = .loaded(.now)
       return
     }
@@ -304,6 +301,12 @@ final class IssuePagesStore {
       list: { page.blockingLists[$0] })
   }
 
+  /// The map of a page as it shows: in columns of at most six cards, but
+  /// those the user expanded.
+  func mapLayout(of page: IssuePageModel) -> BlockingMapLayout {
+    BlockingMapLayout(map(of: page), cardsPerColumn: 6, expanded: page.expandedColumns)
+  }
+
   // MARK: Ancestry
 
   /// The issue's parent issue, its parent and so on, top first, as far as
@@ -319,6 +322,25 @@ final class IssuePagesStore {
   }
 
   // MARK: Navigation
+
+  /// What a page's cursor can be on, as the page shows them: its parent
+  /// issues, the issue with its blocking map if it has one, and its
+  /// sub-issues.
+  func targets(of page: IssuePageModel) -> PageTargets {
+    let issue = model.issues[page.issueID] ?? page.details?.issue
+    return PageTargets(
+      issueID: page.issueID, parents: ancestry(of: page.issueID).map(\.id),
+      map: issue?.hasBlockingRelationships == true ? mapLayout(of: page) : nil,
+      subIssues: issue?.subIssues.map(\.id) ?? [])
+  }
+
+  /// Where GitHub shows an issue on a page, also a parent issue or
+  /// sub-issue known only by reference.
+  func webURL(of id: String, on page: IssuePageModel) -> URL? {
+    if let issue = model.issues[id] { return issue.url }
+    let subIssues = (model.issues[page.issueID] ?? page.details?.issue)?.subIssues ?? []
+    return (ancestry(of: page.issueID) + subIssues).first { $0.id == id }?.webURL
+  }
 
   /// Opens an issue's page over the one showing.
   func show(_ issueID: String) {

@@ -5,28 +5,25 @@ import VerdandiCore
 /// The issue's blocking map: a band as wide as the page that scrolls
 /// sideways, with the issues that block it to the left, those it blocks to
 /// the right, a column per step, and arrows from each blocker to what it
-/// blocks. Clicking a card opens its issue; the arrow keys or h, j, k, l
-/// move between cards once the map has focus, Return opens one and o opens
-/// it on GitHub.
+/// blocks. Clicking a card opens its issue. The page's cursor moves on it
+/// between cards; the issue's own card is where it enters.
 struct BlockingMapBand: View {
   @Environment(AppModel.self) private var model
+  @Environment(IssueVisit.self) private var visit
+  @Environment(\.pageCursor) private var pageCursor
   var page: IssuePageModel
   var issue: Issue
 
-  @FocusState private var focused: Bool
   @State private var hovered: BlockingNode?
   @State private var viewport: CGFloat = 0
   @State private var contentWidth: CGFloat = 0
-  /// Whether the map has been moved on from its issue, which it keeps in
-  /// the middle as it grows until then.
+  /// Whether the cursor has been moved on from the map's issue, which the
+  /// map keeps in the middle as it grows until then.
   @State private var moved = false
-  /// Whether the cursor shows without focus, for a launch option.
-  @State private var showsCursor = false
 
   var body: some View {
-    let map = model.pages.map(of: page)
-    let layout = BlockingMapLayout(map, cardsPerColumn: 6, expanded: page.expandedColumns)
-    let cursor = layout.contains(page.mapCursor) ? page.mapCursor : .issue(page.issueID)
+    let layout = model.pages.mapLayout(of: page)
+    let cursor = pageCursor?.mapNode(root: page.issueID)
     VStack(alignment: .leading, spacing: 4) {
       header(hasCycle: layout.edges.contains { $0.cycle })
         .issuePageColumn()
@@ -37,34 +34,34 @@ struct BlockingMapBand: View {
             cardWidth: MapMetrics.cardWidth(fitting: viewport),
             root: page.issueID,
             rootRepository: issue.repository,
-            cursor: focused || showsCursor ? cursor : nil,
-            highlighted: hovered ?? (focused || showsCursor ? cursor : nil),
+            cursor: cursor,
+            highlighted: hovered ?? cursor,
             onHover: { hovered = $0 },
-            onActivate: { node in
-              page.mapCursor = node
-              activate(node)
-            }
+            onActivate: { node in model.pages.open(PageCursor(node, root: page.issueID), in: visit) }
           )
           .padding(.horizontal, IssuePageMetrics.margin)
           .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
           .frame(minWidth: viewport)
-          .contentShape(Rectangle())
-          .focusable(interactions: .edit)
-          .focused($focused)
-          .focusEffectDisabled()
-          .onKeyPress(phases: .down) { press in handle(press, layout: layout, cursor: cursor) }
-          .simultaneousGesture(TapGesture().onEnded { focused = true })
         }
         .scrollIndicators(contentWidth > viewport + 1 ? .automatic : .never)
         .scrollDisabled(contentWidth <= viewport + 1)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewport = $0 }
-        .onChange(of: page.mapCursor) { _, node in
-          moved = true
+        .onChange(of: cursor) { _, node in
+          guard let node else { return }
+          // Back on the issue from a parent issue or sub-issue, the map
+          // still keeps it in the middle.
+          if node != .issue(page.issueID) { moved = true }
           withAnimation(.smooth) { proxy.scrollTo(node) }
         }
         .onChange(of: layout.columns.map(\.step), initial: true) {
           guard !moved else { return }
-          proxy.scrollTo(BlockingNode.issue(page.issueID), anchor: .center)
+          if let cursor, cursor != .issue(page.issueID) {
+            // Back on a page whose cursor was on the map, it shows where.
+            moved = true
+            proxy.scrollTo(cursor, anchor: .center)
+          } else {
+            proxy.scrollTo(BlockingNode.issue(page.issueID), anchor: .center)
+          }
         }
       }
     }
@@ -74,14 +71,6 @@ struct BlockingMapBand: View {
         .fill(.fill.quinary)
         .overlay(alignment: .top) { Divider() }
         .overlay(alignment: .bottom) { Divider() }
-    }
-    .task {
-      // A launch option, to look at the map's cursor without clicking.
-      guard LaunchOptions.environment["VERDANDI_FOCUS"] == "map" else { return }
-      try? await Task.sleep(for: .seconds(2))
-      focused = true
-      // A window that is not key takes no focus; show the cursor anyway.
-      showsCursor = true
     }
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Blocking map")
@@ -113,48 +102,29 @@ struct BlockingMapBand: View {
       }
     }
   }
+}
 
-  private func activate(_ node: BlockingNode) {
-    switch node {
-    case .issue(let id):
-      if id != page.issueID { model.pages.show(id) }
-    case .more(let step):
-      withAnimation(.smooth) { _ = page.expandedColumns.insert(step) }
-    case .further(let side):
-      Task { await model.pages.extendMap(page, side: side) }
+extension IssuePagesStore {
+  /// Opens what a page's cursor is on, and leaves the cursor there for
+  /// coming back to the page: an issue over the page, or what a map node
+  /// stands for.
+  func open(_ cursor: PageCursor, in visit: IssueVisit) {
+    visit.cursor = cursor
+    if case .map(let node) = cursor {
+      activate(node, on: page(for: visit.issueID))
+    } else if let id = cursor.issueID(root: visit.issueID) {
+      show(id)
     }
   }
 
-  private func handle(_ press: KeyPress, layout: BlockingMapLayout, cursor: BlockingNode) -> KeyPress.Result {
-    guard press.modifiers.isDisjoint(with: [.command, .option, .control, .shift]) else { return .ignored }
-    let direction: MapDirection? =
-      switch press.key {
-      case .leftArrow: .left
-      case .rightArrow: .right
-      case .upArrow: .up
-      case .downArrow: .down
-      default:
-        switch press.characters {
-        case "h": .left
-        case "l": .right
-        case "k": .up
-        case "j": .down
-        default: nil
-        }
-      }
-    if let direction {
-      if let next = layout.neighbour(of: cursor, toward: direction) { page.mapCursor = next }
-      return .handled
+  /// Does what a node of a page's map stands for: opens a card's issue over
+  /// the page, shows every card of a column, or reads the chain further.
+  func activate(_ node: BlockingNode, on page: IssuePageModel) {
+    switch node {
+    case .issue(let id): show(id)
+    case .more(let step): withAnimation(.smooth) { _ = page.expandedColumns.insert(step) }
+    case .further(let side): Task { await extendMap(page, side: side) }
     }
-    if press.key == .return {
-      activate(cursor)
-      return .handled
-    }
-    if press.characters == "o", case .issue(let id) = cursor, let url = model.issues[id]?.url {
-      NSWorkspace.shared.open(url)
-      return .handled
-    }
-    return .ignored
   }
 }
 
@@ -181,7 +151,7 @@ private struct BlockingMapCanvas: View {
   var cardWidth: CGFloat
   var root: String
   var rootRepository: RepositoryAddress
-  /// The node the keyboard is on, while the map has focus.
+  /// The node the page's cursor is on, if it is on the map.
   var cursor: BlockingNode?
   /// The node whose arrows stand out.
   var highlighted: BlockingNode?

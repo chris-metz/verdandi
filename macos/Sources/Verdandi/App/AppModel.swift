@@ -83,7 +83,7 @@ final class AppModel {
   /// The issue pages opened over the list, oldest first: the last one shows.
   /// While it is empty, the list shows. Following an issue from a page adds
   /// one; going back takes the last one away.
-  var issuePath: [String] = []
+  var issuePath: [IssueVisit] = []
   /// The sheet over the window, if any.
   var sheet: AppSheet?
   /// Whether the entry chosen last has been selected again, which waits
@@ -190,11 +190,11 @@ final class AppModel {
   // MARK: Navigation
 
   /// The issue whose page shows, if one does.
-  var shownIssueID: String? { issuePath.last }
+  var shownIssueID: String? { issuePath.last?.issueID }
 
-  /// Opens an issue's page over what shows now.
+  /// Opens an issue's page over what shows now, its cursor on the issue.
   func openIssue(_ id: String) {
-    if issuePath.last != id { issuePath.append(id) }
+    if shownIssueID != id { issuePath.append(IssueVisit(issueID: id)) }
   }
 
   /// Goes back to what showed before the current issue page: the page

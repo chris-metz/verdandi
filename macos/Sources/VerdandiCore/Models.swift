@@ -87,6 +87,11 @@ public struct IssueReference: Hashable, Sendable, Identifiable {
   }
 
   public var qualifiedReference: String { repository.reference(number) }
+
+  /// Where GitHub shows the issue.
+  public var webURL: URL? {
+    URL(string: "https://github.com/\(repository)/issues/\(number)")
+  }
 }
 
 /// An issue as a list reads it.

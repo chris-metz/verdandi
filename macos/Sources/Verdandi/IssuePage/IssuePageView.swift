@@ -97,13 +97,17 @@ private struct IssuePageProblem: View {
   }
 }
 
-/// The page's scrolling content.
+/// The page's scrolling content, which keeps the cursor in sight as it
+/// moves.
 private struct IssuePageContent: View {
   @Environment(AppModel.self) private var model
+  @Environment(IssueVisit.self) private var visit
+  @Environment(\.pageCursor) private var cursor
   var page: IssuePageModel
   var issue: Issue
 
   var body: some View {
+    @Bindable var visit = visit
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
@@ -114,7 +118,7 @@ private struct IssuePageContent: View {
           .padding(.top, 18)
           .padding(.bottom, 26)
 
-          if issue.totalBlockedBy + issue.totalBlocking > 0 {
+          if issue.hasBlockingRelationships {
             BlockingMapBand(page: page, issue: issue)
               .id(IssuePageSection.map)
           }
@@ -140,6 +144,14 @@ private struct IssuePageContent: View {
           Color.clear.frame(height: 1).id(IssuePageSection.end)
         }
       }
+      .scrollPosition($visit.scroll)
+      .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { _, geometry in
+        visit.scrollGeometry = geometry
+      }
+      .onChange(of: cursor) { _, cursor in
+        guard let cursor else { return }
+        withAnimation(.smooth) { proxy.scrollTo(scrollTarget(of: cursor)) }
+      }
       .task(id: page.commentsPhase) {
         // A launch option, to look at a part of a page without scrolling.
         guard let name = LaunchOptions.environment["VERDANDI_SCROLL"],
@@ -150,12 +162,23 @@ private struct IssuePageContent: View {
       }
     }
   }
+
+  /// What shows where the cursor is: the map for the issue when it has
+  /// one, as the issue is the map's middle card.
+  private func scrollTarget(of cursor: PageCursor) -> AnyHashable {
+    switch cursor {
+    case .map: IssuePageSection.map
+    case .issue where issue.hasBlockingRelationships: IssuePageSection.map
+    default: cursor
+    }
+  }
 }
 
 /// The page's top: the parent issues above it, its reference, title and
 /// metadata.
 private struct IssueHeaderView: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.pageCursor) private var cursor
   var page: IssuePageModel
   var issue: Issue
   var scrollTo: (IssuePageSection) -> Void
@@ -166,28 +189,40 @@ private struct IssueHeaderView: View {
       if !ancestry.isEmpty || (issue.hasParent && page.ancestryPhase.isLoading) {
         AncestryView(ancestry: ancestry, loading: page.ancestryPhase.isLoading)
       }
-      HStack(spacing: 6) {
-        Image(systemName: "book.closed")
-        Text(issue.repository.description)
-        Text(verbatim: "#\(issue.number)").monospacedDigit()
-        if !isTracked {
-          Text("External")
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .overlay(Capsule().strokeBorder(.separator))
-            .help("Its repository is not one of the tracked repositories")
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 6) {
+          Image(systemName: "book.closed")
+          Text(issue.repository.description)
+          Text(verbatim: "#\(issue.number)").monospacedDigit()
+          if !isTracked {
+            Text("External")
+              .font(.caption.weight(.medium))
+              .padding(.horizontal, 6)
+              .padding(.vertical, 1)
+              .overlay(Capsule().strokeBorder(.separator))
+              .help("Its repository is not one of the tracked repositories")
+          }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+
+        Text(issue.title)
+          .font(.largeTitle.weight(.bold))
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      // The cursor on the issue, unless it shows on the map's middle card.
+      .background(alignment: .leading) {
+        if cursor == .issue, !issue.hasBlockingRelationships {
+          Capsule()
+            .fill(Color.accentColor)
+            .frame(width: 4)
+            .offset(x: -14)
         }
       }
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .textSelection(.enabled)
-
-      Text(issue.title)
-        .font(.largeTitle.weight(.bold))
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.bottom, 4)
+      .id(PageCursor.issue)
+      .padding(.bottom, 4)
 
       IssueMetadataView(page: page, issue: issue, scrollTo: scrollTo)
     }
@@ -202,13 +237,17 @@ private struct IssueHeaderView: View {
 /// page.
 private struct AncestryView: View {
   @Environment(AppModel.self) private var model
+  @Environment(IssueVisit.self) private var visit
+  @Environment(\.pageCursor) private var cursor
   var ancestry: [IssueReference]
   var loading: Bool
 
   var body: some View {
     MetadataFlowLayout(spacing: 2, lineSpacing: 4) {
       ForEach(ancestry) { parent in
-        Button { model.pages.show(parent.id) } label: {
+        Button {
+          model.pages.open(.parent(parent.id), in: visit)
+        } label: {
           HStack(spacing: 5) {
             IssueStateIcon(state: parent.state).imageScale(.small)
             Text(parent.qualifiedReference).monospacedDigit()
@@ -217,7 +256,8 @@ private struct AncestryView: View {
           }
           .frame(maxWidth: 360, alignment: .leading)
         }
-        .buttonStyle(CrumbButtonStyle())
+        .buttonStyle(CrumbButtonStyle(hasCursor: cursor == .parent(parent.id)))
+        .id(PageCursor.parent(parent.id))
         .help("Parent issue: \(parent.title)")
         Image(systemName: "chevron.forward")
           .font(.caption2.weight(.semibold))
@@ -234,19 +274,25 @@ private struct AncestryView: View {
   }
 }
 
-/// A breadcrumb: text that shows it can be clicked when the pointer is on it.
+/// A breadcrumb: text that shows it can be clicked when the pointer is on
+/// it, ringed while the cursor is on it.
 private struct CrumbButtonStyle: ButtonStyle {
+  var hasCursor = false
   @State private var hovering = false
 
   func makeBody(configuration: Configuration) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
     configuration.label
       .padding(.horizontal, 6)
       .padding(.vertical, 3)
       .background(
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
+        shape
           .fill(.fill.tertiary)
-          .opacity(configuration.isPressed ? 1 : hovering ? 0.7 : 0))
-      .foregroundStyle(hovering ? .primary : .secondary)
+          .opacity(configuration.isPressed || hasCursor ? 1 : hovering ? 0.7 : 0))
+      .overlay {
+        if hasCursor { shape.strokeBorder(Color.accentColor, lineWidth: 2) }
+      }
+      .foregroundStyle(hovering || hasCursor ? .primary : .secondary)
       .contentShape(Rectangle())
       .onHover { hovering = $0 }
   }
@@ -264,7 +310,7 @@ private struct IssueMetadataView: View {
     let details = page.details
     MetadataFlowLayout(spacing: 8, lineSpacing: 8) {
       IssueStateBadge(state: issue.state, reason: details?.stateReason)
-      if issue.totalBlockedBy + issue.totalBlocking > 0 {
+      if issue.hasBlockingRelationships {
         GlassEffectContainer(spacing: 6) {
           HStack(spacing: 6) {
             ForEach(BlockingSide.allCases, id: \.self) { side in

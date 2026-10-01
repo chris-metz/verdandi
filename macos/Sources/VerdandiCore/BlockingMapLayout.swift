@@ -46,10 +46,13 @@ public struct BlockingMapLayout: Hashable, Sendable {
   /// The columns, left to right.
   public var columns: [Column]
   public var edges: [BlockingMap.Edge]
+  /// The most cards a column shows unless expanded.
+  public var cardsPerColumn: Int
 
   /// Lays out a map, each column showing at most `cardsPerColumn` cards
   /// unless its step is in `expanded`.
   public init(_ map: BlockingMap, cardsPerColumn: Int = 6, expanded: Set<Int> = []) {
+    self.cardsPerColumn = max(1, cardsPerColumn)
     let discovery = Dictionary(uniqueKeysWithValues: map.cards.enumerated().map { ($1.id, $0) })
     let byStep = Dictionary(grouping: map.cards, by: \.step)
     // Where each node shows, as its offset from its column's middle.
@@ -80,7 +83,7 @@ public struct BlockingMapLayout: Hashable, Sendable {
         let (a, b) = (centres[$0.id] ?? 0, centres[$1.id] ?? 0)
         return a != b ? a < b : (discovery[$0.id] ?? 0) < (discovery[$1.id] ?? 0)
       }
-      let limit = expanded.contains(step) || step == 0 ? ordered.count : max(1, cardsPerColumn)
+      let limit = expanded.contains(step) || step == 0 ? ordered.count : self.cardsPerColumn
       var nodes = ordered.prefix(limit).map(Node.card)
       if ordered.count > limit {
         nodes.append(.more(step: step, count: ordered.count - limit))
