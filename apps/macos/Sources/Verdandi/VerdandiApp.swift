@@ -11,18 +11,36 @@ struct VerdandiApp: App {
     Window("Verdandi", id: "main") {
       MainWindow()
         .environment(model)
-        .frame(minWidth: 900, minHeight: 560)
+        .frame(minWidth: 900, minHeight: 600)
         .task(id: model.setup) {
           if case .ready = model.setup { await LaunchOptions.apply(to: model) }
         }
     }
+    .defaultSize(width: 1280, height: 820)
+    .windowResizability(.contentMinSize)
     .windowToolbarStyle(.unified)
+    .commands { AppCommands(model: model) }
+
+    Settings {
+      SettingsView()
+        .environment(model)
+    }
+
+    Window("About Verdandi", id: AboutView.windowID) {
+      AboutView()
+    }
+    .windowResizability(.contentSize)
+    .windowStyle(.hiddenTitleBar)
+    .windowBackgroundDragBehavior(.enabled)
+    .restorationBehavior(.disabled)
+    .defaultPosition(.center)
+    .commandsRemoved()
   }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
-    if let appearance = LaunchOptions.appearance { NSApp.appearance = appearance }
+    Appearance.chosen.apply()
     // Run straight from the build folder, the binary is no bundle yet.
     NSApp.setActivationPolicy(.regular)
   }

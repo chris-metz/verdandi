@@ -2,26 +2,47 @@ import SwiftUI
 import VerdandiCore
 
 /// The window: the setup screen until gh works, then sidebar, list and
-/// issue page side by side.
+/// issue page side by side, with notices over both.
 struct MainWindow: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.openSettings) private var openSettings
+  @Environment(\.openWindow) private var openWindow
+  /// Whether gh has worked since launch: checking it again then keeps the
+  /// browser on screen rather than the setup screen.
+  @State private var hasBeenReady = false
 
   var body: some View {
     Group {
-      switch model.setup {
-      case .ready:
+      if showsBrowser {
         BrowserView()
-      default:
+      } else {
         SetupView()
       }
     }
-    .task { await model.checkSetup() }
+    .animation(.smooth(duration: 0.4), value: showsBrowser)
     .overlay(alignment: .bottom) { NoticesView() }
     .background(WindowNumberReporter())
+    .onChange(of: model.setup) {
+      if case .ready = model.setup { hasBeenReady = true }
+    }
+    .task {
+      if LaunchOptions.settingsTab != nil { openSettings() }
+      if LaunchOptions.opensAbout { openWindow(id: AboutView.windowID) }
+      await LaunchOptions.start(model)
+    }
+    .task { await LaunchOptions.exerciseMenus() }
+  }
+
+  private var showsBrowser: Bool {
+    switch model.setup {
+    case .ready: true
+    case .checking: hasBeenReady
+    default: false
+    }
   }
 }
 
-/// Sidebar, list and issue page.
+/// Sidebar, list and issue page, with Go to Issue over them.
 struct BrowserView: View {
   @Environment(AppModel.self) private var model
   @State private var columns = NavigationSplitViewVisibility.all
@@ -31,49 +52,40 @@ struct BrowserView: View {
     NavigationSplitView(columnVisibility: $columns) {
       SidebarView()
         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+
     } content: {
       ListColumn()
         .navigationSplitViewColumnWidth(min: 320, ideal: 420, max: 640)
     } detail: {
       DetailColumn()
     }
-    .sheet(item: $model.sheet) { sheet in
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) { RateLimitsButton() }
+    }
+    .sheet(item: sheet) { sheet in
       switch sheet {
       case .repositoryPicker: RepositoryPickerView()
       case .viewEditor(let view, let duplicate): ViewEditorView(view: view, duplicate: duplicate)
-      case .goToIssue: GoToIssueView()
+      // Go to Issue floats over the window instead.
+      case .goToIssue: EmptyView()
       }
+    }
+    .overlay { GoToIssueOverlay() }
+    .background {
+      // ⌘L goes to an issue too, as ⌘K in the Go menu does.
+      Button("Go to Issue") { model.sheet = .goToIssue }
+        .keyboardShortcut("l")
+        .disabled(model.login == nil)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
   }
-}
 
-/// The notices over the window, newest last, each dismissable.
-struct NoticesView: View {
-  @Environment(AppModel.self) private var model
-
-  var body: some View {
-    VStack(spacing: 8) {
-      ForEach(model.notices) { notice in
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-          VStack(alignment: .leading, spacing: 2) {
-            Text(notice.title).font(.headline)
-            Text(notice.message).font(.callout).foregroundStyle(.secondary)
-          }
-          Spacer(minLength: 12)
-          Button("Dismiss", systemImage: "xmark") {
-            model.notices.removeAll { $0.id == notice.id }
-          }
-          .labelStyle(.iconOnly)
-          .buttonStyle(.borderless)
-        }
-        .padding(14)
-        .frame(maxWidth: 520)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-      }
-    }
-    .padding(20)
-    .animation(.smooth, value: model.notices)
+  /// The sheet over the window, but for Go to Issue, which is no sheet.
+  private var sheet: Binding<AppSheet?> {
+    Binding(
+      get: { model.sheet == .goToIssue ? nil : model.sheet },
+      set: { model.sheet = $0 })
   }
 }
