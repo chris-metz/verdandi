@@ -9,7 +9,7 @@ Every task names its app: the issue's `electron` or `macos` label (both labels: 
 For now, commit and push directly to `main`. Before every push to `main`, run the checks of each app the commits touch, and push only when they pass:
 
 - `electron/`: `pnpm check` (typecheck, lint, format check and tests).
-- `macos/`: `swift build` and `swift test`.
+- `macos/`: `swift build`, `swift test`, and `swift test -c release -Xswiftc -enable-testing` (the app ships optimized, and some Swift bugs show only there).
 
 ## Agent skills
 

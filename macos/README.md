@@ -14,6 +14,7 @@ cd macos
 scripts/build-app.sh          # build/Verdandi.app (debug); add `release` to optimize
 open build/Verdandi.app
 swift test                    # unit tests; VERDANDI_LIVE=1 also reads real GitHub
+swift test -c release -Xswiftc -enable-testing   # the same, optimized as the app ships
 ```
 
 Set `VERDANDI_HOME` to use another profile than your own, e.g. the one in
