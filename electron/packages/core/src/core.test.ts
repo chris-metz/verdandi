@@ -18,6 +18,7 @@ import type {
   IssueState,
   IssueSummary,
   Notice,
+  RateLimitBudget,
   RateLimitState,
   Scope,
   Setup,
@@ -1951,6 +1952,97 @@ describe("rate limits", () => {
 
       expect(read.loading.status).toBe("current");
       expect(github.requestsFor("acme/api")).toBe(2);
+    });
+  });
+
+  describe("the budget left", () => {
+    /** A rate-limited session, and the budgets the core pushes. */
+    function budgetSession() {
+      const session = rateLimitedSession();
+      const budgets: RateLimitBudget[][] = [];
+      session.core.on("rateLimitBudgetsChanged", (pushed) =>
+        budgets.push(pushed),
+      );
+      return { ...session, budgets };
+    }
+
+    it("tells each pool's budget as GitHub last reported it, without asking GitHub", async () => {
+      const { github, core, budgets } = budgetSession();
+      expect(await core.getRateLimitBudgets()).toEqual([]);
+      github.setBudget("graphql", {
+        remaining: 4000,
+        resetAt: startTime + 30 * minute,
+      });
+
+      await openUntilLoaded(core, acmeApi);
+      const sent = github.requestsReceived;
+      const told = await core.getRateLimitBudgets();
+
+      expect(told).toEqual([
+        {
+          pool: "graphql",
+          limit: 5000,
+          remaining: 4000 - sent,
+          resetAt: startTime + 30 * minute,
+        },
+      ]);
+      expect(budgets.at(-1)).toEqual(told);
+      expect(github.requestsReceived).toBe(sent);
+    });
+
+    it("keeps a pool's budget once GitHub has reset the pool, which no longer holds requests back", async () => {
+      const { clock, github, core, limits } = budgetSession();
+      github.setBudget("graphql", {
+        remaining: 460,
+        resetAt: startTime + 30 * minute,
+      });
+      await openUntilLoaded(core, acmeApi);
+      const sent = github.requestsReceived;
+      expect(limits.at(-1)).toEqual([
+        { pool: "graphql", status: "low", until: startTime + 30 * minute },
+      ]);
+
+      await passTime(clock, 31 * minute);
+
+      expect(limits.at(-1)).toEqual([]);
+      expect(await core.getRateLimits()).toEqual([]);
+      expect(await core.getRateLimitBudgets()).toEqual([
+        {
+          pool: "graphql",
+          limit: 5000,
+          remaining: 460 - sent,
+          resetAt: startTime + 30 * minute,
+        },
+      ]);
+    });
+
+    it("forgets the previous account's budgets once GitHub is read as another, until GitHub answers as it", async () => {
+      const { clock, github, core, budgets } = budgetSession();
+      await openUntilLoaded(core, acmeApi);
+
+      github.signInAs("octo-writer");
+      github.setBudget("graphql", {
+        remaining: 3000,
+        resetAt: startTime + 40 * minute,
+      });
+      await passTime(clock, minute);
+      await nextSetup(core, () => core.revalidate(undefined));
+
+      expect(budgets.at(-1)).toEqual([]);
+      expect(await core.getRateLimitBudgets()).toEqual([]);
+
+      const sentBefore = github.requestsReceived;
+      await openUntilLoaded(core, acmeApi);
+      const sent = github.requestsReceived - sentBefore;
+
+      expect(await core.getRateLimitBudgets()).toEqual([
+        {
+          pool: "graphql",
+          limit: 5000,
+          remaining: 3000 - sent,
+          resetAt: startTime + 40 * minute,
+        },
+      ]);
     });
   });
 });

@@ -4,6 +4,7 @@ import type {
   IssueComment,
   IssueMetadata,
   Label,
+  RateLimitBudget,
   RateLimitPool,
   RepositoryAddress,
 } from "../contract.ts";
@@ -23,7 +24,6 @@ import {
   type IssuePage,
   type IssueReference,
   type NumberedItem,
-  type RateLimitBudget,
   type RepositoryAccess,
   type RepositoryIdentity,
   type RepositorySummary,

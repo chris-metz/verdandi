@@ -5,6 +5,7 @@ import type {
   IssueComment,
   IssueMetadata,
   Label,
+  RateLimitBudget,
   RateLimitPool,
   RepositoryAddress,
   TokenSource,
@@ -171,19 +172,6 @@ export type ReadValue<R extends GitHubRead> =
   Awaited<ReturnType<GitHubAccess[R]>> extends GitHubResponse<infer T>
     ? T
     : never;
-
-/**
- * How much of a rate-limit pool's budget is left, as an answer from GitHub
- * reported it.
- */
-export interface RateLimitBudget {
-  pool: RateLimitPool;
-  /** How many points the pool holds each time it resets. */
-  limit: number;
-  remaining: number;
-  /** When GitHub resets the pool, in milliseconds since the epoch. */
-  resetAt: number;
-}
 
 /**
  * GitHub's answer to one read, with the budget left in the pool it drew on,

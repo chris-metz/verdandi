@@ -1,12 +1,15 @@
 import { isDeepStrictEqual } from "node:util";
-import type { RateLimitPool, RateLimitState } from "./contract.ts";
+import type {
+  RateLimitBudget,
+  RateLimitPool,
+  RateLimitState,
+} from "./contract.ts";
 import {
   rateLimitPools,
   type GitHubAccess,
   type GitHubError,
   type GitHubRead,
   type GitHubResponse,
-  type RateLimitBudget,
   type ReadValue,
 } from "./github/port.ts";
 
@@ -92,7 +95,9 @@ export type SendRequest = <R extends GitHubRead>(
  * each rate-limit pool's budget as GitHub's answers report it, and holds a
  * pool's requests back while GitHub's rate limit stops them: until the pool
  * resets once its budget is used up, or as long as GitHub asks after a
- * secondary limit. Requests held back go on on their own. Each request is
+ * secondary limit. Requests held back go on on their own. It also keeps
+ * each pool's budget as GitHub last reported it, for the user to look up,
+ * still after the pool resets. Each request is
  * tagged with the account as it is sent, and what GitHub answers to one sent
  * as an earlier account is discarded.
  */
@@ -123,6 +128,11 @@ export interface RequestQueue {
   isLow(pool: RateLimitPool): boolean;
   /** Every pool that holds requests back, and how. */
   states(): RateLimitState[];
+  /**
+   * Each pool's budget as GitHub last reported it, still after the pool
+   * resets, of the pools GitHub has answered for.
+   */
+  budgets(): RateLimitBudget[];
 }
 
 export interface RequestQueueOptions {
@@ -134,6 +144,8 @@ export interface RequestQueueOptions {
   wait: (milliseconds: number) => Promise<void>;
   /** Takes every pool that holds requests back, whenever that changes. */
   push: (states: RateLimitState[]) => void;
+  /** Takes each pool's budget as GitHub last reported it, as that changes. */
+  pushBudgets: (budgets: RateLimitBudget[]) => void;
   /** The account GitHub is read as, by its tag. */
   account: () => number;
 }
@@ -178,6 +190,8 @@ interface Pool {
   secondaryLimits: number;
   /** The reset a budget below the floor is followed to, if one is. */
   lowUntil: number | undefined;
+  /** Its budget as GitHub last reported it, kept after the pool resets. */
+  reported: RateLimitBudget | undefined;
 }
 
 export function createRequestQueue({
@@ -185,6 +199,7 @@ export function createRequestQueue({
   now,
   wait,
   push,
+  pushBudgets,
   account,
 }: RequestQueueOptions): RequestQueue {
   const waiting = new Set<Entry>();
@@ -203,6 +218,7 @@ export function createRequestQueue({
    */
   let slowedAfter: number | undefined;
   let pushed: RateLimitState[] = [];
+  let pushedBudgets: RateLimitBudget[] = [];
 
   function poolOf(name: RateLimitPool): Pool {
     const pool = pools.get(name);
@@ -238,6 +254,18 @@ export function createRequestQueue({
     if (isDeepStrictEqual(current, pushed)) return;
     pushed = current;
     push(current);
+  }
+
+  function budgets(): RateLimitBudget[] {
+    return rateLimitPools.flatMap((name) => poolOf(name).reported ?? []);
+  }
+
+  /** Pushes the pools' budgets, unless they are as last pushed. */
+  function pushReported() {
+    const current = budgets();
+    if (isDeepStrictEqual(current, pushedBudgets)) return;
+    pushedBudgets = current;
+    pushBudgets(current);
   }
 
   /** Drops a waiting request, unsent, which answers as interrupted. */
@@ -332,6 +360,8 @@ export function createRequestQueue({
   function keepBudget(budget: RateLimitBudget) {
     const pool = poolOf(budget.pool);
     pool.budget = budget;
+    pool.reported = budget;
+    pushReported();
     const { resetAt } = budget;
     if (!isLow(budget.pool) || pool.lowUntil === resetAt) return;
     pool.lowUntil = resetAt;
@@ -417,9 +447,11 @@ export function createRequestQueue({
       pools = freshPools();
       slowedAfter = undefined;
       pushStates();
+      pushReported();
     },
     isLow,
     states,
+    budgets,
   };
 }
 
@@ -434,6 +466,7 @@ function freshPools(): Map<RateLimitPool, Pool> {
         pausedAfter: 0,
         secondaryLimits: 0,
         lowUntil: undefined,
+        reported: undefined,
       },
     ]),
   );

@@ -293,6 +293,27 @@ const commands = {
   },
 
   /**
+   * Pushes a contract event to the window from main, as the core does, e.g.
+   * to show a state GitHub does not bring about on demand. The payload is a
+   * JavaScript expression, evaluated here, so it can use `Date.now()`.
+   */
+  async push(args) {
+    const [, name, expression] = /^(\S+)\s+(.+)$/.exec(args) ?? [];
+    if (!name) throw new Error("push <event> <payload>");
+    if (!app) throw new Error("launch first");
+    const payload = new Function(`return (${expression});`)();
+    await app.evaluate(
+      ({ BrowserWindow }, [event, value]) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send("verdandi:event", event, value);
+        }
+      },
+      [name, payload],
+    );
+    return `pushed ${name}`;
+  },
+
+  /**
    * Switches the operating system's appearance to light or dark, so the page
    * gets its `prefers-color-scheme` change event: emulating the media query
    * changes what it matches, but fires no event.

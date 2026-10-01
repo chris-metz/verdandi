@@ -39,6 +39,7 @@ It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the a
 | `scroll <css>`                        | Scrolls the first match to the top                                                                     |
 | `text [css]`                          | Prints the text shown by the first match, or the whole window                                          |
 | `eval <js>`                           | Evaluates an expression in the window, prints it as JSON                                               |
+| `push <event> <js>`                   | Pushes a contract event to the window as the core would, its payload a JS expression. See below        |
 | `theme <light \| dark>`               | Switches the operating system's appearance, and waits until the page sees it                           |
 | `size <width> <height>`               | Resizes the page, 1200 × 800 at launch                                                                 |
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
@@ -66,6 +67,16 @@ EOF
 `theme` switches the appearance as the operating system would, overriding the file's until it changes again.
 
 The settings dialog opens with `menu Settings…`; its tiles and the appearance control are `[role="radio"]` in `[role="radiogroup"]`.
+
+## States GitHub won't produce on demand
+
+`push` sends the window a contract event as the core does, e.g. budgets running low for the rate-limit popover. The core's next push replaces it.
+
+```bash
+push rateLimitBudgetsChanged [{ pool: "graphql", limit: 5000, remaining: 312, resetAt: Date.now() + 38 * 60e3 }]
+click [aria-label="Rate Limits"]
+ss rate-limits-low
+```
 
 ## Gotchas
 

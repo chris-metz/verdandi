@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
 import { ConfigProblems } from "./ConfigProblems";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
+import { RateLimitsButton } from "./RateLimitsButton";
 import {
   presentScope,
   repositoryLabel,
@@ -628,27 +629,33 @@ function SettingsProblem({
 /**
  * Which account Verdandi reads GitHub as, and where its token comes from when
  * an environment variable overrides gh's stored account, or why the account
- * is not confirmed. While the setup blocker covers the app, it says nothing.
+ * is not confirmed, with GitHub's rate limits beside a known account. While
+ * the setup blocker covers the app, it says nothing.
  */
 function Account({ setup }: { setup: Setup | undefined }) {
   if (setup?.status === "blocked") return null;
   const label =
     setup?.status === "ready" ? accountLabel(setup.account) : undefined;
+  const login =
+    setup?.status === "ready" && setup.account.status === "known"
+      ? setup.account.account.login
+      : undefined;
   return (
-    <footer className="border-t border-sidebar-border px-4 py-2 text-xs">
+    <footer className="flex items-center gap-2 border-t border-sidebar-border py-2 pr-2 pl-4 text-xs">
       {label === undefined ? (
         <p className="text-muted-foreground">Checking GitHub access…</p>
       ) : (
         <p
           title={label.detail}
           className={cn(
-            "truncate text-muted-foreground",
+            "min-w-0 flex-1 truncate text-muted-foreground",
             label.detail !== undefined && "cursor-help",
           )}
         >
           {label.text}
         </p>
       )}
+      {login !== undefined && <RateLimitsButton login={login} />}
     </footer>
   );
 }

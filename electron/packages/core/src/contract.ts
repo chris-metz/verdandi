@@ -163,6 +163,19 @@ export interface RateLimitState {
   until: number;
 }
 
+/**
+ * How much of a rate-limit pool's budget is left, as an answer from GitHub
+ * reported it.
+ */
+export interface RateLimitBudget {
+  pool: RateLimitPool;
+  /** How many points the pool holds each time it resets. */
+  limit: number;
+  remaining: number;
+  /** When GitHub resets the pool, in milliseconds since the epoch. */
+  resetAt: number;
+}
+
 /** Why something could not be read. */
 export type Problem =
   /** GitHub could not be reached, e.g. without a connection. */
@@ -1387,6 +1400,13 @@ export interface CoreRequests {
    */
   getRateLimits: () => Promise<RateLimitState[]>;
   /**
+   * Each rate-limit pool's budget as GitHub last reported it to the account
+   * GitHub is read as, still after the pool resets, of the pools GitHub has
+   * answered for. GitHub is not asked again for it. Changes are pushed as
+   * `rateLimitBudgetsChanged`.
+   */
+  getRateLimitBudgets: () => Promise<RateLimitBudget[]>;
+  /**
    * `config.toml` as it is now: how Verdandi looks, and what in the file it
    * cannot use. Changes to the file are pushed as `configChanged`.
    */
@@ -1425,6 +1445,11 @@ export interface CoreEvents {
    * GitHub resets it.
    */
   rateLimitsChanged: RateLimitState[];
+  /**
+   * Each rate-limit pool's budget as GitHub last reported it, whenever an
+   * answer reports another, and none once GitHub is read as another account.
+   */
+  rateLimitBudgetsChanged: RateLimitBudget[];
   /** The repository picker's suggestions, while it is open, as they change. */
   repositorySuggestionsChanged: RepositorySuggestions;
   /**
@@ -1473,6 +1498,7 @@ const requests: Record<keyof CoreRequests, true> = {
   revalidate: true,
   retry: true,
   getRateLimits: true,
+  getRateLimitBudgets: true,
   openRepositoryPicker: true,
   closeRepositoryPicker: true,
   checkRepository: true,
@@ -1494,6 +1520,7 @@ const events: Record<CoreEventName, true> = {
   viewChanged: true,
   sidebarChanged: true,
   rateLimitsChanged: true,
+  rateLimitBudgetsChanged: true,
   repositorySuggestionsChanged: true,
   configChanged: true,
 };

@@ -133,6 +133,9 @@ export function createCore({
     push: (states) => {
       events.emit("rateLimitsChanged", states);
     },
+    pushBudgets: (budgets) => {
+      events.emit("rateLimitBudgetsChanged", budgets);
+    },
     account: () => setup.accountTag(),
   });
   /** The screen the main area shows, as last opened, refreshed or shown. */
@@ -763,6 +766,9 @@ export function createCore({
     },
     getRateLimits() {
       return Promise.resolve(queue.states());
+    },
+    getRateLimitBudgets() {
+      return Promise.resolve(queue.budgets());
     },
     on: events.on,
   };
