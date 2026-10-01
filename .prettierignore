@@ -1,7 +1,0 @@
-pnpm-lock.yaml
-out/
-dist/
-docs/
-prototypes/
-.claude/worktrees/
-apps/macos/

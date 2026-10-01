@@ -8,7 +8,7 @@ description: Launch and drive the Verdandi desktop app to see a change working, 
 `driver.mjs` builds the app, launches the real Electron window through Playwright on macOS, and runs commands, one per line from stdin. Send a whole flow in one call; the app quits when the input ends.
 
 ```bash
-node .agents/skills/run-desktop/driver.mjs <<'EOF'
+node electron/.agents/skills/run-desktop/driver.mjs <<'EOF'
 launch
 entry cli/cli
 issue 13840
@@ -20,7 +20,7 @@ EOF
 
 Then open every screenshot you took and look at it. A blank window or the setup blocker is a failed run, whatever the exit code says.
 
-It needs `pnpm install` and a `gh` signed in to github.com: the app reads GitHub as that account. Each `launch` gets a fresh scratch `VERDANDI_HOME` that tracks only the repositories it names, deleted on quit, so the user's own settings stay untouched.
+It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the app reads GitHub as that account. Each `launch` gets a fresh scratch `VERDANDI_HOME` that tracks only the repositories it names, deleted on quit, so the user's own settings stay untouched.
 
 ## Commands
 
@@ -54,7 +54,7 @@ A failed command prints `ERROR <command>: …`, the rest still runs, and the exi
 `config.toml` sets the appearance and the themes. Write it before `launch` for the app to start with it, or after to change it while the app runs: then `config` waits until the app has read it, and prints what it uses and any problems.
 
 ```bash
-node .agents/skills/run-desktop/driver.mjs <<'EOF'
+node electron/.agents/skills/run-desktop/driver.mjs <<'EOF'
 config dark_theme = "github-dark-dimmed"\nappearance = "dark"
 launch
 ss dimmed

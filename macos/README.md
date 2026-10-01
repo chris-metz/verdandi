@@ -10,7 +10,7 @@ Needs macOS 26 or later and Xcode 26 or later.
 ## Build and run
 
 ```sh
-cd apps/macos
+cd macos
 scripts/build-app.sh          # build/Verdandi.app (debug); add `release` to optimize
 open build/Verdandi.app
 swift test                    # unit tests; VERDANDI_LIVE=1 also reads real GitHub
@@ -18,6 +18,9 @@ swift test                    # unit tests; VERDANDI_LIVE=1 also reads real GitH
 
 Set `VERDANDI_HOME` to use another profile than your own, e.g. the one in
 `scripts/dev-home/` (copy it first: the app writes to it).
+
+The app icon is the Electron app's, compiled from
+`../electron/apps/desktop/build/icon.icon`.
 
 Until gh works, the window shows the setup screen, which says what is
 missing and the commands that fix it in Terminal. Verdandi never installs gh

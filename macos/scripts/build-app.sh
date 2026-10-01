@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds Verdandi.app in apps/macos/build/: the Swift package's binary in a
+# Builds Verdandi.app in macos/build/: the Swift package's binary in a
 # bundle, with the Icon Composer icon of the Electron app compiled by actool.
 #
 #   scripts/build-app.sh            debug build, fast
@@ -17,7 +17,7 @@ cp "$binary" "$app/Contents/MacOS/Verdandi"
 
 # Absolute paths: actool runs as a shared daemon with its own working
 # directory, which relative ones would resolve against.
-icon="$(cd ../desktop/build && pwd)/icon.icon"
+icon="$(cd ../electron/apps/desktop/build && pwd)/icon.icon"
 compiled="$PWD/build/icon"
 if [ ! -f "$compiled/Assets.car" ] || [ -n "$(find "$icon" -newer "$compiled/Assets.car")" ]; then
   mkdir -p "$compiled"

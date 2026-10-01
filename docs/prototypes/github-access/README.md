@@ -5,7 +5,7 @@ Throwaway visual evidence for [Decide onboarding and recovery for GitHub access]
 Open `index.html` in a browser, or run from the repository root:
 
 ```sh
-python3 -m http.server 4178 --bind 127.0.0.1 --directory prototypes/github-access
+python3 -m http.server 4178 --bind 127.0.0.1 --directory docs/prototypes/github-access
 ```
 
 Visit <http://127.0.0.1:4178/>. Layout C is the selected design and the default: a setup dialog that blocks the entire application until GitHub CLI is usable and authenticated. The user chose it because it makes this prerequisite explicit. The controls below the application are prototype-only.
