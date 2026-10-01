@@ -16,6 +16,8 @@ export const testThemes: ThemeCatalogue = {
     { id: "nord", kind: "dark" },
     { id: "rose-pine-dawn", kind: "light" },
     { id: "rose-pine-moon", kind: "dark" },
+    { id: "solarized-light", kind: "light" },
+    { id: "solarized-dark", kind: "dark" },
   ],
   defaults: { light: "github-light", dark: "github-dark" },
 };
