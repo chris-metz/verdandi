@@ -14,7 +14,15 @@ struct SidebarFooter: View {
           .transition(.move(edge: .bottom).combined(with: .opacity))
       }
       if let login = model.login {
-        AccountRow(login: login)
+        HStack {
+          AccountRow(login: login)
+          Spacer(minLength: 8)
+          // GitHub's rate limits sit quietly beside the account they belong to.
+          RateLimitsButton(arrowEdge: .top)
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .imageScale(.medium)
+        }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)

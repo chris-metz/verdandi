@@ -51,16 +51,13 @@ struct BrowserView: View {
     @Bindable var model = model
     NavigationSplitView(columnVisibility: $columns) {
       SidebarView()
-        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
 
     } content: {
       ListColumn()
-        .navigationSplitViewColumnWidth(min: 320, ideal: 420, max: 640)
+        .navigationSplitViewColumnWidth(min: 360, ideal: 420, max: 640)
     } detail: {
       DetailColumn()
-    }
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) { RateLimitsButton() }
     }
     .sheet(item: sheet) { sheet in
       switch sheet {

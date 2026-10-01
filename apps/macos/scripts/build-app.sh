@@ -15,12 +15,15 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/Verdandi"
 
-icon=../desktop/build/icon.icon
-if [ ! -f build/icon/Assets.car ] || [ -n "$(find "$icon" -newer build/icon/Assets.car)" ]; then
-  mkdir -p build/icon
-  xcrun actool "$icon" --compile build/icon --platform macosx \
+# Absolute paths: actool runs as a shared daemon with its own working
+# directory, which relative ones would resolve against.
+icon="$(cd ../desktop/build && pwd)/icon.icon"
+compiled="$PWD/build/icon"
+if [ ! -f "$compiled/Assets.car" ] || [ -n "$(find "$icon" -newer "$compiled/Assets.car")" ]; then
+  mkdir -p "$compiled"
+  xcrun actool "$icon" --compile "$compiled" --platform macosx \
     --minimum-deployment-target 26.0 --app-icon icon \
-    --output-partial-info-plist build/icon/partial.plist >/dev/null
+    --output-partial-info-plist "$compiled/partial.plist" >/dev/null
 fi
 cp build/icon/Assets.car build/icon/icon.icns "$app/Contents/Resources/"
 

@@ -63,6 +63,9 @@ extension RateLimitPool {
 struct RateLimitsButton: View {
   @Environment(AppModel.self) private var model
   @State private var isPresented = false
+  /// Where the popover opens: below the button, or above it at the bottom
+  /// of the window.
+  var arrowEdge: Edge = .bottom
 
   var body: some View {
     let budgets = LaunchOptions.rateLimits ?? model.rateLimits.mapValues(PoolBudget.init)
@@ -78,7 +81,7 @@ struct RateLimitsButton: View {
       }
       .help(isLow ? "A GitHub rate limit is running low" : "GitHub rate limits")
       .accessibilityValue(lowest.map { "\(Int(($0 * 100).rounded())) percent left in the emptiest pool" } ?? "Not used yet")
-      .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+      .popover(isPresented: $isPresented, arrowEdge: arrowEdge) {
         RateLimitsPopover(budgets: budgets, login: model.login)
       }
     }

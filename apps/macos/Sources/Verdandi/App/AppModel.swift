@@ -160,6 +160,9 @@ final class AppModel {
 
   /// Changes the settings and writes them to settings.json.
   func changeSettings(_ change: (inout Settings) -> Void) {
+    // A file that cannot be read would be overwritten with what was last
+    // read; it stays as it is until it can be read again.
+    guard settingsProblem == nil else { return }
     var changed = settings
     change(&changed)
     guard changed != settings else { return }
