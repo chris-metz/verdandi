@@ -57,6 +57,9 @@ struct IssuePageView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
+    // Break lines as English does, as the rest of the app is in English,
+    // rather than by the system's language.
+    .typesettingLanguage(Locale.Language(identifier: "en"))
     .task(id: issueID) { await model.pages.open(issueID) }
   }
 

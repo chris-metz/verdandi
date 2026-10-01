@@ -34,6 +34,7 @@ struct BlockingMapBand: View {
         ScrollView(.horizontal) {
           BlockingMapCanvas(
             layout: layout,
+            cardWidth: MapMetrics.cardWidth(fitting: viewport),
             root: page.issueID,
             rootRepository: issue.repository,
             cursor: focused || showsCursor ? cursor : nil,
@@ -159,8 +160,14 @@ struct BlockingMapBand: View {
 
 /// How the map's cards are sized and spaced.
 private enum MapMetrics {
-  static let cardWidth: CGFloat = 216
-  static let columnGap: CGFloat = 60
+  static let columnGap: CGFloat = 56
+
+  /// As wide as lets the issue and its neighbours on both sides show in
+  /// `viewport`, within what a card reads well at.
+  static func cardWidth(fitting viewport: CGFloat) -> CGFloat {
+    let fitting = (viewport - 2 * IssuePageMetrics.margin - 2 * columnGap) / 3
+    return min(216, max(176, fitting.rounded(.down)))
+  }
   static let rowGap: CGFloat = 14
   /// Room above and below the cards for arrows that go around them.
   static let lane: CGFloat = 26
@@ -171,6 +178,7 @@ private enum MapMetrics {
 /// cards from where the cards turned out to be.
 private struct BlockingMapCanvas: View {
   var layout: BlockingMapLayout
+  var cardWidth: CGFloat
   var root: String
   var rootRepository: RepositoryAddress
   /// The node the keyboard is on, while the map has focus.
@@ -187,7 +195,7 @@ private struct BlockingMapCanvas: View {
           Text(column.title)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(column.step == 0 ? .primary : .secondary)
-            .frame(width: MapMetrics.cardWidth, alignment: .leading)
+            .frame(width: cardWidth, alignment: .leading)
         }
       }
       .padding(.top, 10)
@@ -201,7 +209,7 @@ private struct BlockingMapCanvas: View {
                 .onHover { onHover($0 ? node.id : nil) }
             }
           }
-          .frame(width: MapMetrics.cardWidth)
+          .frame(width: cardWidth)
         }
       }
       .padding(.vertical, MapMetrics.lane)
@@ -221,7 +229,7 @@ private struct BlockingMapCanvas: View {
     case .card(let card):
       Button { onActivate(node.id) } label: {
         MapCardView(
-          card: card, isRoot: card.id == root, outward: step < 0 ? .blockedBy : step > 0 ? .blocking : nil,
+          card: card, width: cardWidth, isRoot: card.id == root, outward: step < 0 ? .blockedBy : step > 0 ? .blocking : nil,
           showsRepository: card.issue.repository != rootRepository, hasCursor: hasCursor,
           isHighlighted: highlighted == node.id)
       }
@@ -232,14 +240,14 @@ private struct BlockingMapCanvas: View {
     case .more(_, let count):
       Button { onActivate(node.id) } label: {
         MapPlaceholderView(
-          title: "+\(count) more", subtitle: nil, systemImage: "chevron.down", hasCursor: hasCursor)
+          width: cardWidth, title: "+\(count) more", subtitle: nil, systemImage: "chevron.down", hasCursor: hasCursor)
       }
       .buttonStyle(.plain)
       .help("Show every issue of this column")
     case .further(let side, let further):
       Button { onActivate(node.id) } label: {
         MapPlaceholderView(
-          title: further.isExact ? "+\(further.folded) more" : "More…",
+          width: cardWidth, title: further.isExact ? "+\(further.folded) more" : "More…",
           subtitle: "Show 2 more steps",
           systemImage: side == .blockedBy ? "chevron.backward.2" : "chevron.forward.2", hasCursor: hasCursor)
       }
@@ -252,6 +260,7 @@ private struct BlockingMapCanvas: View {
 /// An issue on the map.
 private struct MapCardView: View {
   var card: BlockingMap.Card
+  var width: CGFloat
   var isRoot: Bool
   /// The side its relationships lead away from the map's issue, unless it
   /// is the map's issue.
@@ -301,7 +310,7 @@ private struct MapCardView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
-    .frame(width: MapMetrics.cardWidth, alignment: .leading)
+    .frame(width: width, alignment: .leading)
     .background {
       shape.fill(Color(nsColor: .controlBackgroundColor))
       if isRoot { shape.fill(Color.accentColor.opacity(0.08)) }
@@ -358,6 +367,7 @@ private struct MapCardView: View {
 /// A node standing for cards the map does not show: a control on glass,
 /// which shows them.
 private struct MapPlaceholderView: View {
+  var width: CGFloat
   var title: String
   var subtitle: String?
   var systemImage: String
@@ -379,7 +389,7 @@ private struct MapPlaceholderView: View {
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
-    .frame(width: MapMetrics.cardWidth, alignment: .leading)
+    .frame(width: width, alignment: .leading)
     .contentShape(shape)
     .glassEffect(.regular.interactive(), in: shape)
     .overlay {
