@@ -2,7 +2,7 @@
 
 Research date: **2026-09-26**. For [Research cross-platform desktop stacks: Go, Rust, TypeScript/Bun](https://github.com/chris-metz/verdandi/issues/6), under [Map: Verdandi MVP spec](https://github.com/chris-metz/verdandi/issues/1). This supplies evidence for the stack decision; it does not select the stack, presentation, architecture, or release policy.
 
-Verdandi requires macOS, Linux, and Windows; an installed, authenticated `gh`; read-only issue navigation; keyboard-first interaction with mouse support; and a UI-independent core reusable by a later TUI. Domain terms follow [CONTEXT.md](../../CONTEXT.md). The existing [GitHub issue data access research](github-issue-data-access.md) supplies the API and authentication details.
+Verdandi requires macOS, Linux, and Windows; an installed, authenticated `gh`; read-only issue navigation; keyboard-first interaction with mouse support; and a UI-independent core reusable by a later TUI. Domain terms follow [GLOSSARY.md](../../GLOSSARY.md). The existing [GitHub issue data access research](github-issue-data-access.md) supplies the API and authentication details.
 
 ## Findings
 

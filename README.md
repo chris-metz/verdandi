@@ -2,7 +2,7 @@
 
 <h1 align="center">Verdandi</h1>
 
-A keyboard-first desktop client for GitHub issues across many repositories, focused on how issues relate: sub-issue hierarchies and blocking relationships that cross repository boundaries. Vocabulary is in [`CONTEXT.md`](CONTEXT.md), decisions in [`docs/adr/`](docs/adr/).
+A keyboard-first desktop client for GitHub issues across many repositories, focused on how issues relate: sub-issue hierarchies and blocking relationships that cross repository boundaries. Vocabulary is in [`GLOSSARY.md`](GLOSSARY.md), decisions in [`docs/adr/`](docs/adr/).
 
 <p align="center">
   <img src="docs/screenshots/issue-light.png" width="49%" alt="An issue page in Verdandi, light: the issues that block it and those it blocks, as a map">
