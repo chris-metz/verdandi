@@ -28,8 +28,8 @@ const defaults = {
   darkTheme: "github-dark",
 };
 
-// One core for every test: each watcher started or stopped makes macOS's
-// FSEvents miss changes in the other test files running meanwhile.
+// One core for every test, as the app has one: a new watcher on macOS misses
+// what changes while it starts.
 let home: string;
 let core: ReturnType<typeof createCore>;
 beforeAll(async () => {
@@ -265,7 +265,9 @@ it("pushes each change to the file: created, fixed, replaced and deleted", async
   const pushed: ConfigState[] = [];
   core.on("configChanged", (state) => pushed.push(state));
 
-  await write('dark_theme = "github-dark-dimmed"');
+  // A text no other test writes: macOS may report this write together with
+  // the deletion before it, and an earlier test's text would look unchanged.
+  await write('# Created\ndark_theme = "github-dark-dimmed"');
   await expect
     .poll(() => pushed.at(-1))
     .toMatchObject({

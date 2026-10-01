@@ -10,7 +10,8 @@ import { dirname, join } from "node:path";
  * whether it can be read, differs from before, and when watching fails. Each
  * check runs through `serial`, after the reads and writes before it. `ready`
  * settles once watching has begun, so that a read after it sees every later
- * change.
+ * change; one made while macOS starts watching is seen by a check shortly
+ * after.
  */
 export function watchFile(
   folder: string,
@@ -62,8 +63,6 @@ export function watchFile(
           if (nearest === watched) return;
           await follow(nearest);
           await compare();
-          // A new watcher on macOS misses what changes while it starts.
-          setTimeout(() => void serial(compare), 250).unref();
         });
       },
       failed() {
@@ -71,6 +70,8 @@ export function watchFile(
       },
     });
     watching = next;
+    // A new watcher on macOS misses what changes while it starts.
+    setTimeout(() => void serial(compare), 250).unref();
     return next.started;
   }
   const ready = (
