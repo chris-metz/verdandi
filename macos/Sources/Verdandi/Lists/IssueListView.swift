@@ -46,8 +46,10 @@ private struct IssueListContent: View {
       }
       .onChange(of: model.issuePath.isEmpty) { _, listShows in
         // Back from the issue pages, the keyboard is where it was, on the
-        // row of the issue opened.
-        if listShows { focused = true }
+        // row of the issue opened. Asked for once the key that went back has
+        // been handled: asked for while it is, the request is lost, and j and
+        // k beep until Tab brings the keyboard back.
+        if listShows { Task { focused = true } }
       }
       .onChange(of: list.labelFilter) {
         // Keep the selection in sight as the list narrows or widens.
