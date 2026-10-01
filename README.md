@@ -17,3 +17,11 @@ Verdandi is a personal project, shared in the open. For now it comes as two apps
 - [`macos/`](macos/): a native macOS app in SwiftUI, with Liquid Glass and without Node. See [`macos/README.md`](macos/README.md).
 
 Both read GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`). Both read and write the same `settings.json`, so they show the same tracked repositories and views; run one of them at a time.
+
+## Install into Applications
+
+```sh
+./install-app.sh macos       # or: ./install-app.sh electron
+```
+
+It builds that app and installs it as `/Applications/Verdandi.app`, in place of whichever of the two is there, since both are called Verdandi. It quits a running Verdandi first, and starts the new one.
