@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { tabTitle, type Tab } from "./tabs";
 
 const itemClass =
-  "cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50";
+  "rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50";
 
 /**
  * The tabs over the main area, in one slim row, the tab shown marked by an
@@ -105,7 +105,7 @@ export function TabBar({
                 setDrop(undefined);
               }}
               className={cn(
-                "group relative flex max-w-64 min-w-32 flex-1 cursor-default items-center gap-1.5 border-r px-3 text-xs select-none",
+                "group relative flex max-w-64 min-w-32 flex-1 items-center gap-1.5 border-r px-3 text-xs select-none",
                 selected
                   ? "bg-muted/40 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-selection-edge"
                   : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",

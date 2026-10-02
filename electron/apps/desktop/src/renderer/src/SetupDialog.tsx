@@ -153,7 +153,7 @@ export function SetupDialog({ problem }: { problem: SetupProblem }) {
           )}
           {problem.kind === "no-usable-gh" && (
             <details className="text-muted-foreground">
-              <summary className="cursor-default text-foreground">
+              <summary className="text-foreground">
                 gh works in my terminal
               </summary>
               <p className="mt-2">{guidance.terminalHint.explanation}</p>

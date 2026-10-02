@@ -11,8 +11,7 @@ export interface IssueMenuTarget {
   link?: string | undefined;
 }
 
-const itemClass =
-  "cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent";
+const itemClass = "rounded px-2 py-1.5 outline-none data-highlighted:bg-accent";
 
 /**
  * The menu a right click on an issue opens in a pane, on a row, a card, an

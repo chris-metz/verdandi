@@ -565,7 +565,7 @@ function Entry({
                 key={label}
                 disabled={disabled}
                 onClick={onClick}
-                className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50"
+                className="rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50"
               >
                 {label}
               </ContextMenu.Item>

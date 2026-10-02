@@ -195,7 +195,7 @@ export function FontPicker({
                 }}
                 // Rows out of sight are not drawn, nor their fonts loaded.
                 className={cn(
-                  "flex h-line-7 cursor-default items-center gap-1.5 rounded px-2 select-none [content-visibility:auto]",
+                  "flex h-line-7 items-center gap-1.5 rounded px-2 select-none [content-visibility:auto]",
                   highlighted
                     ? "bg-selection shadow-[inset_2px_0_0_var(--selection-edge)]"
                     : !disabled && !entry.unavailable && "hover:bg-muted",

@@ -270,7 +270,7 @@ function DestinationRow({
       onMouseMove={onHover}
       onClick={onGo}
       className={cn(
-        "flex h-line-9 cursor-default items-center gap-3 rounded-lg px-3",
+        "flex h-line-9 items-center gap-3 rounded-lg px-3",
         highlighted && "bg-selection",
       )}
     >

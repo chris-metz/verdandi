@@ -119,6 +119,29 @@
   html {
     @apply font-sans;
   }
+  /*
+   * What a click acts on shows the pointing hand, as on the web, where
+   * Tailwind leaves buttons the arrow: buttons, tabs, disclosures, radios and
+   * the entries of menus, lists and trees, while they are not disabled.
+   */
+  :is(
+    button,
+    summary,
+    select,
+    input:is([type="checkbox"], [type="radio"]),
+    [role="button"],
+    [role="tab"],
+    [role="radio"],
+    [role="checkbox"],
+    [role="switch"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="option"],
+    [role="treeitem"]
+  ):not(:disabled, [aria-disabled="true"], [data-disabled]) {
+    cursor: pointer;
+  }
 }
 
 /* One vertical guide per level of nesting in a list, 20px apart. */
