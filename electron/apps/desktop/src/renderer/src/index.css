@@ -9,7 +9,8 @@
  * Every colour comes from the shown theme, which `theme.ts` sets on <html> as
  * custom properties, e.g. `--background`. `dark:` follows whether that theme
  * is dark. The chosen fonts come the same way from `fonts.ts`, as
- * `--interface-font` and `--code-font`, with the shipped ones until then.
+ * `--interface-font` and `--code-font`, with the shipped ones until then,
+ * and the text size from `text-size.ts`, as `--text-scale`.
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -59,10 +60,53 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /*
+   * Each text size is as Tailwind gives it for body text of 14px, times
+   * `--text-scale`. The root font size stays 16px, and with it every rem of
+   * spacing, so text grows and shrinks without what is around it. The two
+   * smallest, in place of 10px and 11px, stop at 9px.
+   */
+  --text-3xs: max(9px, calc(10px * var(--text-scale)));
+  --text-3xs--line-height: calc(16 / 10);
+  --text-2xs: max(9px, calc(11px * var(--text-scale)));
+  --text-2xs--line-height: calc(16 / 11);
+  --text-xs: calc(0.75rem * var(--text-scale));
+  --text-sm: calc(0.875rem * var(--text-scale));
+  --text-base: calc(1rem * var(--text-scale));
+  --text-lg: calc(1.125rem * var(--text-scale));
+  --text-xl: calc(1.25rem * var(--text-scale));
+  --text-2xl: calc(1.5rem * var(--text-scale));
 }
 
 :root {
   --radius: 0.625rem;
+  --text-scale: 1;
+  /*
+   * The sticky header above a list's columns: a line of `text-2xs` and its
+   * padding. A row's scroll margin is as tall, so that moving to a row does
+   * not leave it under the header.
+   */
+  --column-header-height: calc(
+    --theme(--text-2xs) * --theme(--text-2xs--line-height) + 0.75rem
+  );
+}
+
+/*
+ * `h-<n>` around a line of text, which it is at body text of 14px: the line
+ * grows and shrinks with the text, and the space around it stays.
+ */
+@utility h-line-* {
+  height: calc(
+    var(--spacing) * --value(number) + 1lh * (1 - 1 / var(--text-scale))
+  );
+}
+
+/*
+ * `w-<n>` for text, which it is at body text of 14px: it grows with larger
+ * text in proportion, and stays for smaller text.
+ */
+@utility w-text-* {
+  width: calc(var(--spacing) * --value(number) * max(1, var(--text-scale)));
 }
 
 @layer base {

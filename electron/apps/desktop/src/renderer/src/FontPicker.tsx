@@ -157,7 +157,7 @@ export function FontPicker({
           setHighlight("first");
         }}
         onKeyDown={onKeyDown}
-        className="h-8 border-b bg-transparent px-2.5 outline-none placeholder:text-muted-foreground"
+        className="h-line-8 border-b bg-transparent px-2.5 outline-none placeholder:text-muted-foreground"
       />
       <ul
         ref={list}
@@ -174,7 +174,7 @@ export function FontPicker({
               {entry.heading && (
                 <li
                   role="presentation"
-                  className="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground"
+                  className="px-2 pt-2 pb-1 text-2xs font-medium text-muted-foreground"
                 >
                   {entry.heading}
                 </li>
@@ -195,7 +195,7 @@ export function FontPicker({
                 }}
                 // Rows out of sight are not drawn, nor their fonts loaded.
                 className={cn(
-                  "flex h-7 cursor-default items-center gap-1.5 rounded px-2 select-none [content-visibility:auto]",
+                  "flex h-line-7 cursor-default items-center gap-1.5 rounded px-2 select-none [content-visibility:auto]",
                   highlighted
                     ? "bg-selection shadow-[inset_2px_0_0_var(--selection-edge)]"
                     : !disabled && !entry.unavailable && "hover:bg-muted",
@@ -218,7 +218,7 @@ export function FontPicker({
                   {entry.label}
                 </span>
                 {entry.note && (
-                  <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground">
+                  <span className="ml-auto shrink-0 pl-2 text-2xs text-muted-foreground">
                     {entry.note}
                   </span>
                 )}

@@ -1,4 +1,10 @@
-import type { Appearance, Config, ConfigState } from "@verdandi/core/contract";
+import { Slider } from "@base-ui/react/slider";
+import {
+  textSizes,
+  type Appearance,
+  type Config,
+  type ConfigState,
+} from "@verdandi/core/contract";
 import { Check } from "lucide-react";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -49,7 +55,7 @@ export function SettingsDialog({
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <DialogTitle>Settings</DialogTitle>
-          <kbd className="rounded border border-b-2 px-1 font-mono text-[11px] text-muted-foreground">
+          <kbd className="rounded border border-b-2 px-1 font-mono text-2xs text-muted-foreground">
             Esc
           </kbd>
         </div>
@@ -99,9 +105,9 @@ const appearances: readonly { value: Appearance; label: string }[] = [
 ];
 
 /**
- * The appearance, the light and dark theme, and the interface and code
- * font, each chosen at once. While the file cannot be read as TOML, they
- * cannot be changed.
+ * The appearance, the light and dark theme, the interface and code font,
+ * and the text size, each chosen at once. While the file cannot be read as
+ * TOML, they cannot be changed.
  */
 function AppearanceSection({ config }: { config: ConfigState }) {
   // Why the last choice was not written, until the file changes.
@@ -198,6 +204,11 @@ function AppearanceSection({ config }: { config: ConfigState }) {
           </Setting>
         ))}
       </div>
+      <TextSizeSetting
+        chosen={config.config.textSize}
+        disabled={disabled}
+        onChoose={(size) => choose({ textSize: size })}
+      />
       <ConfigFileLink config={config} />
     </div>
   );
@@ -328,6 +339,105 @@ function ThemeMiniature({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A slider of the text sizes, from the smallest to the largest, with the
+ * default marked. A size is chosen as the thumb is let go, or with each key
+ * that moves it.
+ */
+function TextSizeSetting({
+  chosen,
+  disabled,
+  onChoose,
+}: {
+  chosen: number;
+  disabled: boolean;
+  /** Settles once the choice is written, or could not be. */
+  onChoose: (size: number) => Promise<void>;
+}) {
+  // The size under the thumb, from when it moves until it is written.
+  const [moving, setMoving] = useState<number>();
+  const { smallest, largest, default: standard } = textSizes;
+  const shown = moving ?? chosen;
+  const at = (size: number) =>
+    `${String(((size - smallest) / (largest - smallest)) * 100)}%`;
+  return (
+    <Setting label="Text size">
+      {(labelId) => (
+        <div className="flex items-start gap-4">
+          <Slider.Root
+            aria-labelledby={labelId}
+            value={shown}
+            min={smallest}
+            max={largest}
+            disabled={disabled}
+            onValueChange={(size) => {
+              setMoving(size);
+            }}
+            onValueCommitted={(size) => {
+              setMoving(size);
+              void onChoose(size).finally(() => {
+                // Unless it has moved on since.
+                setMoving((current) =>
+                  current === size ? undefined : current,
+                );
+              });
+            }}
+            className="w-72 data-disabled:opacity-50"
+          >
+            <Slider.Control className="flex h-line-5 items-center">
+              <Slider.Track className="h-1 w-full rounded-full bg-muted">
+                <Slider.Indicator className="rounded-full bg-selection-edge" />
+                <Slider.Thumb
+                  getAriaValueText={(_, size) =>
+                    `${String(size)} pixels${size === standard ? ", the default" : ""}`
+                  }
+                  className="size-4 rounded-full border-2 border-selection-edge bg-background shadow-sm has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring"
+                />
+              </Slider.Track>
+            </Slider.Control>
+            <div
+              aria-hidden
+              className="relative h-line-7 text-2xs text-muted-foreground"
+            >
+              {Array.from(
+                { length: largest - smallest + 1 },
+                (_, index) => smallest + index,
+              ).map((size) => (
+                <span
+                  key={size}
+                  style={{ left: at(size) }}
+                  className={cn(
+                    "absolute top-0 w-px -translate-x-1/2",
+                    size === standard
+                      ? "h-2 bg-muted-foreground"
+                      : "h-1 bg-border",
+                  )}
+                />
+              ))}
+              {[
+                { size: smallest, label: String(smallest) },
+                { size: standard, label: "Default" },
+                { size: largest, label: String(largest) },
+              ].map(({ size, label }) => (
+                <span
+                  key={size}
+                  style={{ left: at(size) }}
+                  className="absolute top-2.5 -translate-x-1/2"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          </Slider.Root>
+          <span className="flex h-line-5 items-center tabular-nums">
+            {shown} px
+          </span>
+        </div>
+      )}
+    </Setting>
   );
 }
 

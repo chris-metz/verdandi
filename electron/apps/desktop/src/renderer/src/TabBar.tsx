@@ -58,7 +58,7 @@ export function TabBar({
   }
 
   return (
-    <div className="flex h-9 shrink-0 items-stretch border-b">
+    <div className="flex h-line-9 shrink-0 items-stretch border-b text-xs">
       <div
         ref={row}
         role="tablist"
@@ -116,7 +116,7 @@ export function TabBar({
               )}
             >
               {title.kind === "issue" ? (
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
+                <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
                   {title.number}
                 </span>
               ) : title.kind === "list" ? (

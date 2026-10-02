@@ -113,3 +113,7 @@ _Avoid_: UI font, body font, system font
 **Code font**:
 The font family Verdandi shows code in, such as code in issue bodies and comments. The user chooses it as they do the interface font; unless they do, it is a monospace font Verdandi ships.
 _Avoid_: monospace font, mono font
+
+**Text size**:
+The size of body text in Verdandi, in pixels. All other text grows and shrinks with it in proportion, while spacing and icons stay as they are, unlike zoom, which grows everything.
+_Avoid_: font size, zoom

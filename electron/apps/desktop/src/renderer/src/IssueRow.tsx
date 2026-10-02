@@ -55,35 +55,35 @@ const issueColumns: readonly IssueColumn[] = [
     key: "author",
     header: "By",
     headerTitle: "Author",
-    className: "w-7 justify-center",
+    className: "w-text-7 justify-center",
     dimsContext: true,
     cell: (issue) => <AuthorAvatar issue={issue} />,
   },
   {
     key: "created",
     header: "Created",
-    className: "w-16 justify-end",
+    className: "w-text-16 justify-end",
     dimsContext: true,
     cell: (issue) => <Created issue={issue} />,
   },
   {
     key: "progress",
     header: "Sub-issues",
-    className: "w-24 justify-end gap-1.5",
+    className: "w-text-24 justify-end gap-1.5",
     dimsContext: true,
     cell: (issue) => <Progress progress={issue.subIssueProgress} />,
   },
   {
     key: "blockedBy",
     header: "Blocked by",
-    className: "w-20 justify-end",
+    className: "w-text-20 justify-end",
     dimsContext: false,
     cell: (issue) => <Relationship issue={issue} kind="blockedBy" />,
   },
   {
     key: "blocking",
     header: "Blocks",
-    className: "w-16 justify-end",
+    className: "w-text-16 justify-end",
     dimsContext: false,
     cell: (issue) => <Relationship issue={issue} kind="blocking" />,
   },
@@ -95,7 +95,7 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
     <div
       aria-hidden
       className={cn(
-        "flex h-7 items-center gap-1.5 border-b bg-background pr-4 pl-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase",
+        "flex h-(--column-header-height) items-center gap-1.5 border-b bg-background pr-4 pl-3 text-2xs font-medium tracking-wide text-muted-foreground uppercase",
         sticky && "sticky top-0 z-10",
       )}
     >
@@ -196,7 +196,7 @@ export const IssueRow = memo(function IssueRow({
         if (event.button === 1) openFrom(event, issue);
       }}
       className={cn(
-        "flex h-8 scroll-mt-7 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap select-none",
+        "flex h-line-8 scroll-mt-(--column-header-height) items-center gap-1.5 pr-4 pl-3 whitespace-nowrap select-none",
         selected
           ? "bg-muted group-focus:bg-selection group-focus:shadow-[inset_2px_0_0_var(--selection-edge)]"
           : "hover:bg-muted/60",
@@ -243,12 +243,13 @@ export const IssueRow = memo(function IssueRow({
             </span>
           )}
         </span>
-        <span className="min-w-0 truncate">{issue.title}</span>
+        {/* It takes the room left beside the labels, which give way only after it. */}
+        <span className="min-w-0 grow basis-0 truncate">{issue.title}</span>
         {read && <Labels labels={read.labels} onFilter={onFilterLabel} />}
         {issue.external && (
           <span
             title="Not in a tracked repository"
-            className="shrink-0 rounded-full border border-dashed border-muted-foreground px-1.5 text-[10px] leading-4 text-muted-foreground"
+            className="shrink-0 rounded-full border border-dashed border-muted-foreground px-1.5 text-3xs text-muted-foreground"
           >
             external
           </span>
@@ -269,7 +270,7 @@ export const IssueRow = memo(function IssueRow({
         <span
           title={`${countMatches(inside)} below this issue`}
           className={cn(
-            "shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground",
+            "shrink-0 rounded-full bg-muted px-1.5 text-2xs text-muted-foreground",
             context && "opacity-55",
           )}
         >
@@ -312,7 +313,7 @@ function LoadingParentChip() {
   return (
     <span
       title="Loading the parent issue"
-      className="flex shrink-0 items-center gap-1 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground"
+      className="flex shrink-0 items-center gap-1 rounded-full border px-1.5 text-2xs text-muted-foreground"
     >
       <LoaderCircle aria-hidden className="size-3 animate-spin" />
       parent issue
@@ -336,7 +337,7 @@ export function MissingParentRow({
   return (
     <div
       role="note"
-      className="flex h-8 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap text-muted-foreground select-none"
+      className="flex h-line-8 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap text-muted-foreground select-none"
     >
       <span aria-hidden className="size-[18px] shrink-0" />
       {notVisible ? (
@@ -432,7 +433,11 @@ export function WarningIcon({ title }: { title: string | undefined }) {
   );
 }
 
-/** A row's first labels, each filtering by itself, and `+N` for the rest. */
+/**
+ * A row's first labels, each filtering by itself, and `+N` for the rest.
+ * Where the row is too narrow for them, as with large text, they are cut
+ * short with an ellipsis rather than running into the columns.
+ */
 function Labels({
   labels,
   onFilter,
@@ -448,7 +453,7 @@ function Labels({
           key={label.name}
           label={label}
           onFilter={onFilter}
-          className="px-1.5 text-[11px] leading-[18px]"
+          className="min-w-0 shrink truncate px-1.5 text-2xs leading-[calc(18/11)]"
         />
       ))}
       {more && <MoreLabels labels={labels} more={more} onFilter={onFilter} />}
@@ -467,7 +472,7 @@ function RepositoryChip({ issue }: { issue: IssueIdentity }) {
       title={title}
       style={colors && colorStyle(colors)}
       className={cn(
-        "shrink-0 rounded px-1.5 text-[11px] leading-[18px] font-medium",
+        "shrink-0 rounded px-1.5 text-2xs leading-[calc(18/11)] font-medium",
         !colors &&
           "text-muted-foreground ring-1 ring-muted-foreground ring-inset",
       )}
@@ -508,7 +513,7 @@ function ParentChip({
       title={`Sub-issue of ${parent.reference}: ${parent.title}${why ?? ""}`}
       data-parent-issue-id={parent.id}
       className={cn(
-        "flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground",
+        "flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-2xs text-muted-foreground",
         failed && "border-dashed border-warning",
       )}
     >
@@ -598,7 +603,7 @@ function Relationship({
     <span
       title={`${blockedBy ? "Blocked by" : "Blocks"}: ${cell.text} open`}
       className={cn(
-        "flex h-5 items-center gap-1 rounded-full px-1.5 text-xs tabular-nums",
+        "flex h-line-5 items-center gap-1 rounded-full px-1.5 text-xs tabular-nums",
         !cell.live && "text-muted-foreground",
         cell.live &&
           blockedBy &&

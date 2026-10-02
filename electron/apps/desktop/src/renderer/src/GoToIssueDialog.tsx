@@ -173,7 +173,7 @@ export function GoToIssuePalette({
       <label
         className={cn(
           "flex items-center gap-3 rounded-xl border bg-card px-4 focus-within:ring-3 focus-within:ring-ring/40",
-          inline ? "h-14 shadow-sm" : "h-12",
+          inline ? "h-line-14 text-lg shadow-sm" : "h-line-12",
         )}
       >
         <Hash aria-hidden className="size-5 shrink-0 text-muted-foreground" />
@@ -193,10 +193,7 @@ export function GoToIssuePalette({
             type(event.target.value);
           }}
           onKeyDown={onKeyDown}
-          className={cn(
-            "min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground",
-            inline && "text-lg",
-          )}
+          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
         />
         {status.kind === "looking-up" && (
           <LoaderCircle
@@ -273,7 +270,7 @@ function DestinationRow({
       onMouseMove={onHover}
       onClick={onGo}
       className={cn(
-        "flex h-9 cursor-default items-center gap-3 rounded-lg px-3",
+        "flex h-line-9 cursor-default items-center gap-3 rounded-lg px-3",
         highlighted && "bg-selection",
       )}
     >
@@ -285,7 +282,7 @@ function DestinationRow({
           className="size-4 shrink-0 text-muted-foreground"
         />
       )}
-      <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+      <span className="w-text-14 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
         #{number}
       </span>
       <span className="min-w-0 flex-1 truncate">
@@ -365,7 +362,7 @@ function StatusLine({
 function KeyHint({ keys, children }: { keys: string; children: ReactNode }) {
   return (
     <span className="flex items-center gap-1.5">
-      <kbd className="rounded border bg-muted px-1 font-sans text-[11px]">
+      <kbd className="rounded border bg-muted px-1 font-sans text-2xs">
         {keys}
       </kbd>
       {children}

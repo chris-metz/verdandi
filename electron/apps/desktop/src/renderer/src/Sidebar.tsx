@@ -382,7 +382,7 @@ function SectionHeading({
 }) {
   return (
     <div className="flex items-center justify-between px-2 pt-3 pb-1 first:pt-1">
-      <h2 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <h2 className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         {children}
       </h2>
       {action}
@@ -509,7 +509,7 @@ function Entry({
         </span>
       )}
       {shortcut ? (
-        <kbd className="shrink-0 rounded border border-b-2 bg-background px-1 font-mono text-[11px] text-muted-foreground">
+        <kbd className="shrink-0 rounded border border-b-2 bg-background px-1 font-mono text-2xs text-muted-foreground">
           {shortcut}
         </kbd>
       ) : reason ? (

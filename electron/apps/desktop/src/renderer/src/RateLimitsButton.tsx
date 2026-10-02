@@ -104,7 +104,7 @@ function PoolBudget({ row }: { row: PoolRow }) {
         {budget && budget.tone !== "normal" && (
           <span
             className={cn(
-              "rounded-full px-1.5 text-[10px] leading-4 font-semibold text-white",
+              "rounded-full px-1.5 text-3xs font-semibold text-white",
               budget.tone === "used-up" ? "bg-destructive" : "bg-warning",
             )}
           >

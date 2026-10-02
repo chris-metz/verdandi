@@ -6,8 +6,9 @@
  */
 
 @layer components {
+  /* Sizes follow the text size, through Tailwind's text sizes. */
   .markdown-body {
-    font-size: 14px;
+    font-size: --theme(--text-sm);
     line-height: 1.5;
     overflow-wrap: break-word;
   }
@@ -201,8 +202,8 @@
   .markdown-body kbd {
     display: inline-block;
     padding: 3px 5px;
-    font-size: 11px;
-    line-height: 10px;
+    font-size: --theme(--text-2xs);
+    line-height: calc(10 / 11);
     vertical-align: middle;
     background-color: var(--gh-canvas-subtle);
     border: 1px solid var(--gh-border-muted);
@@ -455,7 +456,7 @@
   /* Footnotes */
 
   .markdown-body .footnotes {
-    font-size: 12px;
+    font-size: --theme(--text-xs);
     color: var(--gh-fg-muted);
     border-top: 1px solid var(--gh-border);
   }
@@ -493,7 +494,7 @@
     justify-content: space-between;
     gap: 8px;
     padding: 4px 8px 4px 12px;
-    font-size: 12px;
+    font-size: --theme(--text-xs);
     color: var(--gh-fg-muted);
     border-bottom: 1px solid var(--gh-border);
   }
@@ -552,8 +553,8 @@
     gap: 4px;
     max-width: 100%;
     padding: 0 8px;
-    font-size: 12px;
-    line-height: 22px;
+    font-size: --theme(--text-xs);
+    line-height: calc(22 / 12);
     color: var(--foreground);
     text-decoration: none;
     vertical-align: middle;
@@ -579,7 +580,7 @@
     gap: 2px 8px;
     max-width: 100%;
     padding: 2px 4px 2px 8px;
-    font-size: 12px;
+    font-size: --theme(--text-xs);
     vertical-align: middle;
     color: var(--gh-fg-muted);
     border: 1px dashed var(--gh-border);

@@ -73,7 +73,7 @@ export function MoreLabels({
         onClick={(event) => {
           event.stopPropagation();
         }}
-        className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-[18px] font-medium text-muted-foreground hover:text-foreground data-popup-open:text-foreground"
+        className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-[calc(18/11)] font-medium text-muted-foreground hover:text-foreground data-popup-open:text-foreground"
       >
         +{more.count}
       </Popover.Trigger>
@@ -108,7 +108,7 @@ export function MoreLabels({
                   setOpen(false);
                   onFilter(chosen);
                 }}
-                className="px-1.5 text-[11px] leading-[18px]"
+                className="px-1.5 text-2xs leading-[calc(18/11)]"
               />
             ))}
           </Popover.Popup>
@@ -142,7 +142,7 @@ export function LabelFilterChips({
         <li
           key={label.name}
           style={colorStyle(labelColors(label.color))}
-          className="flex h-5 items-center gap-0.5 rounded-full pr-0.5 pl-2 text-xs font-medium whitespace-nowrap"
+          className="flex h-line-5 items-center gap-0.5 rounded-full pr-0.5 pl-2 text-xs font-medium whitespace-nowrap"
         >
           {label.name}
           <button
@@ -186,7 +186,7 @@ export function NoLabelMatches({
       >
         <X aria-hidden />
         Clear label filter
-        <kbd className="font-mono text-[11px] text-muted-foreground">Esc</kbd>
+        <kbd className="font-mono text-2xs text-muted-foreground">Esc</kbd>
       </Button>
     </div>
   );

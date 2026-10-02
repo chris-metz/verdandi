@@ -4,6 +4,7 @@ import { App } from "./App";
 import { followFonts } from "./fonts";
 import "./index.css";
 import { listFonts } from "./installed-fonts";
+import { followTextSize } from "./text-size";
 import { followAppearance } from "./theme";
 
 const root = document.getElementById("root");
@@ -16,8 +17,8 @@ void listFonts().then(async ({ families, failure }) => {
     await window.verdandi.setInstalledFonts(families).catch(() => undefined);
 });
 
-// Rendered once the theme and fonts are shown; until then, the window's
-// background.
+// Rendered once the theme, fonts and text size are shown; until then, the
+// window's background.
 void Promise.all([
   followAppearance(
     document.documentElement,
@@ -25,6 +26,7 @@ void Promise.all([
     window.verdandi,
   ).ready,
   followFonts(document.documentElement, window.verdandi).ready,
+  followTextSize(document.documentElement, window.verdandi).ready,
 ]).then(() => {
   createRoot(root).render(
     <StrictMode>

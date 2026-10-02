@@ -273,7 +273,15 @@ export interface Config {
    * for the default, which the interface ships.
    */
   codeFont: string | null;
+  /**
+   * The size of body text in pixels, within `textSizes`. Other text grows
+   * and shrinks with it in proportion; spacing and icons stay as they are.
+   */
+  textSize: number;
 }
+
+/** The text sizes `config.toml` allows, in pixels, and the default. */
+export const textSizes = { smallest: 11, largest: 20, default: 14 } as const;
 
 /** `config.toml` as Verdandi read it, and what it uses of it. */
 export interface ConfigState {

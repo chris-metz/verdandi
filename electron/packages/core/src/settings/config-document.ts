@@ -4,11 +4,12 @@ import {
   patch,
   stringify,
 } from "@decimalturn/toml-patch";
-import type {
-  Appearance,
-  Config,
-  ConfigProblem,
-  ConfigState,
+import {
+  textSizes,
+  type Appearance,
+  type Config,
+  type ConfigProblem,
+  type ConfigState,
 } from "../contract.ts";
 import type { FontDefaults, ThemeCatalogue } from "./port.ts";
 
@@ -36,6 +37,7 @@ export function defaultConfig(themes: ThemeCatalogue): Config {
     darkTheme: themes.defaults.dark,
     interfaceFont: null,
     codeFont: null,
+    textSize: textSizes.default,
   };
 }
 
@@ -90,7 +92,7 @@ export function readConfig(
       problem(
         [
           checked.problem,
-          `Verdandi uses "${fallbacks[checked.field]}" instead.`,
+          `Verdandi uses ${shown(fallbacks[checked.field])} instead.`,
           // The interface lists the installed families as it starts.
           ...(checked.missingFont === undefined
             ? []
@@ -115,7 +117,24 @@ const fileKeys = {
   darkTheme: "dark_theme",
   interfaceFont: "font",
   codeFont: "code_font",
+  textSize: "text_size",
 } as const satisfies Record<keyof Config, string>;
+
+/**
+ * Whether a value is its setting's default, which the file leaves out: no
+ * font, or the default text size.
+ */
+function leftOut(field: string, value: unknown): boolean {
+  switch (field) {
+    case "interfaceFont":
+    case "codeFont":
+      return value === null;
+    case "textSize":
+      return value === textSizes.default;
+    default:
+      return false;
+  }
+}
 
 /**
  * What Verdandi makes of a key in the file and its value: what it sets, or
@@ -179,14 +198,25 @@ function checkValue(
       return family("interfaceFont");
     case fileKeys.codeFont:
       return family("codeFont");
+    case fileKeys.textSize: {
+      const { smallest, largest } = textSizes;
+      if (typeof value === "number" && value >= smallest && value <= largest)
+        return { use: { textSize: value } };
+      const quotes = typeof value === "string" ? ", without quotes" : "";
+      return {
+        field: "textSize",
+        problem: `${key} is ${shown(value)}, but must be a number from ${String(smallest)} to ${String(largest)}${quotes}.`,
+      };
+    }
     default:
       return undefined;
   }
 }
 
 /**
- * The text of `config.toml` with each value given set under its key, or a
- * font's key removed for its default, and nothing else in it changed:
+ * The text of `config.toml` with each value given set under its key, or its
+ * key removed for its default where the file leaves that out (see
+ * `leftOut`), and nothing else in it changed:
  * comments, key order and formatting stay as they are. Without a file, the
  * text holds only the keys set, and there is none without any. Text that is
  * not valid TOML is not changed, nor is any text for a value that cannot be
@@ -201,8 +231,8 @@ export function changeConfigText(
   const removed = new Set<string>();
   for (const [field, value] of Object.entries(change) as [string, unknown][]) {
     const key = (fileKeys as Record<string, string | undefined>)[field];
-    if (value === null && (field === "interfaceFont" || field === "codeFont")) {
-      removed.add(fileKeys[field]);
+    if (key !== undefined && leftOut(field, value)) {
+      removed.add(key);
       continue;
     }
     const checked =

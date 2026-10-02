@@ -29,6 +29,7 @@ const defaults = {
   darkTheme: "github-dark",
   interfaceFont: null,
   codeFont: null,
+  textSize: 14,
 };
 
 /** A core with its files under `home`. */
@@ -85,6 +86,7 @@ it("reads every key", async () => {
       'dark_theme = "github-dark-dimmed"',
       'font = "Inter"',
       'code_font = "JetBrains Mono"',
+      "text_size = 16",
       "",
     ].join("\n"),
   );
@@ -95,6 +97,7 @@ it("reads every key", async () => {
       darkTheme: "github-dark-dimmed",
       interfaceFont: "Inter",
       codeFont: "JetBrains Mono",
+      textSize: 16,
     },
     file: file(),
     status: "read",
@@ -110,6 +113,9 @@ it.each([
   ['dark_theme = "github-dark-dimmed"', { darkTheme: "github-dark-dimmed" }],
   ['font = "Inter"', { interfaceFont: "Inter" }],
   ['code_font = "JetBrains Mono"', { codeFont: "JetBrains Mono" }],
+  ["text_size = 11", { textSize: 11 }],
+  ["text_size = 20", { textSize: 20 }],
+  ["text_size = 15.5", { textSize: 15.5 }],
   ["", {}],
 ])("reads %j, with defaults for the other keys", async (text, config) => {
   await write(text);
@@ -181,6 +187,30 @@ it.each([
     "font",
     'config.toml, line 2: font is " ", but must be the name of a font family, in quotes. Verdandi uses "Geist" instead.',
   ],
+  [
+    "a text size below the smallest",
+    "text_size = 10",
+    "text_size",
+    "config.toml, line 2: text_size is 10, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+  ],
+  [
+    "a text size above the largest",
+    "text_size = 20.5",
+    "text_size",
+    "config.toml, line 2: text_size is 20.5, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+  ],
+  [
+    "a text size in quotes",
+    'text_size = "16"',
+    "text_size",
+    'config.toml, line 2: text_size is "16", but must be a number from 11 to 20, without quotes. Verdandi uses 14 instead.',
+  ],
+  [
+    "a text size that is not a number",
+    "text_size = nan",
+    "text_size",
+    "config.toml, line 2: text_size is NaN, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+  ],
 ])(
   "falls back to the default for %s, and still uses the other values",
   async (_, line, key, message) => {
@@ -203,6 +233,7 @@ it.each([
       dark_theme: { darkTheme: "github-dark" },
       font: { interfaceFont: null },
       code_font: { codeFont: null },
+      text_size: { textSize: 14 },
     }[key];
     expect(state).toMatchObject({
       config: { ...others, ...fallback },
@@ -506,6 +537,77 @@ it("creates no file for a default font", async () => {
   expect(await readdir(home)).not.toContain("config.toml");
 });
 
+it("writes the text size under its key, and removes the key for the default, keeping everything else", async () => {
+  await write(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"   # at night too',
+      "",
+      "# Text",
+      "text_size = 16 # larger",
+      'font = "Inter"',
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\n"),
+  );
+  expect(await core.changeConfig({ textSize: 18 })).toEqual({ ok: true });
+  expect(await read()).toBe(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"   # at night too',
+      "",
+      "# Text",
+      "text_size = 18 # larger",
+      'font = "Inter"',
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\n"),
+  );
+  expect(await core.changeConfig({ textSize: 14 })).toEqual({ ok: true });
+  expect(await read()).toBe(
+    [
+      "# How Verdandi looks",
+      'appearance = "dark"   # at night too',
+      "",
+      "# Text",
+      'font = "Inter"',
+      "",
+      "[fonts]",
+      'code = "Menlo"',
+      "",
+    ].join("\n"),
+  );
+  expect(await core.getConfig()).toMatchObject({
+    config: { textSize: 14, interfaceFont: "Inter" },
+    problems: [{ key: "fonts" }],
+  });
+});
+
+it("adds the text size the file does not have", async () => {
+  await write('appearance = "dark"\n');
+  expect(await core.changeConfig({ textSize: 12 })).toEqual({ ok: true });
+  expect(await read()).toBe('appearance = "dark"\ntext_size = 12\n');
+  expect(await core.getConfig()).toMatchObject({
+    config: { appearance: "dark", textSize: 12 },
+    problems: [],
+  });
+});
+
+it("removes a text size that cannot be used, for the default", async () => {
+  await write('appearance = "dark"\ntext_size = "large"\n');
+  expect(await core.changeConfig({ textSize: 14 })).toEqual({ ok: true });
+  expect(await read()).toBe('appearance = "dark"\n');
+});
+
+it("creates no file for the default text size", async () => {
+  expect(await core.changeConfig({ textSize: 14 })).toEqual({ ok: true });
+  expect(await readdir(home)).not.toContain("config.toml");
+});
+
 it("writes nothing while the file is not valid TOML", async () => {
   const text = 'appearance = "dark"\ndark_theme = \n';
   await write(text);
@@ -562,6 +664,14 @@ it.each([
   [
     { appearance: null as unknown as Appearance },
     'appearance is null, but can only be "system", "light" or "dark". Nothing was written.',
+  ],
+  [
+    { textSize: 21 },
+    "text_size is 21, but must be a number from 11 to 20. Nothing was written.",
+  ],
+  [
+    { textSize: Number.NaN },
+    "text_size is NaN, but must be a number from 11 to 20. Nothing was written.",
   ],
 ])("writes nothing it could not use itself: %j", async (change, message) => {
   const text = 'appearance = "dark"\n';

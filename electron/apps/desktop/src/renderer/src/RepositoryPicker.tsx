@@ -232,7 +232,7 @@ export function RepositoryPicker({
               setHighlight(0);
             }}
             onKeyDown={onKeyDown}
-            className="mt-2 h-8 rounded-md border bg-background px-2.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="mt-2 h-line-8 rounded-md border bg-background px-2.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
         </header>
         <div className="flex min-h-0 flex-1">
@@ -497,7 +497,7 @@ function Row({
         <span className="font-medium">{name}</span>
       </span>
       {row.archived && (
-        <span className="shrink-0 rounded-full border px-1.5 text-[11px] text-muted-foreground">
+        <span className="shrink-0 rounded-full border px-1.5 text-2xs text-muted-foreground">
           Archived
         </span>
       )}

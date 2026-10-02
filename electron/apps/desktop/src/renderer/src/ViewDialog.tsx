@@ -30,7 +30,7 @@ type Outcome =
   | { kind: "failed"; message: string };
 
 const field =
-  "h-8 rounded-md border bg-background px-2.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "h-line-8 rounded-md border bg-background px-2.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /**
  * The dialog that creates a view, edits one or duplicates one: its name and
@@ -139,7 +139,7 @@ export function ViewDialog({
       >
         <div className="flex items-center justify-between px-4 pt-4 pb-2">
           <DialogTitle>{start.title}</DialogTitle>
-          <kbd className="rounded border border-b-2 px-1 font-mono text-[11px] text-muted-foreground">
+          <kbd className="rounded border border-b-2 px-1 font-mono text-2xs text-muted-foreground">
             Esc
           </kbd>
         </div>
@@ -173,7 +173,10 @@ export function ViewDialog({
               setQuery(event.target.value);
               setOutcome(undefined);
             }}
-            className={cn(field, "font-mono text-[13px]")}
+            className={cn(
+              field,
+              "font-mono text-[calc(13px*var(--text-scale))]",
+            )}
           />
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <Info aria-hidden className="mt-px size-3.5 shrink-0" />
@@ -259,7 +262,7 @@ export function ViewDialog({
             }}
           >
             Save
-            <kbd className="font-mono text-[11px] opacity-70">
+            <kbd className="font-mono text-2xs opacity-70">
               {modifier.label("↵")}
             </kbd>
           </Button>

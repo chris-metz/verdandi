@@ -355,7 +355,7 @@ export function IssuePagePane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+      <header className="flex h-line-12 shrink-0 items-center gap-3 border-b px-4">
         <button
           type="button"
           className={buttonClass}

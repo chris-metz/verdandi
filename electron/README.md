@@ -92,13 +92,15 @@ light_theme = "github-light"        # one of the light themes below
 dark_theme = "github-dark-dimmed"   # one of the dark themes below
 font = "Inter"                      # an installed font family, for everything but code
 code_font = "JetBrains Mono"        # an installed font family, for code
+text_size = 15                      # pixels for body text, from 11 to 20; 14 without it
 ```
 
 - Light themes: `github-light`, `catppuccin-latte`, `tokyo-night-day`, `rose-pine-dawn`, `solarized-light`
 - Dark themes: `github-dark`, `github-dark-dimmed`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`, `tokyo-night-storm`, `tokyo-night`, `nord`, `rose-pine-moon`, `solarized-dark`
 - Fonts: without `font`, Geist, and without `code_font`, Geist Mono, which ship with Verdandi. Font names ignore case. A font installed while Verdandi runs is found after a restart.
+- Text size: all text grows or shrinks with it in proportion, while spacing, icons and the sidebar's width stay as they are. The smallest text, such as labels and column headers, stops at 9 pixels. Zoom (**View → Zoom In**) works on top of it.
 
-**Settings…** (⌘, on macOS, Ctrl+, elsewhere) picks the appearance, the themes and the fonts, writing each change to the file at once: only that key changes, and your comments and formatting stay. Choosing a font's **Default** removes its key. Without a file, the first change creates it. **File → Show Config File** reveals it, or its folder while there is none. Changes by hand apply at once too. A value Verdandi cannot use falls back to its default, an unknown key is ignored, and a file that is not valid TOML means every default; the sidebar says what and where until the file is fixed.
+**Settings…** (⌘, on macOS, Ctrl+, elsewhere) picks the appearance, the themes, the fonts and the text size, writing each change to the file at once: only that key changes, and your comments and formatting stay. Choosing a font's **Default**, or the default text size, removes its key. Without a file, the first change creates it. **File → Show Config File** reveals it, or its folder while there is none. Changes by hand apply at once too. A value Verdandi cannot use falls back to its default, an unknown key is ignored, and a file that is not valid TOML means every default; the sidebar says what and where until the file is fixed.
 
 ## Check before pushing
 

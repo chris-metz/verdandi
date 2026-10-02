@@ -169,7 +169,7 @@ export function ViewPane({
           >
             <Pencil aria-hidden />
             Edit view
-            <kbd className="font-mono text-[11px] text-muted-foreground">E</kbd>
+            <kbd className="font-mono text-2xs text-muted-foreground">E</kbd>
           </Button>
         </div>
         {list &&
@@ -286,7 +286,7 @@ function Strip({ strip, onRetry }: { strip: ViewStrip; onRetry: () => void }) {
       role="status"
       title={`${strip.text} · ${strip.hint}`}
       className={cn(
-        "flex h-7 items-center gap-2 border-t px-4 text-xs whitespace-nowrap",
+        "flex h-line-7 items-center gap-2 border-t px-4 text-xs whitespace-nowrap",
         strip.retry ? "bg-warning/10" : "bg-muted/50",
       )}
     >

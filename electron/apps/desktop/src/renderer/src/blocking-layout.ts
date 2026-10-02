@@ -5,18 +5,52 @@ import type {
   IssueSummary,
 } from "@verdandi/core/contract";
 import type { MapTarget } from "./map-navigation";
+import { baseTextSize } from "./text-size";
 
 const elk = new ELK();
-const cardWidth = 216;
-const cardHeight = 112;
-const columnWidth = 280;
+/** Around the map, whatever the text size. */
 const padding = 28;
-/** The smallest map, which the band keeps free while it is first laid out. */
-export const minimumMapHeight = 224;
+/** Where the column titles start, below the top of the map. */
+const titleTop = 20;
+
+/**
+ * The map's sizes for text of `textSize` pixels. What holds text grows and
+ * shrinks with it: each card's header line and two lines of title, and the
+ * gaps between cards and columns. The padding around the map and in a
+ * card, its icons and the dots of its labels stay.
+ */
+export function mapSizes(textSize: number) {
+  const scale = textSize / baseTextSize;
+  /** A size of which `text` pixels at `baseTextSize` grow with the text. */
+  const size = (fixed: number, text: number) =>
+    Math.round(fixed + text * scale);
+  const cardWidth = size(26, 190);
+  const cardHeight = size(64, 48);
+  // The cards start below the column titles and the lane above them.
+  const cardTop = size(titleTop, 44);
+  return {
+    cardWidth,
+    cardHeight,
+    /** From one column to the next: a card and the gap after it. */
+    columnWidth: cardWidth + size(0, 64),
+    /** Between the cards of a column. */
+    cardGap: size(0, 32),
+    cardTop,
+    /** Where a long arrow runs above the columns, below their titles. */
+    laneTop: size(titleTop, 24),
+    /** How far a long arrow curves out of a card to reach the lane. */
+    curve: size(0, 36),
+    /**
+     * The smallest map, a row of cards with room below it, which the band
+     * keeps free while it is first laid out.
+     */
+    minimumHeight: cardTop + cardHeight + 48,
+  };
+}
 
 export interface MapLayout {
   cards: MapTarget[];
-  columns: { step: number; x: number; title: string }[];
+  columns: { step: number; x: number; y: number; title: string }[];
   arrows: {
     from: string;
     to: string;
@@ -32,11 +66,25 @@ export function mapCursorId(issueId: string, root: string): string {
   return issueId === root ? root : `map:${issueId}`;
 }
 
-/** ELK orders and positions the cards; the core's signed steps pin the columns. */
+/**
+ * ELK orders and positions the cards; the core's signed steps pin the
+ * columns. Its sizes are for text of `textSize` pixels.
+ */
 export async function layoutBlockingMap(
   map: BlockingMap,
   root: string,
+  textSize: number,
 ): Promise<MapLayout> {
+  const {
+    cardWidth,
+    cardHeight,
+    columnWidth,
+    cardGap,
+    cardTop,
+    laneTop,
+    curve,
+    minimumHeight,
+  } = mapSizes(textSize);
   const nodes: { id: string; step: number; issue: IssueSummary | undefined }[] =
     map.cards.map(({ issue, step }) => ({
       id: issue.id,
@@ -77,8 +125,10 @@ export async function layoutBlockingMap(
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
       "elk.partitioning.activate": "true",
-      "elk.spacing.nodeNode": "32",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "64",
+      "elk.spacing.nodeNode": String(cardGap),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(
+        columnWidth - cardWidth,
+      ),
       "elk.separateConnectedComponents": "false",
       "elk.padding": "[top=0,left=0,bottom=0,right=0]",
     },
@@ -102,7 +152,7 @@ export async function layoutBlockingMap(
     issue,
     step,
     x: x(step),
-    y: 64 + (graph.children?.find((node) => node.id === id)?.y ?? 0),
+    y: cardTop + (graph.children?.find((node) => node.id === id)?.y ?? 0),
     width: cardWidth,
     height: cardHeight,
   }));
@@ -116,7 +166,6 @@ export async function layoutBlockingMap(
     const bx = to.x;
     const by = to.y + to.height / 2;
     const mid = (ax + bx) / 2;
-    const top = 44;
     // A long arrow takes the lane above the columns only when a card stands
     // between its ends; past empty columns, such as on the way to an edge
     // card while the map loads, it runs straight.
@@ -134,19 +183,19 @@ export async function layoutBlockingMap(
             ax,
             ay,
             "C",
-            ax + 36,
+            ax + curve,
             ay,
-            ax + 36,
-            top,
+            ax + curve,
+            laneTop,
             ax,
-            top,
+            laneTop,
             "L",
             bx,
-            top,
+            laneTop,
             "C",
-            bx - 36,
-            top,
-            bx - 36,
+            bx - curve,
+            laneTop,
+            bx - curve,
             by,
             bx,
             by,
@@ -160,7 +209,7 @@ export async function layoutBlockingMap(
     arrows,
     width: padding * 2 + (max - min) * columnWidth + cardWidth,
     height: Math.max(
-      minimumMapHeight,
+      minimumHeight,
       ...cards.map((card) => card.y + card.height + padding),
     ),
     columns: Array.from(
@@ -169,6 +218,7 @@ export async function layoutBlockingMap(
     ).map((step) => ({
       step,
       x: x(step),
+      y: titleTop,
       title: columnTitle(step),
     })),
   };

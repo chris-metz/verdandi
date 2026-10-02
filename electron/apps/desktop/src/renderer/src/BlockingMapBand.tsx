@@ -9,7 +9,7 @@ import { IssueStateIcon } from "./IssueStateIcon";
 import {
   edgeTitle,
   layoutBlockingMap,
-  minimumMapHeight,
+  mapSizes,
   type MapLayout,
 } from "./blocking-layout";
 import type { ThemeToken } from "../../shared/themes";
@@ -20,6 +20,7 @@ import {
   revealMapCard,
   type MapTarget,
 } from "./map-navigation";
+import { useTextSize } from "./text-size";
 import { LoaderCircle, LockKeyhole, Pause } from "lucide-react";
 
 export function BlockingMapBand({
@@ -56,9 +57,11 @@ export function BlockingMapBand({
   const previousCursor = useRef(cursor);
   const previousLayout = useRef<MapLayout>(undefined);
   const marker = useId().replace(/:/g, "");
+  // The cards are laid out again for another text size.
+  const textSize = useTextSize();
   useEffect(() => {
     let active = true;
-    void layoutBlockingMap(map, root)
+    void layoutBlockingMap(map, root, textSize)
       .then((next) => {
         if (active) {
           setLayout(next);
@@ -71,7 +74,7 @@ export function BlockingMapBand({
     return () => {
       active = false;
     };
-  }, [map, root]);
+  }, [map, root, textSize]);
   useLayoutEffect(() => {
     if (layout) onLayout(layout.cards);
   }, [layout, onLayout]);
@@ -165,7 +168,7 @@ export function BlockingMapBand({
       >
         {!layout ? (
           // As tall as the smallest map, so nothing below it jumps.
-          <p role="status" style={{ height: minimumMapHeight }}>
+          <p role="status" style={{ height: mapSizes(textSize).minimumHeight }}>
             <span className="sr-only">Laying out blocking map…</span>
           </p>
         ) : (
@@ -176,8 +179,8 @@ export function BlockingMapBand({
             {layout.columns.map((column) => (
               <div
                 key={column.step}
-                className="absolute top-5 text-[11px] font-medium tracking-wide text-muted-foreground"
-                style={{ left: column.x }}
+                className="absolute text-2xs font-medium tracking-wide text-muted-foreground"
+                style={{ left: column.x, top: column.y }}
               >
                 {column.title}
               </div>
@@ -307,7 +310,7 @@ export function BlockingMapBand({
                           {differentRepository && (
                             <span
                               className={cn(
-                                "max-w-36 truncate rounded px-1 py-0.5 text-[10px]",
+                                "max-w-36 truncate rounded px-1 py-0.5 text-3xs",
                                 external ? "border" : "bg-muted",
                               )}
                               title={`${issue.repository.owner}/${issue.repository.name}`}
@@ -319,7 +322,7 @@ export function BlockingMapBand({
                             #{issue.reference.split("#").at(-1)}
                           </span>
                         </span>
-                        <span className="line-clamp-2 leading-4 font-medium">
+                        <span className="line-clamp-2 font-medium">
                           {issue.title}
                         </span>
                         <span className="mt-auto flex gap-1 pt-2">
@@ -379,7 +382,7 @@ function BranchBadge({
   onRetry: () => void;
 }) {
   const className = cn(
-    "absolute -top-2 flex items-center gap-1 rounded-full border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground",
+    "absolute -top-2 flex items-center gap-1 rounded-full border bg-background px-1.5 py-0.5 text-3xs text-muted-foreground",
     side === "blockedBy" ? "-left-2" : "-right-2",
     badge.kind === "failed" && "border-blocked/50 text-blocked",
   );
