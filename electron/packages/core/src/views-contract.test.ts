@@ -374,7 +374,7 @@ it("runs a changed search before saving it, keeping the view's ID, and opens wit
   ]);
 });
 
-it("removes a view alone, moving a removed selection to the next view", async () => {
+it("removes a view alone", async () => {
   const github = githubWithIssues();
   const repositories = [{ name: "acme/api" }, { name: "other/lib" }];
   await writeSettings({
@@ -387,15 +387,8 @@ it("removes a view alone, moving a removed selection to the next view", async ()
     ],
   });
   const core = createTestCore(github);
-  await core.selectSidebarEntry({ kind: "view", id: "b" });
 
-  expect(await core.removeView("b")).toEqual({
-    ok: true,
-    selection: {
-      kind: "view",
-      view: { id: "c", name: "C", query: "label:c" },
-    },
-  });
+  expect(await core.removeView("b")).toEqual({ ok: true });
   expect(await readSettings()).toEqual({
     version: 1,
     repositories,
@@ -404,13 +397,9 @@ it("removes a view alone, moving a removed selection to the next view", async ()
       { id: "c", name: "C", query: "label:c" },
     ],
   });
-  expect(await core.removeView("c")).toMatchObject({
-    selection: { kind: "view", view: { id: "a" } },
-  });
-  expect(await core.removeView("a")).toEqual({
-    ok: true,
-    selection: { kind: "all" },
-  });
+  expect(await core.removeView("c")).toEqual({ ok: true });
+  expect(await core.removeView("a")).toEqual({ ok: true });
+  expect(await readSettings()).toMatchObject({ views: [] });
 });
 
 it("never limits a search to the tracked repositories, nor changes views as they are tracked or removed", async () => {

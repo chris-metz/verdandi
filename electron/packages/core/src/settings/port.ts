@@ -1,5 +1,7 @@
 import type {
+  RecentIssue,
   RepositoryAddress,
+  TabIssue,
   TrackedRepository,
   SavedView,
   SidebarEntryKey,
@@ -115,21 +117,50 @@ export interface LocalStateStorage {
   /**
    * Changes the state, keeping what else it holds; `undefined` removes a
    * value. Changes and reads wait for earlier changes. A factory resolves
-   * a change inside that queue, e.g. looking up a repository ID in settings;
-   * it must not call this storage again.
+   * a change inside that queue from the state as it is then, e.g. looking
+   * up a repository ID in settings; it must not call this storage again.
    */
   update(
-    change: Partial<LocalState> | (() => Promise<Partial<LocalState>>),
+    change:
+      | Partial<LocalState>
+      | ((state: LocalState) => Promise<Partial<LocalState>>),
   ): Promise<void>;
 }
 
 /** Machine-local state, as far as the core uses it so far. */
 export interface LocalState {
+  /**
+   * The entry an earlier version of Verdandi selected last, before there
+   * were tabs; read only while no tabs are kept.
+   */
   selectedEntry?: StoredSidebarEntry | undefined;
+  tabs?: StoredTabs | undefined;
+  /** The issues opened last, newest first. */
+  recentIssues?: RecentIssue[] | undefined;
   window?: WindowState | undefined;
   /** The gh executable the user chose, if any. */
   ghExecutable: string | undefined;
 }
+
+/** The tabs over the main area, and the one shown, by position. */
+export interface StoredTabs {
+  tabs: StoredTab[];
+  shown: number;
+}
+
+/**
+ * A tab: a sidebar entry's list with the issue pages opened from it, or a
+ * new tab with the repository a bare `#12` names in it.
+ */
+export type StoredTab =
+  | { kind: "entry"; entry: StoredSidebarEntry; issues: TabIssue[] }
+  | { kind: "new"; from: StoredRepository | undefined };
+
+/** A tracked repository, by its ID once it is known. */
+export type StoredRepository = Extract<
+  StoredSidebarEntry,
+  { kind: "repository" }
+>;
 
 /** A stable reference, without a view's mutable text or any list state. */
 export type StoredSidebarEntry =

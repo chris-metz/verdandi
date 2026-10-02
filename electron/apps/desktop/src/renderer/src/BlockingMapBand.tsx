@@ -14,6 +14,7 @@ import {
 } from "./blocking-layout";
 import type { ThemeToken } from "../../shared/themes";
 import type { IssueDestination } from "./issue-navigation";
+import { preventAutoscroll, useOpenFrom } from "./open-in-new-tab";
 import {
   mapScrollAfterLayout,
   revealMapCard,
@@ -48,6 +49,7 @@ export function BlockingMapBand({
 }) {
   const [layout, setLayout] = useState<MapLayout>();
   const [failed, setFailed] = useState(false);
+  const openFrom = useOpenFrom(onOpen);
   const scroller = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
   const initialScroll = useRef(savedScrollLeft);
@@ -285,10 +287,14 @@ export function BlockingMapBand({
                         ? "Click or press Enter to stop"
                         : undefined)
                     }
-                    onClick={() => {
+                    onClick={(event) => {
                       onSelect(position.id);
-                      if (issue) onOpen(issue);
+                      if (issue) openFrom(event, issue);
                       else onActivateEnd(side);
+                    }}
+                    onMouseDown={preventAutoscroll}
+                    onAuxClick={(event) => {
+                      if (event.button === 1 && issue) openFrom(event, issue);
                     }}
                   >
                     {issue ? (

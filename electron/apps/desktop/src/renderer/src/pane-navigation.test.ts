@@ -4,6 +4,7 @@ import {
   commandForWindowKey,
   entryShortcut,
   shortcutModifier,
+  tabStepForKey,
   type KeyPress,
   type Pane,
   type ShortcutModifier,
@@ -163,12 +164,9 @@ describe("a", () => {
 });
 
 describe("#", () => {
-  const goToIssue = {
-    kind: "go-to-issue",
-    repository: { owner: "acme", name: "api" },
-  };
+  const goToIssue = { kind: "go-to-issue" };
 
-  it("opens the Go to issue dialog of the selected repository, whichever pane has the keyboard", () => {
+  it("opens the Go to Issue dialog over the tab shown, whichever pane has the keyboard", () => {
     expect(press(key("#"), { focused: "sidebar", selected: "api" })).toEqual(
       goToIssue,
     );
@@ -188,7 +186,7 @@ describe("#", () => {
     ).toEqual(goToIssue);
   });
 
-  it("does nothing in All or a view, or with nothing selected", () => {
+  it("works in All and in a view too", () => {
     const all = { kind: "all" } as const;
     const bugs = {
       kind: "view",
@@ -197,14 +195,17 @@ describe("#", () => {
     for (const selected of [all, bugs]) {
       expect(
         commandForWindowKey(key("#"), {
-          focused: "main",
+          focused: "sidebar",
           entries: [all, ...entries, bugs],
           selected,
           modifier: macOS,
         }),
-      ).toBeUndefined();
+      ).toEqual(goToIssue);
     }
-    expect(press(key("#"))).toBeUndefined();
+  });
+
+  it("gives a new tab's field the keyboard", () => {
+    expect(press(key("#"))).toEqual({ kind: "focus", pane: "main" });
   });
 
   it("is left alone with ⌘, Ctrl or Alt", () => {
@@ -216,6 +217,62 @@ describe("#", () => {
     ).toBeUndefined();
     expect(
       press(key("#", { altKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("switching tabs", () => {
+  it("shows the next tab with Ctrl+Tab, and the previous with Ctrl+Shift+Tab, everywhere", () => {
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      expect(tabStepForKey(key("Tab", { ctrlKey: true }), platform)).toBe(1);
+      expect(
+        tabStepForKey(key("Tab", { ctrlKey: true, shiftKey: true }), platform),
+      ).toBe(-1);
+    }
+  });
+
+  it("shows the next and previous tab with ⌘⇧] and ⌘⇧[ on macOS", () => {
+    const next = {
+      ...key("}", { metaKey: true, shiftKey: true }),
+      code: "BracketRight",
+    };
+    const previous = {
+      ...key("{", { metaKey: true, shiftKey: true }),
+      code: "BracketLeft",
+    };
+    expect(tabStepForKey(next, "darwin")).toBe(1);
+    expect(tabStepForKey(previous, "darwin")).toBe(-1);
+    expect(tabStepForKey(next, "linux")).toBeUndefined();
+  });
+
+  it("shows the next and previous tab with Ctrl+PageDown and Ctrl+PageUp elsewhere", () => {
+    expect(tabStepForKey(key("PageDown", { ctrlKey: true }), "linux")).toBe(1);
+    expect(tabStepForKey(key("PageUp", { ctrlKey: true }), "win32")).toBe(-1);
+    expect(
+      tabStepForKey(key("PageDown", { ctrlKey: true }), "darwin"),
+    ).toBeUndefined();
+  });
+
+  it("leaves the keys alone with other modifiers, or none", () => {
+    expect(tabStepForKey(key("Tab"), "darwin")).toBeUndefined();
+    expect(
+      tabStepForKey(key("Tab", { ctrlKey: true, altKey: true }), "darwin"),
+    ).toBeUndefined();
+    expect(
+      tabStepForKey(key("Tab", { ctrlKey: true, metaKey: true }), "darwin"),
+    ).toBeUndefined();
+    expect(tabStepForKey(key("PageDown"), "linux")).toBeUndefined();
+    expect(
+      tabStepForKey(
+        { ...key("]", { metaKey: true }), code: "BracketRight" },
+        "darwin",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("leaves Tab alone between the panes", () => {
+    expect(
+      press(key("Tab", { ctrlKey: true }), { selected: "api" }),
     ).toBeUndefined();
   });
 });

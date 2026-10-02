@@ -13,6 +13,7 @@ import { loadingFreshness, pageFreshness } from "./freshness";
 import { openLinkToIssue } from "./follow-link";
 import { BlockingMapBand } from "./BlockingMapBand";
 import { GoToIssueButton } from "./GoToIssueDialog";
+import { IssueContextMenu, type IssueMenuTarget } from "./IssueContextMenu";
 import type { MapTarget } from "./map-navigation";
 import { IssueConversation } from "./IssueConversation";
 import { IssueMetadataLine } from "./IssueMetadataLine";
@@ -29,8 +30,15 @@ import {
   issuePageTrees,
   type CursorPlace,
   type IssuePageCommand,
+  type PageTarget,
 } from "./issue-page-navigation";
 import { visibleRows } from "./list-navigation";
+import {
+  isNewTabKey,
+  preventAutoscroll,
+  useOpenFrom,
+  useOpenInNewTab,
+} from "./open-in-new-tab";
 import { ProblemNotice } from "./ProblemNotice";
 import { problemText } from "./problem-text";
 import { RateLimitStatus } from "./RateLimitStatus";
@@ -57,7 +65,10 @@ const readingTargets = "[data-issue-id], [data-scroll-anchor]";
  * neighbour if the issue disappeared, and stays where it is on screen; while
  * the cursor is out of view, what is being read stays where it is.
  * Clicking a label, of the issue or of a sub-issue, returns to the list with
- * the label added to its label filter.
+ * the label added to its label filter. Every issue the page links to, in the
+ * breadcrumb, the blocking map, the sub-issues and the bodies, opens in a
+ * new tab too: by its right-click menu, a middle click, a click with ⌘ held
+ * (Ctrl elsewhere), or ⌘↩ where the cursor is.
  */
 export function IssuePagePane({
   visit,
@@ -76,8 +87,8 @@ export function IssuePagePane({
   login: string | undefined;
   hasKeyboard: boolean;
   onNavigate: (action: IssueNavigation) => void;
-  /** Opens the Go to issue dialog, where it is available. */
-  onGoToIssue?: (() => void) | undefined;
+  /** Opens the Go to Issue dialog. */
+  onGoToIssue: () => void;
   /**
    * Returns to the list the page was opened from, with a label added to its
    * label filter.
@@ -85,6 +96,7 @@ export function IssuePagePane({
   onFilterLabel: (label: Label) => void;
 }) {
   const page = useIssuePage(visit.issue.id);
+  const openInNewTab = useOpenInNewTab();
   const screen = { kind: "issue", issueId: visit.issue.id } as const;
   const retry = useCallback(() => {
     void window.verdandi.retry({ kind: "issue", issueId: visit.issue.id });
@@ -157,11 +169,12 @@ export function IssuePagePane({
       remember({ cursor: issue.id });
     onNavigate({ kind: "open", issue });
   }
-  // The latest `remember` and `onNavigate`, for following links in bodies,
-  // which show again only when they change.
-  const navigation = useRef({ remember, onNavigate });
+  const openFrom = useOpenFrom(open);
+  // The latest `remember`, `onNavigate` and Open in New Tab, for following
+  // links in bodies, which show again only when they change.
+  const navigation = useRef({ remember, onNavigate, openInNewTab });
   useLayoutEffect(() => {
-    navigation.current = { remember, onNavigate };
+    navigation.current = { remember, onNavigate, openInNewTab };
   });
   const mounted = useRef(true);
   useEffect(
@@ -171,7 +184,7 @@ export function IssuePagePane({
     [],
   );
   const openLink = useCallback(
-    (link: LinkToIssue) =>
+    (link: LinkToIssue, inNewTab: boolean) =>
       openLinkToIssue(
         link,
         (repository, number) => window.verdandi.lookUpIssue(repository, number),
@@ -179,14 +192,37 @@ export function IssuePagePane({
           open: (issue) => {
             // Only while this page still shows.
             if (!mounted.current) return;
-            navigation.current.remember({});
-            navigation.current.onNavigate({ kind: "open", issue });
+            const { remember, onNavigate, openInNewTab } = navigation.current;
+            if (inNewTab && openInNewTab) {
+              openInNewTab(issue);
+              return;
+            }
+            remember({});
+            onNavigate({ kind: "open", issue });
           },
           openExternal: window.desktop.openExternal,
         },
       ),
     [],
   );
+  /** What a right click on an issue the page links to offers. */
+  function menuTarget(element: Element): IssueMenuTarget | undefined {
+    const id = element
+      .closest("[data-issue-id]")
+      ?.getAttribute("data-issue-id");
+    if (!openInNewTab || id === null || id === visit.issue.id) return undefined;
+    const issue: PageTarget | undefined =
+      targets.find((target) => target.id === id) ??
+      mapTargets.find((target) => target.issue?.id === id)?.issue;
+    return (
+      issue && {
+        openInNewTab: () => {
+          openInNewTab(issue);
+        },
+        url: issue.url,
+      }
+    );
+  }
   function select(issueId: string) {
     remember({ cursor: issueId });
     scroller.current?.focus({ preventScroll: true });
@@ -242,7 +278,6 @@ export function IssuePagePane({
     }
   }
   function onKeyDown(event: KeyboardEvent) {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
     // Enter on a mouse-focused button or link activates it.
     if (
       event.key === "Enter" &&
@@ -250,6 +285,25 @@ export function IssuePagePane({
         event.target instanceof HTMLAnchorElement)
     )
       return;
+    if (isNewTabKey(event)) {
+      const command = commandForIssuePageKey(
+        { key: "Enter", shiftKey: false },
+        cursor,
+        targets,
+        trees,
+        mapTargets,
+      );
+      if (
+        command?.kind !== "openIssue" ||
+        command.issue.id === visit.issue.id ||
+        !openInNewTab
+      )
+        return;
+      event.preventDefault();
+      openInNewTab(command.issue);
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     const command = commandForIssuePageKey(
       event,
       cursor,
@@ -325,7 +379,7 @@ export function IssuePagePane({
         )}
         <span className="flex-1" />
         <RateLimitStatus />
-        {onGoToIssue && <GoToIssueButton onClick={onGoToIssue} />}
+        <GoToIssueButton onClick={onGoToIssue} />
         <RefreshControl
           freshness={(now) =>
             page
@@ -349,221 +403,227 @@ export function IssuePagePane({
           </button>
         )}
       </header>
-      <div
-        ref={scroller}
-        tabIndex={0}
-        data-pane-focus
-        aria-label={`Issue page: ${visit.issue.title}`}
-        onScroll={(event) => {
-          noteScroll();
-          if (restored.current)
-            remember({ scrollTop: event.currentTarget.scrollTop });
-        }}
-        className="group min-h-0 flex-1 overflow-y-auto outline-none"
-      >
-        <div className="space-y-4 px-6 pt-6 pb-7">
-          {page && page.ancestry.length > 0 && (
-            <nav
-              aria-label="Issue ancestry"
-              className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
-            >
-              {page.ancestry.map((ancestor, index) => {
-                // A parent issue that has not been read ends the ancestry:
-                // what lies above it is unknown.
-                const unread =
-                  ancestor.unread && unreadCell(ancestor.unread, login);
-                return (
-                  <span
-                    key={ancestor.id}
-                    className="flex min-w-0 items-center gap-1"
-                  >
-                    {index > 0 && <span aria-hidden>/</span>}
-                    {unread && <span aria-hidden>… /</span>}
-                    <button
-                      type="button"
-                      data-issue-id={ancestor.id}
-                      data-page-cursor={cursor === ancestor.id}
-                      className={cn(
-                        buttonClass,
-                        "flex max-w-80 items-center gap-1",
-                        unread && "opacity-70",
-                        cursor === ancestor.id &&
-                          "bg-muted group-focus:bg-selection",
-                      )}
-                      title={
-                        unread
-                          ? `${ancestor.title}: ${unread.title ?? unread.text}`
-                          : ancestor.title
-                      }
-                      onClick={() => {
-                        open(ancestor);
-                      }}
+      <IssueContextMenu targetAt={menuTarget}>
+        <div
+          ref={scroller}
+          tabIndex={0}
+          data-pane-focus
+          aria-label={`Issue page: ${visit.issue.title}`}
+          onScroll={(event) => {
+            noteScroll();
+            if (restored.current)
+              remember({ scrollTop: event.currentTarget.scrollTop });
+          }}
+          className="group min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          <div className="space-y-4 px-6 pt-6 pb-7">
+            {page && page.ancestry.length > 0 && (
+              <nav
+                aria-label="Issue ancestry"
+                className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
+              >
+                {page.ancestry.map((ancestor, index) => {
+                  // A parent issue that has not been read ends the ancestry:
+                  // what lies above it is unknown.
+                  const unread =
+                    ancestor.unread && unreadCell(ancestor.unread, login);
+                  return (
+                    <span
+                      key={ancestor.id}
+                      className="flex min-w-0 items-center gap-1"
                     >
-                      {unread?.failed && <WarningIcon title={unread.text} />}
-                      <span className="truncate">
-                        {ancestor.reference} · {ancestor.title}
-                      </span>
-                    </button>
-                    {unread?.failed && (
-                      <>
-                        <button
-                          type="button"
-                          className={buttonClass}
-                          onClick={retry}
-                        >
-                          Retry
-                        </button>
-                        <button
-                          type="button"
-                          className={buttonClass}
-                          onClick={() => {
-                            window.desktop.openExternal(ancestor.url);
-                          }}
-                        >
-                          Open on GitHub
-                        </button>
-                      </>
-                    )}
-                  </span>
-                );
-              })}
-            </nav>
-          )}
-          <div
-            data-issue-id={visit.issue.id}
-            data-page-cursor={!page?.blockingMap && cursor === visit.issue.id}
-            className={cn(
-              "rounded border-l-2 border-transparent pl-3",
-              !page?.blockingMap &&
-                cursor === visit.issue.id &&
-                "group-focus:border-selection-edge",
+                      {index > 0 && <span aria-hidden>/</span>}
+                      {unread && <span aria-hidden>… /</span>}
+                      <button
+                        type="button"
+                        data-issue-id={ancestor.id}
+                        data-page-cursor={cursor === ancestor.id}
+                        className={cn(
+                          buttonClass,
+                          "flex max-w-80 items-center gap-1",
+                          unread && "opacity-70",
+                          cursor === ancestor.id &&
+                            "bg-muted group-focus:bg-selection",
+                        )}
+                        title={
+                          unread
+                            ? `${ancestor.title}: ${unread.title ?? unread.text}`
+                            : ancestor.title
+                        }
+                        onClick={(event) => {
+                          openFrom(event, ancestor);
+                        }}
+                        onMouseDown={preventAutoscroll}
+                        onAuxClick={(event) => {
+                          if (event.button === 1) openFrom(event, ancestor);
+                        }}
+                      >
+                        {unread?.failed && <WarningIcon title={unread.text} />}
+                        <span className="truncate">
+                          {ancestor.reference} · {ancestor.title}
+                        </span>
+                      </button>
+                      {unread?.failed && (
+                        <>
+                          <button
+                            type="button"
+                            className={buttonClass}
+                            onClick={retry}
+                          >
+                            Retry
+                          </button>
+                          <button
+                            type="button"
+                            className={buttonClass}
+                            onClick={() => {
+                              window.desktop.openExternal(ancestor.url);
+                            }}
+                          >
+                            Open on GitHub
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  );
+                })}
+              </nav>
             )}
-          >
-            <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-              {page?.issue
-                ? `${page.issue.repository.owner}/${page.issue.repository.name}${page.issue.reference.startsWith("#") ? page.issue.reference : ""}`
-                : visit.issue.reference}
-              {page?.issue?.external && " · external"}
-              {page?.issue?.incomplete && (
-                <WarningIcon title={incompleteTitle(page.issue.incomplete)} />
+            <div
+              data-issue-id={visit.issue.id}
+              data-page-cursor={!page?.blockingMap && cursor === visit.issue.id}
+              className={cn(
+                "rounded border-l-2 border-transparent pl-3",
+                !page?.blockingMap &&
+                  cursor === visit.issue.id &&
+                  "group-focus:border-selection-edge",
               )}
-            </p>
-            {shownTitle !== undefined && (
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {shownTitle}
-              </h1>
+            >
+              <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                {page?.issue
+                  ? `${page.issue.repository.owner}/${page.issue.repository.name}${page.issue.reference.startsWith("#") ? page.issue.reference : ""}`
+                  : visit.issue.reference}
+                {page?.issue?.external && " · external"}
+                {page?.issue?.incomplete && (
+                  <WarningIcon title={incompleteTitle(page.issue.incomplete)} />
+                )}
+              </p>
+              {shownTitle !== undefined && (
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {shownTitle}
+                </h1>
+              )}
+            </div>
+            {page?.issue && (
+              <IssueMetadataLine
+                issue={page.issue}
+                onFilterLabel={onFilterLabel}
+              />
+            )}
+            {!page?.issue && !failure && (
+              <p role="status" className="text-muted-foreground">
+                Loading issue…
+              </p>
+            )}
+            {failure && (
+              <ProblemNotice
+                problem={failure}
+                login={login}
+                url={visit.issue.url}
+                onRetry={retry}
+              />
             )}
           </div>
-          {page?.issue && (
-            <IssueMetadataLine
-              issue={page.issue}
-              onFilterLabel={onFilterLabel}
+          {page?.blockingMap && (
+            <BlockingMapBand
+              map={page.blockingMap}
+              root={visit.issue.id}
+              cursor={cursor}
+              savedScrollLeft={visit.place.mapScrollLeft}
+              onScroll={(mapScrollLeft) => {
+                remember({ mapScrollLeft });
+              }}
+              onLayout={setMapTargets}
+              onSelect={select}
+              onOpen={open}
+              onRetry={retry}
+              onActivateEnd={(side) => {
+                void window.verdandi.activateBlockingEnd(visit.issue.id, side);
+              }}
+              onRetryBranch={(cardId, side) => {
+                void window.verdandi.retryBlockingBranch(
+                  visit.issue.id,
+                  cardId,
+                  side,
+                );
+              }}
             />
           )}
-          {!page?.issue && !failure && (
-            <p role="status" className="text-muted-foreground">
-              Loading issue…
-            </p>
+          {page?.issue && (
+            <section aria-label="Sub-issues" className="border-t">
+              <div className="flex items-center justify-between px-6 py-3">
+                <h2 className="text-sm font-medium">
+                  Sub-issues{" "}
+                  <span className="ml-1 text-muted-foreground">
+                    {page.issue.subIssueProgress.closed}/
+                    {page.issue.subIssueProgress.total}
+                  </span>
+                </h2>
+              </div>
+              {rows.length > 0 ? (
+                <div role="tree" aria-label="Sub-issues">
+                  <IssueColumnHeader />
+                  {rows.map((row) => (
+                    <IssueRow
+                      key={row.node.issue.id}
+                      row={row}
+                      withRepository={false}
+                      selected={row.node.issue.id === cursor}
+                      login={login}
+                      onSelect={select}
+                      onToggle={toggle}
+                      onOpen={open}
+                      onRetry={retry}
+                      onFilterLabel={onFilterLabel}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="px-6 pb-5 text-muted-foreground">
+                  {page.loading.status === "loading" ? (
+                    "Loading sub-issues…"
+                  ) : page.issue.subIssueProgress.total > 0 ? (
+                    // GitHub counts sub-issues it did not list: why, if it
+                    // said, never "none".
+                    <>
+                      {page.issue.incomplete
+                        ? problemText(page.issue.incomplete, login).text
+                        : "GitHub did not list its sub-issues"}
+                      <button
+                        type="button"
+                        onClick={retry}
+                        className="ml-2 underline underline-offset-2"
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : (
+                    "No sub-issues"
+                  )}
+                </p>
+              )}
+            </section>
           )}
-          {failure && (
-            <ProblemNotice
-              problem={failure}
+          {page?.issue && page.comments && (
+            <IssueConversation
+              issue={page.issue}
+              comments={page.comments}
               login={login}
-              url={visit.issue.url}
               onRetry={retry}
+              onOpenIssue={openLink}
             />
           )}
         </div>
-        {page?.blockingMap && (
-          <BlockingMapBand
-            map={page.blockingMap}
-            root={visit.issue.id}
-            cursor={cursor}
-            savedScrollLeft={visit.place.mapScrollLeft}
-            onScroll={(mapScrollLeft) => {
-              remember({ mapScrollLeft });
-            }}
-            onLayout={setMapTargets}
-            onSelect={select}
-            onOpen={open}
-            onRetry={retry}
-            onActivateEnd={(side) => {
-              void window.verdandi.activateBlockingEnd(visit.issue.id, side);
-            }}
-            onRetryBranch={(cardId, side) => {
-              void window.verdandi.retryBlockingBranch(
-                visit.issue.id,
-                cardId,
-                side,
-              );
-            }}
-          />
-        )}
-        {page?.issue && (
-          <section aria-label="Sub-issues" className="border-t">
-            <div className="flex items-center justify-between px-6 py-3">
-              <h2 className="text-sm font-medium">
-                Sub-issues{" "}
-                <span className="ml-1 text-muted-foreground">
-                  {page.issue.subIssueProgress.closed}/
-                  {page.issue.subIssueProgress.total}
-                </span>
-              </h2>
-            </div>
-            {rows.length > 0 ? (
-              <div role="tree" aria-label="Sub-issues">
-                <IssueColumnHeader />
-                {rows.map((row) => (
-                  <IssueRow
-                    key={row.node.issue.id}
-                    row={row}
-                    withRepository={false}
-                    selected={row.node.issue.id === cursor}
-                    login={login}
-                    onSelect={select}
-                    onToggle={toggle}
-                    onOpen={open}
-                    onRetry={retry}
-                    onFilterLabel={onFilterLabel}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="px-6 pb-5 text-muted-foreground">
-                {page.loading.status === "loading" ? (
-                  "Loading sub-issues…"
-                ) : page.issue.subIssueProgress.total > 0 ? (
-                  // GitHub counts sub-issues it did not list: why, if it
-                  // said, never "none".
-                  <>
-                    {page.issue.incomplete
-                      ? problemText(page.issue.incomplete, login).text
-                      : "GitHub did not list its sub-issues"}
-                    <button
-                      type="button"
-                      onClick={retry}
-                      className="ml-2 underline underline-offset-2"
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : (
-                  "No sub-issues"
-                )}
-              </p>
-            )}
-          </section>
-        )}
-        {page?.issue && page.comments && (
-          <IssueConversation
-            issue={page.issue}
-            comments={page.comments}
-            login={login}
-            onRetry={retry}
-            onOpenIssue={openLink}
-          />
-        )}
-      </div>
+      </IssueContextMenu>
     </div>
   );
 }

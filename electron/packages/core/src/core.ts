@@ -47,7 +47,8 @@ import type {
 } from "./settings/port.ts";
 import { createGhSetup } from "./setup.ts";
 import { createSidebar, type Sidebar } from "./sidebar.ts";
-import { createSidebarSelection } from "./sidebar-selection.ts";
+import { createRecentIssues } from "./recent-issues.ts";
+import { createTabs } from "./tabs.ts";
 import { createViewLists, type ViewLists } from "./view-lists.ts";
 
 /** At most this many `gh` processes run at once. */
@@ -419,7 +420,8 @@ export function createCore({
     } else session.lists.changeLabelFilter(list, apply);
   }
 
-  const selection = createSidebarSelection(settings, localState);
+  const tabs = createTabs(settings, localState);
+  const recentIssues = createRecentIssues(localState);
   async function settingsChanged() {
     session.views.settingsChanged((await settings.read()).value);
     await session.lists.settingsChanged();
@@ -438,7 +440,8 @@ export function createCore({
   });
 
   return {
-    ...selection,
+    ...tabs,
+    ...recentIssues,
     async getWindowState() {
       return (await localState.read()).window;
     },
@@ -517,42 +520,17 @@ export function createCore({
       };
     },
     async removeRepository(repository) {
-      const selected = await selection.getSelectedSidebarEntry();
-      const { selectedEntry: storedSelection } = await localState.read();
       const { value } = await settings.read();
-      // Restored selections expose their current address. For the keyboard
-      // action, keep the stored identity even if that old name was reused.
-      const id =
-        repository.id ??
-        (selected.kind === "repository" &&
-        sameRepository(selected.repository, repository) &&
-        storedSelection?.kind === "repository" &&
-        "id" in storedSelection
-          ? storedSelection.id
-          : undefined);
-      const index = value.repositories.findIndex((entry) =>
-        id !== undefined ? entry.id === id : sameRepository(entry, repository),
+      const tracked = value.repositories.find((entry) =>
+        repository.id !== undefined
+          ? entry.id === repository.id
+          : sameRepository(entry, repository),
       );
-      const tracked = value.repositories[index];
-      if (!tracked) return { ok: true, selection: selected };
+      if (!tracked) return { ok: true };
       const result = await settings.removeRepository(tracked);
       if (!result.ok) return result;
-      if (
-        selected.kind === "repository" &&
-        (storedSelection?.kind === "repository" && "id" in storedSelection
-          ? storedSelection.id === tracked.id
-          : sameRepository(selected.repository, tracked))
-      ) {
-        const neighbour =
-          value.repositories[index + 1] ?? value.repositories[index - 1];
-        await selection.selectSidebarEntry(
-          neighbour
-            ? { kind: "repository", repository: neighbour }
-            : { kind: "all" },
-        );
-      }
       await settingsChanged();
-      return { ok: true, selection: await selection.getSelectedSidebarEntry() };
+      return { ok: true };
     },
     async saveView(draft, { force = false } = {}) {
       const name = draft.name.trim();
@@ -604,20 +582,12 @@ export function createCore({
       return { status: "saved", view };
     },
     async removeView(viewId) {
-      const selected = await selection.getSelectedSidebarEntry();
       const { value } = await settings.read();
-      const index = value.views.findIndex(({ id }) => id === viewId);
-      if (index < 0) return { ok: true, selection: selected };
+      if (!value.views.some(({ id }) => id === viewId)) return { ok: true };
       const result = await settings.removeView(viewId);
       if (!result.ok) return result;
-      if (selected.kind === "view" && selected.view.id === viewId) {
-        const neighbour = value.views[index + 1] ?? value.views[index - 1];
-        await selection.selectSidebarEntry(
-          neighbour ? { kind: "view", id: neighbour.id } : { kind: "all" },
-        );
-      }
       await settingsChanged();
-      return { ok: true, selection: await selection.getSelectedSidebarEntry() };
+      return { ok: true };
     },
     openView(viewId) {
       show({ kind: "view", viewId });

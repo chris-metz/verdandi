@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { listFreshness } from "./freshness";
 import { GoToIssueButton } from "./GoToIssueDialog";
+import { IssueContextMenu } from "./IssueContextMenu";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
@@ -32,6 +33,7 @@ import { useListPane } from "./use-list-pane";
  * a neighbour if the issue disappeared, and stays where it is on screen.
  */
 export function IssueListPane({
+  tab,
   scope,
   login,
   hasKeyboard,
@@ -42,6 +44,8 @@ export function IssueListPane({
   onTrackNewRepository,
   onGoToIssue,
 }: {
+  /** The tab the list shows in. */
+  tab: number;
   scope: Scope;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
@@ -59,8 +63,8 @@ export function IssueListPane({
    * when it opens in place of another list.
    */
   hasKeyboard: boolean;
-  /** Opens the Go to issue dialog, where it is available. */
-  onGoToIssue?: (() => void) | undefined;
+  /** Opens the Go to Issue dialog. */
+  onGoToIssue: () => void;
 }) {
   const list = useList(scope);
   const trees = useMemo(() => list?.trees ?? [], [list]);
@@ -68,8 +72,9 @@ export function IssueListPane({
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(scope);
   }, [scope]);
-  const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
-    {
+  const { rows, selected, select, menuTarget, scroller, onKeyDown, onScroll } =
+    useListPane({
+      tab,
       scope,
       list,
       trees,
@@ -82,8 +87,7 @@ export function IssueListPane({
         void window.verdandi.setAllExpanded(scope, expanded);
       },
       onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
-    },
-  );
+    });
   const toggle = useCallback(
     (issueId: string, expanded: boolean) => {
       void window.verdandi.setExpanded(scope, issueId, expanded);
@@ -140,7 +144,7 @@ export function IssueListPane({
             </span>
           )}
           <RateLimitStatus />
-          {onGoToIssue && <GoToIssueButton onClick={onGoToIssue} />}
+          <GoToIssueButton onClick={onGoToIssue} />
           {list && (
             <RefreshControl
               freshness={(now) => listFreshness(list, now)}
@@ -158,104 +162,108 @@ export function IssueListPane({
           />
         )}
       </header>
-      <div
-        ref={scroller}
-        role="tree"
-        aria-label={`Issues of ${label}`}
-        tabIndex={0}
-        data-pane-focus
-        onKeyDown={onKeyDown}
-        onScroll={onScroll}
-        className="group min-h-0 flex-1 overflow-y-auto outline-none"
-      >
-        {failure && (repository?.unavailable || rows.length === 0) ? (
-          // Nothing to show, so why stands in place of the list.
-          <ProblemNotice
-            problem={failure}
-            login={login}
-            repository={repository?.repository}
-            // Its address would open the repository that took it over.
-            url={
-              scope.kind === "repository" &&
-              !(failure.kind === "unavailable" && failure.nameTakenOver)
-                ? `${repositoryUrl(scope.repository)}/issues`
-                : undefined
-            }
-            onTrackNew={
-              repository &&
-              failure.kind === "unavailable" &&
-              failure.nameTakenOver
-                ? () => {
-                    onTrackNewRepository(repository.repository);
-                  }
-                : undefined
-            }
-            onRetry={retry}
-            onRemove={
-              repository && failure.kind === "unavailable" && onRemoveRepository
-                ? () => {
-                    onRemoveRepository(repository.repository);
-                  }
-                : undefined
-            }
-            className="px-4 py-6"
-          />
-        ) : (
-          list && (
-            <>
-              <RepositoryProblems
-                repositories={list.repositories}
-                login={login}
-                onRetry={retry}
-              />
-              <IssueColumnHeader sticky />
-              {rows.map((row, index) => (
-                <IssueRow
-                  key={row.node.issue.id}
-                  row={row}
-                  listState={list.state}
-                  matchedBy={labelFilter.length > 0 ? "labels" : undefined}
-                  withRepository={repositoryChips}
-                  selected={index === selected}
+      <IssueContextMenu targetAt={menuTarget}>
+        <div
+          ref={scroller}
+          role="tree"
+          aria-label={`Issues of ${label}`}
+          tabIndex={0}
+          data-pane-focus
+          onKeyDown={onKeyDown}
+          onScroll={onScroll}
+          className="group min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          {failure && (repository?.unavailable || rows.length === 0) ? (
+            // Nothing to show, so why stands in place of the list.
+            <ProblemNotice
+              problem={failure}
+              login={login}
+              repository={repository?.repository}
+              // Its address would open the repository that took it over.
+              url={
+                scope.kind === "repository" &&
+                !(failure.kind === "unavailable" && failure.nameTakenOver)
+                  ? `${repositoryUrl(scope.repository)}/issues`
+                  : undefined
+              }
+              onTrackNew={
+                repository &&
+                failure.kind === "unavailable" &&
+                failure.nameTakenOver
+                  ? () => {
+                      onTrackNewRepository(repository.repository);
+                    }
+                  : undefined
+              }
+              onRetry={retry}
+              onRemove={
+                repository &&
+                failure.kind === "unavailable" &&
+                onRemoveRepository
+                  ? () => {
+                      onRemoveRepository(repository.repository);
+                    }
+                  : undefined
+              }
+              className="px-4 py-6"
+            />
+          ) : (
+            list && (
+              <>
+                <RepositoryProblems
+                  repositories={list.repositories}
                   login={login}
-                  onOpen={onOpen}
-                  onSelect={select}
-                  onToggle={toggle}
                   onRetry={retry}
-                  onFilterLabel={filterLabel}
                 />
-              ))}
-              {labelFilter.length > 0 &&
-              "matches" in list.loading &&
-              list.loading.matches === 0 ? (
-                <NoLabelMatches
-                  status={listStatus(list.loading, list.state, labelFilter)}
-                  onClear={clearLabelFilter}
-                />
-              ) : (
-                <p
-                  role={failure ? "alert" : "status"}
-                  className={cn(
-                    "px-4 py-3 whitespace-pre-line text-muted-foreground",
-                    failure && "text-warning",
-                  )}
-                >
-                  {listStatus(list.loading, list.state, labelFilter)}
-                  {failure && (
-                    <button
-                      type="button"
-                      onClick={retry}
-                      className="ml-2 underline underline-offset-2"
-                    >
-                      Retry
-                    </button>
-                  )}
-                </p>
-              )}
-            </>
-          )
-        )}
-      </div>
+                <IssueColumnHeader sticky />
+                {rows.map((row, index) => (
+                  <IssueRow
+                    key={row.node.issue.id}
+                    row={row}
+                    listState={list.state}
+                    matchedBy={labelFilter.length > 0 ? "labels" : undefined}
+                    withRepository={repositoryChips}
+                    selected={index === selected}
+                    login={login}
+                    onOpen={onOpen}
+                    onSelect={select}
+                    onToggle={toggle}
+                    onRetry={retry}
+                    onFilterLabel={filterLabel}
+                  />
+                ))}
+                {labelFilter.length > 0 &&
+                "matches" in list.loading &&
+                list.loading.matches === 0 ? (
+                  <NoLabelMatches
+                    status={listStatus(list.loading, list.state, labelFilter)}
+                    onClear={clearLabelFilter}
+                  />
+                ) : (
+                  <p
+                    role={failure ? "alert" : "status"}
+                    className={cn(
+                      "px-4 py-3 whitespace-pre-line text-muted-foreground",
+                      failure && "text-warning",
+                    )}
+                  >
+                    {listStatus(list.loading, list.state, labelFilter)}
+                    {failure && (
+                      <button
+                        type="button"
+                        onClick={retry}
+                        className="ml-2 underline underline-offset-2"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </p>
+                )}
+              </>
+            )
+          )}
+        </div>
+      </IssueContextMenu>
     </>
   );
 }

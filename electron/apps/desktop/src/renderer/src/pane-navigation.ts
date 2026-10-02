@@ -28,7 +28,7 @@ export type WindowCommand =
   | { kind: "refresh" }
   | { kind: "switch-state" }
   | { kind: "add-repository" }
-  | { kind: "go-to-issue"; repository: RepositoryAddress }
+  | { kind: "go-to-issue" }
   | { kind: "remove-repository"; repository: RepositoryAddress }
   | { kind: "new-view" }
   | { kind: "edit-view"; view: SavedView }
@@ -45,6 +45,7 @@ export interface WindowState {
   focused: Pane;
   /** The sidebar's entries, in visual order. */
   entries: readonly Scope[];
+  /** The entry of the tab shown; none for a new tab. */
   selected: Scope | undefined;
   /** The modifier of the sidebar's shortcuts. */
   modifier: ShortcutModifier;
@@ -68,9 +69,9 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
  * What a key does in the window before the focused pane gets it: Tab moves
  * the keyboard to the other pane, `r` refreshes what is on screen, `s`
  * switches a repository's or All's list between open and closed issues, `a`
- * opens the repository picker, `#` the Go to issue dialog of the selected
- * repository, `v` the dialog for a new view, `E` the one for the selected
- * view and `V` one for a duplicate of it, ⌘/Ctrl+1…9
+ * opens the repository picker, `#` the Go to Issue dialog over the tab
+ * shown, or a new tab's field, `v` the dialog for a new view, `E` the one
+ * for the selected view and `V` one for a duplicate of it, ⌘/Ctrl+1…9
  * select the sidebar's entries in visual order, and in the sidebar ↑/↓ or
  * `j`/`k` select the entry above or below at once, F2 edits the view it has
  * and ⌫ asks to remove its entry. Every other key is the
@@ -122,8 +123,10 @@ export function commandForWindowKey(
   }
   if (key === "a") return { kind: "add-repository" };
   // `#` is its own key on some layouts, and Shift+3 on others.
-  if (key === "#" && selected?.kind === "repository") {
-    return { kind: "go-to-issue", repository: selected.repository };
+  if (key === "#") {
+    return selected === undefined
+      ? { kind: "focus", pane: "main" }
+      : { kind: "go-to-issue" };
   }
   if (key === "v" && !shiftKey) return { kind: "new-view" };
   if (key === "E" && selected?.kind === "view") {
@@ -156,6 +159,29 @@ export function commandForWindowKey(
     default:
       return undefined;
   }
+}
+
+/**
+ * Which way a key steps through the tabs, wherever the keyboard is: Ctrl+Tab
+ * to the next tab and Ctrl+Shift+Tab to the previous one, as ⌘⇧] and ⌘⇧[
+ * do on macOS and Ctrl+PageDown and Ctrl+PageUp elsewhere.
+ */
+export function tabStepForKey(
+  { key, code, metaKey, ctrlKey, altKey, shiftKey }: KeyPress,
+  platform: Platform,
+): 1 | -1 | undefined {
+  if (altKey) return undefined;
+  if (ctrlKey && !metaKey && key === "Tab") return shiftKey ? -1 : 1;
+  if (platform === "darwin") {
+    if (!metaKey || ctrlKey || !shiftKey) return undefined;
+    if (code === "BracketRight") return 1;
+    if (code === "BracketLeft") return -1;
+    return undefined;
+  }
+  if (!ctrlKey || metaKey || shiftKey) return undefined;
+  if (key === "PageDown") return 1;
+  if (key === "PageUp") return -1;
+  return undefined;
 }
 
 /**

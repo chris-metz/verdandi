@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type UIEvent,
 } from "react";
+import type { IssueMenuTarget } from "./IssueContextMenu";
 import type { IssueDestination } from "./issue-navigation";
 import {
   commandForKey,
@@ -17,6 +18,7 @@ import {
   visibleRows,
 } from "./list-navigation";
 import { rememberedPlace, rememberPlace } from "./list-places";
+import { isNewTabKey, useOpenInNewTab } from "./open-in-new-tab";
 import type { SidebarScope } from "./scope";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
@@ -28,11 +30,13 @@ const selectedRow = '[aria-selected="true"]';
  * mouse, whatever it lists: the rows its trees show, the selection, which
  * follows its issue as the trees change, or moves to a neighbour if the
  * issue disappeared, and stays where it is on screen, and the selection and
- * scroll position remembered per entry for the session. Expanding and
+ * scroll position remembered per tab and entry for the session. ⌘↩, Ctrl+↩
+ * elsewhere, opens the selected issue in a new tab. Expanding and
  * collapsing is the list's own, if it can, and so is clearing its label
  * filter with Esc.
  */
 export function useListPane({
+  tab,
   scope,
   list,
   trees,
@@ -42,6 +46,8 @@ export function useListPane({
   onSetAllExpanded,
   onClearLabelFilter,
 }: {
+  /** The tab the list shows in, whose place in it it keeps. */
+  tab: number;
   scope: SidebarScope;
   /** The list as last pushed, or none before it arrives. */
   list: object | undefined;
@@ -57,7 +63,8 @@ export function useListPane({
   /** Clears the list's label filter, while it has one. */
   onClearLabelFilter?: (() => void) | undefined;
 }) {
-  const [place] = useState(() => rememberedPlace(scope));
+  const [place] = useState(() => rememberedPlace(tab, scope));
+  const openInNewTab = useOpenInNewTab();
   const [selectedId, setSelectedId] = useState(place.selectedId);
   const scroller = useRef<HTMLDivElement>(null);
   const revealSelection = useRef(false);
@@ -80,6 +87,13 @@ export function useListPane({
   }, []);
 
   function onKeyDown(event: KeyboardEvent) {
+    if (isNewTabKey(event)) {
+      const command = commandForKey("Enter", rows, selected, trees);
+      if (command?.kind !== "openIssue" || !openInNewTab) return;
+      event.preventDefault();
+      openInNewTab(command.issue);
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const command = commandForKey(event.key, rows, selected, trees);
     if (!command) return;
@@ -127,14 +141,14 @@ export function useListPane({
   // The selection is remembered wherever it goes, also when it follows its
   // issue to a neighbour.
   useEffect(() => {
-    rememberPlace(scope, {
+    rememberPlace(tab, scope, {
       selectedId,
       scrollTop:
         restored.current && scroller.current
           ? scroller.current.scrollTop
           : place.scrollTop,
     });
-  }, [scope, selectedId, place]);
+  }, [tab, scope, selectedId, place]);
 
   // A selection moved by keyboard is scrolled into sight.
   useLayoutEffect(() => {
@@ -159,17 +173,41 @@ export function useListPane({
       : undefined;
   }
 
+  /** What a right click on a row, or the parent issue a row names, offers. */
+  function menuTarget(element: Element): IssueMenuTarget | undefined {
+    const parentId = element
+      .closest("[data-parent-issue-id]")
+      ?.getAttribute("data-parent-issue-id");
+    const id = element
+      .closest("[data-issue-id]")
+      ?.getAttribute("data-issue-id");
+    const issue: IssueDestination | undefined =
+      parentId == null
+        ? rows.find((row) => row.node.issue.id === id)?.node.issue
+        : rows.find((row) => row.parent?.id === parentId)?.parent;
+    return (
+      issue &&
+      openInNewTab && {
+        openInNewTab: () => {
+          openInNewTab(issue);
+        },
+        url: issue.url,
+      }
+    );
+  }
+
   return {
     rows,
     /** The index of the selected row. */
     selected,
+    menuTarget,
     select,
     /** The list's scrolling element, which holds the keyboard. */
     scroller,
     onKeyDown,
     onScroll: (event: UIEvent<HTMLElement>) => {
       noteScroll();
-      rememberPlace(scope, {
+      rememberPlace(tab, scope, {
         selectedId,
         scrollTop: event.currentTarget.scrollTop,
       });

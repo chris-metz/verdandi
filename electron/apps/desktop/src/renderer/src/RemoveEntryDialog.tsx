@@ -1,4 +1,4 @@
-import type { SidebarSelection } from "@verdandi/core/contract";
+import type { SettingsChangeResult } from "@verdandi/core/contract";
 import { useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,10 +26,8 @@ export function RemoveEntryDialog({
 }: {
   entry: RemovableEntry;
   returnFocus: RefObject<HTMLElement | null>;
-  onRemove: () => Promise<
-    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
-  >;
-  onRemoved: (selection: SidebarSelection) => void;
+  onRemove: () => Promise<SettingsChangeResult>;
+  onRemoved: () => void;
   onClose: () => void;
 }) {
   const removeButton = useRef<HTMLButtonElement>(null);
@@ -41,7 +39,7 @@ export function RemoveEntryDialog({
     setError(undefined);
     try {
       const result = await onRemove();
-      if (result.ok) onRemoved(result.selection);
+      if (result.ok) onRemoved();
       else setError(result.message);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

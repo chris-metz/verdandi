@@ -9,10 +9,11 @@ import { presentScope, type SidebarScope as Scope } from "./scope";
 import { ViewPane } from "./ViewPane";
 
 /**
- * One sidebar entry's list and the issue pages opened from it. A label
- * clicked on a page returns to the list, filtered by it.
+ * One tab's sidebar entry's list and the issue pages opened from it. A
+ * label clicked on a page returns to the list, filtered by it.
  */
 export function MainArea({
+  tab,
   scope,
   stack,
   login,
@@ -25,6 +26,8 @@ export function MainArea({
   onEditView,
   onGoToIssue,
 }: {
+  /** The tab it shows in. */
+  tab: number;
   scope: Scope;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
@@ -32,8 +35,8 @@ export function MainArea({
   onTrackNewRepository: (repository: TrackedRepository) => void;
   /** Opens the view dialog for the view shown. */
   onEditView: () => void;
-  /** Opens the Go to issue dialog, where it is available. */
-  onGoToIssue: (() => void) | undefined;
+  /** Opens the Go to Issue dialog over the tab. */
+  onGoToIssue: () => void;
   /** The issue pages opened from the list, the one shown last. */
   stack: readonly IssueVisit[];
   /** The account GitHub is read as, if known. */
@@ -45,16 +48,19 @@ export function MainArea({
   if (!current)
     return scope.kind === "view" ? (
       <ViewPane
+        tab={tab}
         view={scope.view}
         login={login}
         hasKeyboard={hasKeyboard}
         onEdit={onEditView}
+        onGoToIssue={onGoToIssue}
         onOpen={(issue) => {
           onNavigate({ kind: "open", issue });
         }}
       />
     ) : (
       <IssueListPane
+        tab={tab}
         scope={scope}
         repositories={repositories}
         onSelectRepository={onSelectRepository}

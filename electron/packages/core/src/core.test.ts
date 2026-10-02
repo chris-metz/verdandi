@@ -7182,7 +7182,7 @@ it("updates All from hand-edited tracking and keeps the last valid scope while s
 });
 
 describe("removing tracked repositories", () => {
-  it("moves a removed selection to the next repository, then the previous, then All, keeping views and persisting removal", async () => {
+  it("removes each repository asked for, keeping views and persisting removal", async () => {
     await writeSettings({
       version: 1,
       repositories: ["acme/api", "acme/web", "acme/tools"].map((name) => ({
@@ -7194,29 +7194,11 @@ describe("removing tracked repositories", () => {
     for (const name of ["api", "web", "tools"])
       github.addRepository(`acme/${name}`, []);
     const core = createTestCore(github);
-    await core.selectSidebarEntry({
-      kind: "repository",
-      repository: { owner: "acme", name: "web" },
-    });
 
-    expect(
-      await core.removeRepository({ owner: "acme", name: "web" }),
-    ).toMatchObject({ ok: true });
-    expect(await core.getSelectedSidebarEntry()).toEqual({
-      kind: "repository",
-      repository: { owner: "acme", name: "tools" },
-    });
-    expect(
-      await core.removeRepository({ owner: "acme", name: "tools" }),
-    ).toMatchObject({ ok: true });
-    expect(await core.getSelectedSidebarEntry()).toEqual({
-      kind: "repository",
-      repository: { owner: "acme", name: "api" },
-    });
-    expect(
-      await core.removeRepository({ owner: "acme", name: "api" }),
-    ).toMatchObject({ ok: true });
-    expect(await core.getSelectedSidebarEntry()).toEqual({ kind: "all" });
+    for (const name of ["web", "tools", "api"])
+      expect(await core.removeRepository({ owner: "acme", name })).toEqual({
+        ok: true,
+      });
     expect(await createTestCore(github).getSidebar()).toMatchObject({
       repositories: [],
       views: [
@@ -7250,7 +7232,6 @@ it("removes issues from All immediately, keeps related external issues and cache
   };
   await openUntilLoaded(core, web);
   await core.setAllExpanded(web, false);
-  await core.selectSidebarEntry({ kind: "all" });
   await openUntilLoaded(core, { kind: "all" });
   await openPageUntilLoaded(core, "I_acme/web#1");
   await openPageUntilLoaded(core, "I_acme/web#3");
@@ -7264,10 +7245,7 @@ it("removes issues from All immediately, keeps related external issues and cache
   });
   const reads = github.requestsReceived;
 
-  expect(await core.removeRepository(web.repository)).toEqual({
-    ok: true,
-    selection: { kind: "all" },
-  });
+  expect(await core.removeRepository(web.repository)).toEqual({ ok: true });
   expect(all?.loading).toMatchObject({ status: "current", matches: 2 });
   expect(all?.trees.map((node) => node.issue.id)).not.toContain("I_acme/web#3");
   const api = all?.trees.find((node) => node.issue.id === "I_acme/api#1");
@@ -7329,40 +7307,31 @@ it("drops unstarted repository reads and removes it from queued count batches wh
   expect(github.received.some((read) => read.includes("acme/six"))).toBe(false);
 });
 
-it.each([
-  { kind: "repository" as const, repository: { owner: "acme", name: "api" } },
-  { kind: "view" as const, id: "bugs" },
-])(
-  "keeps an unremoved selection and its open issue page (%s)",
-  async (selection) => {
-    const github = createFakeGitHub({ login: "octo-reader" });
-    github.addRepository("acme/api", []);
-    github.addRepository("acme/web", [{ number: 1, title: "Reading" }]);
-    await writeSettings({
-      version: 1,
-      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
-      views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web" }],
-    });
-    const core = createTestCore(github);
-    await core.selectSidebarEntry(selection);
-    const before = await core.getSelectedSidebarEntry();
-    const page = await openPageUntilLoaded(core, "I_acme/web#1");
-    const after = await pageUntilSettled(core, page.issueId, async () => {
-      expect(
-        await core.removeRepository({ owner: "acme", name: "web" }),
-      ).toEqual({ ok: true, selection: before });
-    });
-    expect(after.issue).toMatchObject({ id: page.issueId, external: true });
-    expect(after.issue).toEqual({ ...page.issue, external: true });
-    expect(await core.getSelectedSidebarEntry()).toEqual(before);
-  },
-);
+it("keeps an open issue page of a removed repository, its issue now external", async () => {
+  const github = createFakeGitHub({ login: "octo-reader" });
+  github.addRepository("acme/api", []);
+  github.addRepository("acme/web", [{ number: 1, title: "Reading" }]);
+  await writeSettings({
+    version: 1,
+    repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    views: [{ id: "bugs", name: "Bugs", query: "repo:acme/web" }],
+  });
+  const core = createTestCore(github);
+  const page = await openPageUntilLoaded(core, "I_acme/web#1");
+  const after = await pageUntilSettled(core, page.issueId, async () => {
+    expect(await core.removeRepository({ owner: "acme", name: "web" })).toEqual(
+      { ok: true },
+    );
+  });
+  expect(after.issue).toMatchObject({ id: page.issueId, external: true });
+  expect(after.issue).toEqual({ ...page.issue, external: true });
+});
 
 it.each([
   "{broken",
   JSON.stringify({ version: 2, repositories: [{ name: "acme/api" }] }),
 ])(
-  "leaves tracking and selection in place when removal cannot be saved (%s)",
+  "leaves tracking in place when removal cannot be saved (%s)",
   async (contents) => {
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [{ number: 1, title: "Keep" }]);
@@ -7372,13 +7341,11 @@ it.each([
       kind: "repository" as const,
       repository: { owner: "acme", name: "api" },
     };
-    await core.selectSidebarEntry(selection);
     await openUntilLoaded(core, selection);
     await writeFile(join(home, "settings.json"), contents);
     expect(await core.removeRepository(selection.repository)).toMatchObject({
       ok: false,
     });
-    expect(await core.getSelectedSidebarEntry()).toEqual(selection);
     expect(sidebarLines(await core.getSidebar())).toEqual(["acme/api 1"]);
     expect(await readFile(join(home, "settings.json"), "utf8")).toBe(contents);
   },
@@ -7429,49 +7396,10 @@ it("removes only the requested repository identity when its old name has been re
     ],
   });
   const core = createTestCore(github);
-  await core.selectSidebarEntry({
-    kind: "repository",
-    repository: { owner: "acme", name: "api" },
-  });
   expect(
     await core.removeRepository({ owner: "acme", name: "api", id: 99 }),
   ).toMatchObject({ ok: true });
   expect(await core.getSidebar()).toMatchObject({
-    repositories: [{ repository: { owner: "acme", name: "api", id: 42 } }],
-  });
-  expect(await core.getSelectedSidebarEntry()).toEqual({
-    kind: "repository",
-    repository: { owner: "acme", name: "api" },
-  });
-});
-
-it("keeps the restored selection's identity for keyboard removal when an address is reused", async () => {
-  const github = createFakeGitHub({ login: "octo-reader" });
-  github.addRepository("acme/api", []);
-  await writeSettings({
-    version: 1,
-    repositories: [{ name: "acme/api", id: 99 }],
-  });
-  const core = createTestCore(github);
-  await core.selectSidebarEntry({
-    kind: "repository",
-    repository: { owner: "acme", name: "api" },
-  });
-  await writeSettings({
-    version: 1,
-    repositories: [
-      { name: "acme/api", id: 42 },
-      { name: "acme/api", id: 99 },
-    ],
-  });
-  const restarted = createTestCore(github);
-  const selection = await restarted.getSelectedSidebarEntry();
-  if (selection.kind !== "repository")
-    throw new Error("Expected repository selection");
-  expect(await restarted.removeRepository(selection.repository)).toMatchObject({
-    ok: true,
-  });
-  expect(await restarted.getSidebar()).toMatchObject({
     repositories: [{ repository: { owner: "acme", name: "api", id: 42 } }],
   });
 });

@@ -136,3 +136,11 @@ it("says which duplicate entries of settings.json were removed, and which stayed
     "newco/api was removed from the sidebar: settings.json listed it as the same repository as acme/api.",
   );
 });
+
+it("says that a pull request typed opened on GitHub", () => {
+  expect(
+    noticeText({ kind: "pull-request-opened", reference: "acme/api#12" }),
+  ).toBe(
+    "acme/api#12 is a pull request, which Verdandi does not show, so it opened on GitHub.",
+  );
+});

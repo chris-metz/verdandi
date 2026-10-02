@@ -35,10 +35,13 @@ export function IssueConversation({
   /** Reads what failed on the page again. */
   onRetry: () => void;
   /**
-   * Opens an issue a link names in the app, answering why it could not, if
-   * it could not.
+   * Opens an issue a link names in the app, in this tab or a new one,
+   * answering why it could not, if it could not.
    */
-  onOpenIssue: (link: LinkToIssue) => Promise<Problem | undefined>;
+  onOpenIssue: (
+    link: LinkToIssue,
+    inNewTab: boolean,
+  ) => Promise<Problem | undefined>;
 }) {
   const status = commentsStatus(comments, issue.commentCount, useNow());
   const { loading } = comments;
@@ -147,7 +150,10 @@ const Comment = memo(function Comment({
   issueId: string;
   comment: IssueComment;
   login: string | undefined;
-  onOpenIssue: (link: LinkToIssue) => Promise<Problem | undefined>;
+  onOpenIssue: (
+    link: LinkToIssue,
+    inNewTab: boolean,
+  ) => Promise<Problem | undefined>;
 }) {
   const { author } = comment;
   return (

@@ -1,131 +1,224 @@
-import type { IssueNode, IssueTree } from "@verdandi/core/contract";
+import type { RecentIssue } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
-import { afterLookUp, beforeLookUp, issueNumber } from "./go-to-issue";
-import type { IssueDestination } from "./issue-navigation";
+import {
+  afterLookUp,
+  goToChoices,
+  issueLocator,
+  openedIssue,
+  recentIssueOf,
+  tabEntryOf,
+} from "./go-to-issue";
+import type { SidebarScope as Scope } from "./scope";
 
-describe("reading the Go to issue field", () => {
-  it("takes a number", () => {
-    expect(issueNumber("123")).toBe(123);
-    expect(issueNumber(" 7 ")).toBe(7);
+const api = { owner: "acme", name: "api" };
+
+describe("reading the Go to Issue field", () => {
+  it("takes a number in the repository of the tab, with or without #", () => {
+    expect(issueLocator("#12")).toEqual({ repository: undefined, number: 12 });
+    expect(issueLocator(" 7 ")).toEqual({ repository: undefined, number: 7 });
   });
 
-  it("ignores a leading #", () => {
-    expect(issueNumber("#123")).toBe(123);
-  });
-
-  it.each(["", "#", "abc", "12a", "1.5", "-3", "0", "##12", "acme/api#12"])(
-    "takes nothing else: %j",
+  it.each(["acme/api#12", "acme/api 12", "acme/api #12", " acme/api#12 "])(
+    "takes owner/name and a number: %j",
     (text) => {
-      expect(issueNumber(text)).toBeUndefined();
+      expect(issueLocator(text)).toEqual({ repository: api, number: 12 });
     },
   );
 
+  it("takes dots, dashes and underscores in owner/name", () => {
+    expect(issueLocator("my-org/web.site_2#3")).toEqual({
+      repository: { owner: "my-org", name: "web.site_2" },
+      number: 3,
+    });
+  });
+
+  it.each([
+    "https://github.com/acme/api/issues/12",
+    "https://github.com/acme/api/issues/12#issuecomment-99",
+    "https://www.github.com/acme/api/issues/12/",
+  ])("takes a link to an issue on GitHub: %j", (text) => {
+    expect(issueLocator(text)).toEqual({ repository: api, number: 12 });
+  });
+
+  it.each([
+    "",
+    "#",
+    "abc",
+    "12a",
+    "1.5",
+    "-3",
+    "0",
+    "##12",
+    "acme/api",
+    "acme/api#",
+    "acme#12",
+    "a/b/c#12",
+    "https://github.com/acme/api/pull/12",
+    "https://example.com/acme/api/issues/12",
+    "http://github.com/acme/api/issues/12",
+  ])("takes nothing else: %j", (text) => {
+    expect(issueLocator(text)).toBeUndefined();
+  });
+
   it("takes no number GitHub could not have", () => {
-    expect(issueNumber("2147483647")).toBe(2147483647);
-    expect(issueNumber("2147483648")).toBeUndefined();
+    expect(issueLocator("2147483647")).toMatchObject({ number: 2147483647 });
+    expect(issueLocator("2147483648")).toBeUndefined();
+    expect(issueLocator("acme/api#2147483648")).toBeUndefined();
   });
 });
 
-/** An issue as `acme/api`'s list names it, with its sub-issues. */
-function issue(
-  reference: string,
-  subIssues: IssueNode[] = [],
-  expanded = true,
-): IssueNode {
-  const [, repository = "acme/api", number = ""] =
-    /^([\w.-]+\/[\w.-]+)?#(\d+)$/.exec(reference) ?? [];
-  const [owner = "", name = ""] = repository.split("/");
+/** A recent issue, by `owner/name#12`. */
+function recent(reference: string, title = `Issue ${reference}`): RecentIssue {
+  const [, owner = "", name = "", number = ""] =
+    /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(reference) ?? [];
   return {
-    issue: {
-      id: `I_${repository}#${number}`,
-      repository: { owner, name },
-      reference,
-      title: `Issue ${reference}`,
-      state: "open",
-      url: `https://github.com/${repository}/issues/${number}`,
-      author: undefined,
-      createdAt: "2026-09-01T12:00:00Z",
-      labels: [],
-      external: repository !== "acme/api",
-      subIssueProgress: { closed: 0, total: subIssues.length },
-      blockedBy: { open: 0, total: 0 },
-      blocking: { open: 0, total: 0 },
-      incomplete: undefined,
-    },
-    subIssues,
-    expanded,
+    id: `I_${reference}`,
+    repository: { owner, name },
+    number: Number(number),
+    title,
   };
 }
 
-function tree(node: IssueNode): IssueTree {
-  return { ...node, parent: undefined };
-}
-
-describe("before asking GitHub", () => {
-  /** #1 with #2 and other/lib#5 below it, then #6 with #7, collapsed. */
-  const trees = [
-    tree(issue("#1", [issue("#2"), issue("other/lib#5")])),
-    tree(issue("#6", [issue("#7")], false)),
+describe("what the palette offers", () => {
+  const recents = [
+    recent("acme/api#3", "Crash on start"),
+    recent("acme/web#12", "Slow page"),
+    recent("acme/api#12", "Login fails"),
   ];
 
-  /** What ↵ does with a number in `acme/api`, with an issue page shown or not. */
-  function before(number: number, shown?: IssueDestination) {
-    return beforeLookUp(number, {
-      repository: { owner: "acme", name: "api" },
-      shown,
-      trees,
+  it("offers every recent issue while nothing is typed", () => {
+    expect(goToChoices("", { from: undefined, recents })).toEqual({
+      destinations: recents.map((issue) => ({ kind: "recent", issue })),
+      hint: undefined,
     });
-  }
+  });
 
-  it("opens an issue the repository's list has, at any depth, collapsed away or not", () => {
-    expect(before(1)).toEqual({
-      kind: "open",
-      issue: {
-        id: "I_acme/api#1",
-        reference: "#1",
-        title: "Issue #1",
-        url: "https://github.com/acme/api/issues/1",
+  it("offers the issue typed first, then the recent issues matching by owner/name#12 or title", () => {
+    expect(
+      goToChoices("acme/web#1", { from: undefined, recents }).destinations,
+    ).toEqual([
+      {
+        kind: "look-up",
+        repository: { owner: "acme", name: "web" },
+        number: 1,
       },
+      { kind: "recent", issue: recents[1] },
+    ]);
+    expect(
+      goToChoices("CRASH", { from: undefined, recents }).destinations,
+    ).toEqual([{ kind: "recent", issue: recents[0] }]);
+  });
+
+  it("offers a recent issue typed as that recent issue, once", () => {
+    expect(goToChoices("#12", { from: api, recents }).destinations).toEqual([
+      { kind: "recent", issue: recents[2] },
+      { kind: "recent", issue: recents[1] },
+    ]);
+    expect(
+      goToChoices("https://github.com/ACME/API/issues/3", {
+        from: undefined,
+        recents,
+      }).destinations,
+    ).toEqual([{ kind: "recent", issue: recents[0] }]);
+  });
+
+  it("has #12 name the repository of the tab it was opened from", () => {
+    expect(goToChoices("#4", { from: api, recents: [] })).toEqual({
+      destinations: [{ kind: "look-up", repository: api, number: 4 }],
+      hint: undefined,
     });
-    expect(before(2)).toMatchObject({
-      kind: "open",
-      issue: { id: "I_acme/api#2" },
+  });
+
+  it("says that owner/name#12 is needed where the tab was no repository's", () => {
+    expect(goToChoices("#4", { from: undefined, recents: [] })).toEqual({
+      destinations: [],
+      hint: "#4 names an issue only in a repository's tab: type owner/name#4.",
     });
-    expect(before(7)).toMatchObject({
-      kind: "open",
-      issue: { id: "I_acme/api#7" },
+  });
+
+  it("says what it takes when what is typed names no issue", () => {
+    expect(goToChoices("nothing", { from: api, recents })).toEqual({
+      destinations: [],
+      hint: "Type #12, owner/name#12 or a link to an issue on GitHub.",
+    });
+    expect(goToChoices("nothing", { from: undefined, recents })).toEqual({
+      destinations: [],
+      hint: "Type owner/name#12 or a link to an issue on GitHub.",
+    });
+  });
+});
+
+describe("opening an issue chosen", () => {
+  const tracked = [{ owner: "Acme", name: "API", id: 42 }];
+
+  it("opens over its repository's list when the repository is tracked, and over All otherwise", () => {
+    expect(tabEntryOf(api, tracked)).toEqual({
+      kind: "repository",
+      repository: tracked[0],
+    });
+    expect(tabEntryOf({ owner: "acme", name: "web" }, tracked)).toEqual({
+      kind: "all",
     });
   });
 
-  it("looks up an issue the list does not have, even when another repository's has its number", () => {
-    expect(before(3)).toEqual({ kind: "look-up" });
-    expect(before(5)).toEqual({ kind: "look-up" });
+  it("names it as the list it opens over names it", () => {
+    const issue = recent("acme/api#12", "Login fails");
+    const own: Scope = { kind: "repository", repository: tracked[0] ?? api };
+    expect(openedIssue(issue, own)).toEqual({
+      id: "I_acme/api#12",
+      reference: "#12",
+      title: "Login fails",
+      url: "https://github.com/acme/api/issues/12",
+    });
+    expect(openedIssue(issue, { kind: "all" })).toMatchObject({
+      reference: "acme/api#12",
+    });
+  });
+});
+
+describe("recording a recent issue", () => {
+  const web: Scope = {
+    kind: "repository",
+    repository: { owner: "acme", name: "web" },
+  };
+
+  it("knows an issue by its link", () => {
+    expect(
+      recentIssueOf(
+        {
+          id: "I_1",
+          reference: "#1",
+          title: "One",
+          url: "https://github.com/acme/api/issues/1",
+        },
+        { kind: "all" },
+      ),
+    ).toEqual({ id: "I_1", repository: api, number: 1, title: "One" });
   });
 
-  it("just closes for the issue already shown, known by its page, whether the list has it or not", () => {
-    const shown = {
-      id: "I_acme/api#3",
-      reference: "acme/api#3",
-      title: "Closed long ago",
-      url: "https://github.com/Acme/API/issues/3",
-    };
-    expect(before(3, shown)).toEqual({ kind: "shown" });
-    expect(before(4, shown)).toEqual({ kind: "look-up" });
+  it("knows an issue opened without its link by its reference", () => {
+    expect(
+      recentIssueOf({ id: "I_2", reference: "acme/api#2", title: "Two" }, web),
+    ).toEqual({ id: "I_2", repository: api, number: 2, title: "Two" });
+    expect(
+      recentIssueOf({ id: "I_3", reference: "#3", title: "Three" }, web),
+    ).toEqual({
+      id: "I_3",
+      repository: { owner: "acme", name: "web" },
+      number: 3,
+      title: "Three",
+    });
   });
 
-  it("just closes for the issue already shown that the list has, known by its ID", () => {
-    const shown = { id: "I_acme/api#2", reference: "#2", title: "Issue #2" };
-    expect(before(2, shown)).toEqual({ kind: "shown" });
-  });
-
-  it("does not take an external issue shown for the repository's issue with its number", () => {
-    const shown = {
-      id: "I_other/lib#5",
-      reference: "other/lib#5",
-      title: "Issue other/lib#5",
-      url: "https://github.com/other/lib/issues/5",
-    };
-    expect(before(5, shown)).toEqual({ kind: "look-up" });
+  it("records none it cannot place", () => {
+    expect(
+      recentIssueOf(
+        { id: "I_3", reference: "#3", title: "Three" },
+        {
+          kind: "all",
+        },
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -137,24 +230,23 @@ describe("what GitHub's answer does", () => {
       title: "Crash on start",
       url: "https://github.com/acme/api/issues/12",
     };
-    expect(afterLookUp({ status: "found", issue }, 12)).toEqual({
+    expect(afterLookUp({ status: "found", issue })).toEqual({
       kind: "open",
       issue,
     });
   });
 
-  it("says the number is a pull request, with its page to open", () => {
+  it("opens a pull request on GitHub", () => {
     const url = "https://github.com/acme/api/pull/123";
-    expect(afterLookUp({ status: "pull-request", url }, 123)).toEqual({
+    expect(afterLookUp({ status: "pull-request", url })).toEqual({
       kind: "pull-request",
-      number: 123,
       url,
     });
   });
 
   it("says why the issue could not be opened", () => {
     const problem = { kind: "unreachable", message: "offline" } as const;
-    expect(afterLookUp({ status: "failed", problem }, 12)).toEqual({
+    expect(afterLookUp({ status: "failed", problem })).toEqual({
       kind: "failed",
       problem,
     });
@@ -162,7 +254,7 @@ describe("what GitHub's answer does", () => {
 
   it("says nothing when the lookup was dropped, e.g. for another account, so that Enter asks again", () => {
     expect(
-      afterLookUp({ status: "failed", problem: { kind: "interrupted" } }, 12),
+      afterLookUp({ status: "failed", problem: { kind: "interrupted" } }),
     ).toEqual({ kind: "idle" });
   });
 });

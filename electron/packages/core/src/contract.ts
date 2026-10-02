@@ -424,8 +424,64 @@ export type IssueState = "open" | "closed";
  */
 export type ExpandableList = Scope | { kind: "view"; viewId: string };
 
-/** The selected sidebar entry, with the current view text when it is a view. */
+/** A sidebar entry, with the current view text when it is a view. */
 export type SidebarSelection = Scope | { kind: "view"; view: SavedView };
+
+/**
+ * An issue page opened in a tab, as the place it was opened from named it,
+ * enough to show it before its page has loaded.
+ */
+export interface TabIssue {
+  id: string;
+  /** How the place it was opened from named it, e.g. `#12`. */
+  reference: string;
+  title: string;
+  /** Its page on github.com, when the place it was opened from knew it. */
+  url?: string | undefined;
+}
+
+/**
+ * A tab of the main area, as the interface keeps it for the next launch: a
+ * sidebar entry's list with the issue pages opened from it one after
+ * another, the last on top, or a new tab, with the tracked repository that
+ * a bare `#12` names in it, if any.
+ */
+export type SavedTab =
+  | {
+      kind: "entry";
+      entry: SidebarEntryKey | { kind: "all" };
+      issues: TabIssue[];
+    }
+  | { kind: "new"; from: RepositoryAddress | undefined };
+
+/** The tabs over the main area, in order, and the one shown, by position. */
+export interface SavedTabs {
+  tabs: SavedTab[];
+  shown: number;
+}
+
+/**
+ * A tab as it was saved, its entry as the sidebar lists it now: a tracked
+ * repository with its current `owner/name` and its ID, if known, or a view
+ * with its current name and search.
+ */
+export type RestoredTab =
+  | { kind: "entry"; entry: SidebarSelection; issues: TabIssue[] }
+  | { kind: "new"; from: TrackedRepository | undefined };
+
+/** The tabs as they were saved, and the one shown, by position. */
+export interface RestoredTabs {
+  tabs: RestoredTab[];
+  shown: number;
+}
+
+/** One of the issues the user opened last, whichever way they opened it. */
+export interface RecentIssue {
+  id: string;
+  repository: RepositoryAddress;
+  number: number;
+  title: string;
+}
 
 /** What the main area shows: a scope's list, a view, or an issue page. */
 export type Screen =
@@ -1132,12 +1188,26 @@ export interface CoreRequests {
   getWindowState: () => Promise<WindowState | undefined>;
   /** Stores only window geometry; the desktop owns capturing and applying it. */
   saveWindowState: (state: WindowState) => Promise<void>;
-  /** The remembered entry in current settings, or All if it no longer exists. */
-  getSelectedSidebarEntry: () => Promise<SidebarSelection>;
-  /** Remembers an entry on this machine, independently of the open issue page. */
-  selectSidebarEntry: (
-    entry: SidebarEntryKey | { kind: "all" },
-  ) => Promise<void>;
+  /**
+   * The tabs as they were saved last on this machine, each tab's entry as
+   * the sidebar lists it now: a repository is followed by its ID through
+   * renames and transfers, a view by its ID, and an entry that is gone is
+   * All, its issue pages kept. Without saved tabs, there is one tab, on the
+   * entry an earlier version of Verdandi selected last, or on All.
+   */
+  getTabs: () => Promise<RestoredTabs>;
+  /**
+   * Keeps the tabs on this machine for the next launch, a repository by its
+   * ID once it is known, never the place within a list or page.
+   */
+  saveTabs: (tabs: SavedTabs) => Promise<void>;
+  /** The recent issues on this machine, newest first, at most 20. */
+  getRecentIssues: () => Promise<RecentIssue[]>;
+  /**
+   * Puts an issue first among the recent issues, once, keeping the last 20
+   * on this machine, whichever account GitHub is read as.
+   */
+  recordRecentIssue: (issue: RecentIssue) => Promise<void>;
   /**
    * Opens an issue page: an issue with its ancestry and sub-issues, from any
    * repository, tracked or not. Its current state is pushed as
@@ -1270,14 +1340,11 @@ export interface CoreRequests {
   /**
    * Removes a tracked repository after the interface has confirmed it.
    * Views and cached issues stay; its list state is discarded and All is
-   * updated. A removed selection moves to the next repository, the previous
-   * if last, or All. Open issue pages stay, with external status updated.
+   * updated. Open issue pages stay, with external status updated.
    */
   removeRepository: (
     repository: TrackedRepository,
-  ) => Promise<
-    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
-  >;
+  ) => Promise<SettingsChangeResult>;
   /**
    * Saves a view, after running its search once as GitHub's advanced search,
    * unless only its name changed or `force` says to save it anyway. Its
@@ -1291,14 +1358,9 @@ export interface CoreRequests {
   ) => Promise<ViewSave>;
   /**
    * Removes a view after the interface has confirmed it. Tracked
-   * repositories and cached issues stay. A removed selection moves to the
-   * next view, the previous if last, or All.
+   * repositories and cached issues stay.
    */
-  removeView: (
-    viewId: string,
-  ) => Promise<
-    { ok: true; selection: SidebarSelection } | { ok: false; message: string }
-  >;
+  removeView: (viewId: string) => Promise<SettingsChangeResult>;
   /**
    * Opens a view: its current state is pushed as `viewChanged` at once, and
    * again as its search answers. Its search runs when it has not run in this
@@ -1473,8 +1535,10 @@ export interface Contract extends CoreRequests {
 const requests: Record<keyof CoreRequests, true> = {
   getWindowState: true,
   saveWindowState: true,
-  getSelectedSidebarEntry: true,
-  selectSidebarEntry: true,
+  getTabs: true,
+  saveTabs: true,
+  getRecentIssues: true,
+  recordRecentIssue: true,
   openIssuePage: true,
   activateBlockingEnd: true,
   retryBlockingBranch: true,

@@ -1,58 +1,71 @@
 import type {
   IssueLookup,
-  IssueNode,
+  RecentIssue,
   RepositoryAddress,
 } from "@verdandi/core/contract";
-import { Hash } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  ArrowRight,
+  CornerDownLeft,
+  Hash,
+  History,
+  LoaderCircle,
+} from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { qualifiedReference } from "@verdandi/core/repository-address";
 import {
   afterLookUp,
-  beforeLookUp,
-  issueNumber,
+  goToChoices,
+  recentIssueOf,
+  type GoToDestination,
   type GoToIssueStatus,
 } from "./go-to-issue";
-import type { IssueDestination } from "./issue-navigation";
+import { showNotice } from "./Notices";
 import { problemText } from "./problem-text";
 import { repositoryLabel } from "./scope";
 
 /**
- * The Go to issue dialog: the number of an issue in a tracked repository,
- * typed after its `owner/name #`, whose page ↵ opens. An issue the
- * repository's list has opens at once, and the issue already shown just
- * closes the dialog; any other is looked up on GitHub first. When it cannot
- * open, the dialog stays open with the number and
- * says why; for a pull request, ↵ opens its page on GitHub instead. Esc
- * closes it, also while GitHub is being asked.
+ * Go to Issue: a field that takes `#12`, `owner/name#12`, `owner/name 12`
+ * or a link to an issue on GitHub, and below it the issue typed, then the
+ * recent issues matching what is typed, by title or `owner/name#12`. ↑/↓
+ * choose, ↩ opens, and Esc clears the field, or, once it is empty, is left
+ * to what holds the palette. A recent issue opens at once; any other is
+ * looked up on GitHub first, and the palette says why one cannot open. A
+ * pull request's number opens it on GitHub instead, with a notice.
  */
-export function GoToIssueDialog({
-  repository,
+export function GoToIssuePalette({
+  from,
   login,
-  shown,
-  trees,
-  onOpen,
-  refocusPane,
-  onClose,
+  inline,
+  hasKeyboard = true,
+  onChoose,
 }: {
-  repository: RepositoryAddress;
+  /** The repository a bare `#12` names, if any. */
+  from: RepositoryAddress | undefined;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
-  /** The issue page on screen, if any. */
-  shown: IssueDestination | undefined;
-  /** The trees of the repository's list as last pushed, as ↵ reads them. */
-  trees: () => readonly IssueNode[];
-  /** Opens an issue's page, closing the dialog. */
-  onOpen: (issue: IssueDestination) => void;
-  /** Gives the pane that had the keyboard it again, once the dialog is gone. */
-  refocusPane: () => void;
-  onClose: () => void;
+  /** Whether it stands in a new tab, rather than in a dialog. */
+  inline: boolean;
+  /** Whether it has the keyboard, which its field then holds. */
+  hasKeyboard?: boolean;
+  /** Opens an issue chosen. */
+  onChoose: (issue: RecentIssue) => void;
 }) {
   const field = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+  const [recents, setRecents] = useState<RecentIssue[]>([]);
+  const [highlighted, setHighlighted] = useState(0);
   const [status, setStatus] = useState<GoToIssueStatus>({ kind: "idle" });
-  // Counts the lookups started, so that an answer to one dropped by a new
-  // number, or by closing the dialog, does nothing.
+  // Counts the lookups started, so that an answer to one dropped by new
+  // text, or by closing the palette, does nothing.
   const lookups = useRef(0);
   useEffect(
     () => () => {
@@ -60,156 +73,268 @@ export function GoToIssueDialog({
     },
     [],
   );
+  useEffect(() => {
+    let current = true;
+    window.verdandi.getRecentIssues().then(
+      (issues) => {
+        if (current) setRecents(issues);
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (hasKeyboard) field.current?.focus({ preventScroll: true });
+  }, [hasKeyboard]);
 
-  /** Opens a pull request's page, which Verdandi does not show, instead. */
-  function openOnGitHub(url: string) {
-    window.desktop.openExternal(url);
-    onClose();
+  const { destinations, hint } = goToChoices(text, { from, recents });
+  const current = Math.min(highlighted, Math.max(destinations.length - 1, 0));
+  const firstRecent = destinations.findIndex(({ kind }) => kind === "recent");
+
+  function type(next: string) {
+    setText(next);
+    setHighlighted(0);
+    setStatus({ kind: "idle" });
+    lookups.current++;
   }
 
-  async function submit() {
-    switch (status.kind) {
-      case "looking-up":
-        return;
-      case "pull-request":
-        openOnGitHub(status.url);
-        return;
-    }
-    const number = issueNumber(text);
-    if (number === undefined) {
-      setStatus({ kind: "invalid" });
+  async function go(destination = destinations[current]) {
+    if (!destination || status.kind === "looking-up") return;
+    if (destination.kind === "recent") {
+      onChoose(destination.issue);
       return;
     }
-    const step = beforeLookUp(number, { repository, shown, trees: trees() });
-    switch (step.kind) {
-      case "shown":
-        onClose();
-        return;
-      case "open":
-        onOpen(step.issue);
-        return;
-    }
+    const reference = qualifiedReference(
+      destination.repository,
+      destination.number,
+    );
     const lookup = ++lookups.current;
-    setStatus({ kind: "looking-up", number });
+    setStatus({ kind: "looking-up", reference });
     let found: IssueLookup;
     try {
-      found = await window.verdandi.lookUpIssue(repository, number);
+      found = await window.verdandi.lookUpIssue(
+        destination.repository,
+        destination.number,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       found = { status: "failed", problem: { kind: "error", message } };
     }
     if (lookup !== lookups.current) return;
-    const next = afterLookUp(found, number);
-    if (next.kind === "open") onOpen(next.issue);
-    else setStatus(next);
+    const next = afterLookUp(found);
+    switch (next.kind) {
+      case "open": {
+        setStatus({ kind: "idle" });
+        // Its link names where it lives now, also once it has moved.
+        const issue = recentIssueOf(next.issue, undefined);
+        if (issue) onChoose(issue);
+        return;
+      }
+      case "pull-request":
+        window.desktop.openExternal(next.url);
+        showNotice({ kind: "pull-request-opened", reference });
+        type("");
+        return;
+      default:
+        setStatus(next);
+    }
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    void submit();
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const count = destinations.length;
+    switch (event.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        event.preventDefault();
+        if (count > 0)
+          setHighlighted(
+            (current + (event.key === "ArrowDown" ? 1 : -1) + count) % count,
+          );
+        break;
+      case "Enter":
+        event.preventDefault();
+        void go();
+        break;
+      case "Escape":
+        if (text === "") break;
+        // Only the field is cleared, also of a lookup under way.
+        event.preventDefault();
+        event.stopPropagation();
+        type("");
+        break;
+    }
   }
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent
-        showCloseButton={false}
-        initialFocus={field}
-        finalFocus={() => {
-          // Base UI otherwise prefers the pane's first tabbable child, or
-          // the list the dialog was opened from, which an issue page may
-          // have replaced.
-          queueMicrotask(refocusPane);
-          return false;
-        }}
-        className="gap-3"
+    <div className="flex flex-col">
+      <label
+        className={cn(
+          "flex items-center gap-3 rounded-xl border bg-card px-4 focus-within:ring-3 focus-within:ring-ring/40",
+          inline ? "h-14 shadow-sm" : "h-12",
+        )}
       >
-        <div className="flex items-center justify-between">
-          <DialogTitle>Go to issue</DialogTitle>
-          <kbd className="rounded border border-b-2 px-1 font-mono text-[11px] text-muted-foreground">
-            Esc
-          </kbd>
-        </div>
-        <label className="flex h-8 items-center rounded-md border bg-background px-2.5 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
-          <span className="min-w-0 truncate text-muted-foreground">
-            {repositoryLabel(repository)}
-          </span>
-          <span className="shrink-0 pr-1 pl-1.5 text-muted-foreground">#</span>
-          <input
-            ref={field}
-            value={text}
-            aria-label={`Issue number in ${repositoryLabel(repository)}`}
-            inputMode="numeric"
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => {
-              setText(event.target.value);
-              setStatus({ kind: "idle" });
-              lookups.current++;
-            }}
-            onKeyDown={onKeyDown}
-            className="min-w-16 flex-1 bg-transparent outline-none"
-          />
-        </label>
-        <StatusLine
-          status={status}
-          login={login}
-          onOpenOnGitHub={openOnGitHub}
+        <Hash aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+        <input
+          ref={field}
+          data-pane-focus
+          value={text}
+          aria-label="Go to Issue"
+          placeholder={
+            from
+              ? `#12 in ${repositoryLabel(from)}, owner/name#12 or a link`
+              : "owner/name#12 or a link to an issue"
+          }
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(event) => {
+            type(event.target.value);
+          }}
+          onKeyDown={onKeyDown}
+          className={cn(
+            "min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground",
+            inline && "text-lg",
+          )}
         />
-      </DialogContent>
-    </Dialog>
+        {status.kind === "looking-up" && (
+          <LoaderCircle
+            aria-hidden
+            className="size-4 shrink-0 animate-spin text-muted-foreground"
+          />
+        )}
+      </label>
+      <StatusLine status={status} hint={hint} login={login} />
+      <div role="listbox" aria-label="Issues to go to" className="mt-2">
+        {destinations.map((destination, index) => (
+          <div key={destinationKey(destination)}>
+            {index === firstRecent && (
+              <div className="px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+                Recent
+              </div>
+            )}
+            <DestinationRow
+              destination={destination}
+              highlighted={index === current}
+              onHover={() => {
+                setHighlighted(index);
+              }}
+              onGo={() => void go(destination)}
+            />
+          </div>
+        ))}
+        {recents.length === 0 && text.trim() === "" && (
+          <p className="px-3 py-6 text-center text-muted-foreground">
+            The issues you open appear here.
+          </p>
+        )}
+      </div>
+      <div
+        className={cn(
+          "flex justify-center gap-4 text-xs text-muted-foreground",
+          inline ? "mt-6" : "mt-3",
+        )}
+      >
+        <KeyHint keys="↑↓">Choose</KeyHint>
+        <KeyHint keys="↩">Open</KeyHint>
+        <KeyHint keys="Esc">
+          {inline || text !== "" ? "Clear" : "Close"}
+        </KeyHint>
+      </div>
+    </div>
   );
 }
 
-/** What the dialog says under its field, if anything. */
+function destinationKey(destination: GoToDestination): string {
+  return destination.kind === "recent"
+    ? destination.issue.id
+    : `look-up:${qualifiedReference(destination.repository, destination.number)}`;
+}
+
+/** One issue the palette offers: the issue typed, or a recent issue. */
+function DestinationRow({
+  destination,
+  highlighted,
+  onHover,
+  onGo,
+}: {
+  destination: GoToDestination;
+  highlighted: boolean;
+  onHover: () => void;
+  onGo: () => void;
+}) {
+  const typed = destination.kind === "look-up";
+  const { repository, number } = typed ? destination : destination.issue;
+  return (
+    <div
+      role="option"
+      aria-selected={highlighted}
+      onMouseMove={onHover}
+      onClick={onGo}
+      className={cn(
+        "flex h-9 cursor-default items-center gap-3 rounded-lg px-3",
+        highlighted && "bg-selection",
+      )}
+    >
+      {typed ? (
+        <ArrowRight aria-hidden className="size-4 shrink-0 text-primary" />
+      ) : (
+        <History
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground"
+        />
+      )}
+      <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+        #{number}
+      </span>
+      <span className="min-w-0 flex-1 truncate">
+        {typed ? (
+          <>
+            Go to{" "}
+            <span className="font-medium">
+              {qualifiedReference(repository, number)}
+            </span>
+          </>
+        ) : (
+          destination.issue.title
+        )}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {repositoryLabel(repository)}
+      </span>
+      <CornerDownLeft
+        aria-hidden
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground",
+          !highlighted && "invisible",
+        )}
+      />
+    </div>
+  );
+}
+
+/** What the palette says under its field, if anything. */
 function StatusLine({
   status,
+  hint,
   login,
-  onOpenOnGitHub,
 }: {
   status: GoToIssueStatus;
+  hint: string | undefined;
   login: string | undefined;
-  onOpenOnGitHub: (url: string) => void;
 }) {
   switch (status.kind) {
-    case "idle":
-      return null;
-    case "invalid":
-      return (
-        <p role="alert" className="text-xs text-destructive">
-          Type an issue number
-        </p>
-      );
     case "looking-up":
       return (
-        <p role="status" className="text-xs text-muted-foreground">
-          Looking up #{status.number}…
+        <p role="status" className="px-3 pt-2 text-xs text-muted-foreground">
+          Looking up {status.reference}…
         </p>
-      );
-    case "pull-request":
-      return (
-        <div role="status" className="flex items-center gap-2 text-xs">
-          <span className="flex-1">#{status.number} is a pull request</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              onOpenOnGitHub(status.url);
-            }}
-          >
-            Open on GitHub
-          </Button>
-        </div>
       );
     case "failed": {
       const { text, detail, link } = problemText(status.problem, login);
       return (
-        <div role="alert" className="space-y-1 text-xs">
+        <div role="alert" className="space-y-1 px-3 pt-2 text-xs">
           <p className="break-words text-destructive">{text}</p>
           {detail !== undefined && (
             <p className="break-words text-muted-foreground">{detail}</p>
@@ -228,16 +353,84 @@ function StatusLine({
         </div>
       );
     }
+    case "idle":
+      return hint === undefined ? null : (
+        <p role="status" className="px-3 pt-2 text-xs text-muted-foreground">
+          {hint}
+        </p>
+      );
   }
 }
 
-/** The header button that opens the Go to issue dialog, as `#` does. */
+function KeyHint({ keys, children }: { keys: string; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <kbd className="rounded border bg-muted px-1 font-sans text-[11px]">
+        {keys}
+      </kbd>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The Go to Issue dialog over the tab shown, which `#` and its header
+ * button open: the palette, whose issue chosen opens in that tab. Esc with
+ * the field empty closes it, also while GitHub is being asked.
+ */
+export function GoToIssueDialog({
+  from,
+  login,
+  onChoose,
+  refocusPane,
+  onClose,
+}: {
+  /** The repository a bare `#12` names: the tab's, if it shows one. */
+  from: RepositoryAddress | undefined;
+  login: string | undefined;
+  /** Opens an issue chosen, closing the dialog. */
+  onChoose: (issue: RecentIssue) => void;
+  /** Gives the pane that had the keyboard it again, once the dialog is gone. */
+  refocusPane: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
+        finalFocus={() => {
+          // Base UI otherwise prefers the pane's first tabbable child, or
+          // the list the dialog was opened from, which an issue page may
+          // have replaced.
+          queueMicrotask(refocusPane);
+          return false;
+        }}
+        className="top-[12vh] translate-y-0 gap-0 p-3 sm:max-w-2xl"
+      >
+        <DialogTitle className="sr-only">Go to Issue</DialogTitle>
+        <GoToIssuePalette
+          from={from}
+          login={login}
+          inline={false}
+          onChoose={onChoose}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The header button that opens the Go to Issue dialog, as `#` does. */
 export function GoToIssueButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
-      aria-label="Go to issue"
-      title="Go to issue (#)"
+      aria-label="Go to Issue"
+      title="Go to Issue (#)"
       // The keyboard stays where it was, to return there as the dialog closes.
       onMouseDown={(event) => {
         event.preventDefault();

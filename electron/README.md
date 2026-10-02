@@ -76,6 +76,12 @@ The sidebar follows the file order. Drag an entry within its section, or press �
 
 Files from a newer version are read-only until Verdandi is updated. Older files are migrated on the next change, with a one-time `settings.json.backup-v<version>` backup.
 
+## Keep issues open in tabs
+
+The main area holds tabs, and choosing a sidebar entry shows it in the tab shown. A middle click on an entry, or a click with ⌘ held (Ctrl elsewhere), opens it in a new tab instead. Wherever an issue opens, in a list, a blocking map, the breadcrumb or a link in a body, **Open in New Tab** in its right-click menu opens it in a new tab in the background, as do a middle click, ⌘-click and ⌘↩ (Ctrl+↩ elsewhere).
+
+**File → New Tab** (⌘T, Ctrl+T elsewhere) opens a tab that goes to an issue by `owner/name#12`, its link, or `#12` in the repository of the tab it came from, and lists the 20 issues you opened last. `#` offers the same over the tab shown. **Close Tab** is ⌘W, **Reopen Closed Tab** ⌘⇧T, and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab. The tabs and the recent issues are kept on this machine, in `state.json` beside the `gh` choice, and the tabs come back as they were at the next launch.
+
 ## Choose the look
 
 How Verdandi looks is kept in `config.toml` in the config directory: `~/.config/verdandi/` on macOS and Linux (`$XDG_CONFIG_HOME/verdandi/` when that is set), `%APPDATA%\Verdandi\` on Windows, or `VERDANDI_HOME` when it is set. It is meant for your dotfiles. Every key is optional:

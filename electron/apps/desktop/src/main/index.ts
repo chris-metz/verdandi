@@ -34,6 +34,7 @@ import {
   ipcChannels,
   rendererRequestNames,
   type DesktopApi,
+  type TabCommand,
 } from "../shared/ipc";
 import { shownTheme, themeCatalogue } from "../shared/themes";
 import icon from "../../build/icon.png?asset";
@@ -137,6 +138,20 @@ function start() {
         void openSettings();
       },
     };
+    /** A File menu item for the tabs of the window in front. */
+    const tabItem = (
+      label: string,
+      accelerator: string,
+      command: TabCommand,
+    ): MenuItemConstructorOptions => ({
+      label,
+      accelerator,
+      click: () => {
+        (
+          BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+        )?.webContents.send(ipcChannels.tabCommand, command);
+      },
+    });
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
         ...(process.platform === "darwin"
@@ -162,6 +177,13 @@ function start() {
         {
           label: "File",
           submenu: [
+            tabItem("New Tab", "CmdOrCtrl+T", "new-tab"),
+            tabItem(
+              "Reopen Closed Tab",
+              "CmdOrCtrl+Shift+T",
+              "reopen-closed-tab",
+            ),
+            { type: "separator" },
             ...(process.platform === "darwin"
               ? []
               : [settings, { type: "separator" as const }]),
@@ -188,12 +210,25 @@ function start() {
               },
             },
             { type: "separator" },
-            { role: "close" },
+            // ⌘W closes a tab, never the window; the last leaves a new tab.
+            tabItem("Close Tab", "CmdOrCtrl+W", "close-tab"),
+            {
+              role: "close",
+              label: "Close Window",
+              accelerator: "CmdOrCtrl+Shift+W",
+            },
           ],
         },
         { role: "editMenu" },
         { role: "viewMenu" },
-        { role: "windowMenu" },
+        // Elsewhere, the role's menu closes the window with Ctrl+W, which
+        // closes a tab; Close Window is in the File menu.
+        process.platform === "darwin"
+          ? { role: "windowMenu" }
+          : {
+              label: "Window",
+              submenu: [{ role: "minimize" }, { role: "zoom" }],
+            },
       ]),
     );
     // The window opens in the look config.toml sets.

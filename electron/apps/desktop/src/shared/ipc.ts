@@ -23,7 +23,12 @@ export const ipcChannels = {
   openConfigFile: "desktop:open-config-file",
   /** Main → renderer: `()` from the menu, to open the settings dialog. */
   openSettings: "desktop:open-settings",
+  /** Main → renderer: `(command)` from the menu, for the tabs. */
+  tabCommand: "desktop:tab-command",
 } as const;
+
+/** What the File menu asks of the tabs, by its items' shortcuts too. */
+export type TabCommand = "new-tab" | "close-tab" | "reopen-closed-tab";
 
 /**
  * The contract requests the renderer cannot make. It chooses gh through
@@ -69,6 +74,12 @@ export interface DesktopApi {
    * there was a listener goes to the first one.
    */
   onOpenSettings: (listener: () => void) => () => void;
+  /**
+   * Calls `listener` whenever the menu's New Tab, Close Tab or Reopen Closed
+   * Tab is chosen, by its shortcut too, until the returned function is
+   * called.
+   */
+  onTabCommand: (listener: (command: TabCommand) => void) => () => void;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**

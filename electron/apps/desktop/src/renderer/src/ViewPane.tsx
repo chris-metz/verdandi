@@ -16,6 +16,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { viewFreshness } from "./freshness";
+import { GoToIssueButton } from "./GoToIssueDialog";
+import { IssueContextMenu } from "./IssueContextMenu";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow, MissingParentRow } from "./IssueRow";
 import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
@@ -44,18 +46,24 @@ import { matchesLabel, viewStrips, type ViewStrip } from "./view-screen";
  * counts them among the issues the search returned.
  */
 export function ViewPane({
+  tab,
   view,
   login,
   hasKeyboard,
   onOpen,
   onEdit,
+  onGoToIssue,
 }: {
+  /** The tab the view shows in. */
+  tab: number;
   view: SavedView;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
   onOpen: (issue: IssueDestination) => void;
   /** Opens the view dialog for this view. */
   onEdit: () => void;
+  /** Opens the Go to Issue dialog. */
+  onGoToIssue: () => void;
   /** Whether the main area has the keyboard, which the list then holds. */
   hasKeyboard: boolean;
 }) {
@@ -70,8 +78,9 @@ export function ViewPane({
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(screen);
   }, [screen]);
-  const { rows, selected, select, scroller, onKeyDown, onScroll } = useListPane(
-    {
+  const { rows, selected, select, menuTarget, scroller, onKeyDown, onScroll } =
+    useListPane({
+      tab,
       scope,
       list,
       trees,
@@ -84,8 +93,7 @@ export function ViewPane({
         void window.verdandi.setAllExpanded(screen, expanded);
       },
       onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
-    },
-  );
+    });
   const toggle = useCallback(
     (issueId: string, expanded: boolean) => {
       void window.verdandi.setExpanded(screen, issueId, expanded);
@@ -140,6 +148,7 @@ export function ViewPane({
           )}
           <span className="flex-1" />
           <RateLimitStatus />
+          <GoToIssueButton onClick={onGoToIssue} />
           {list && (
             <RefreshControl
               freshness={(now) => viewFreshness(list, now)}
@@ -168,95 +177,100 @@ export function ViewPane({
             <Strip key={strip.text} strip={strip} onRetry={retry} />
           ))}
       </header>
-      <div
-        ref={scroller}
-        role="tree"
-        aria-label={`Matches of ${view.name}`}
-        tabIndex={0}
-        data-pane-focus
-        onKeyDown={onKeyDown}
-        onScroll={onScroll}
-        className="group min-h-0 flex-1 overflow-y-auto outline-none"
-      >
-        {list?.searchProblem &&
-        // GitHub rejects the search whatever it matched before.
-        (list.searchProblem.kind !== "too-large" || rows.length === 0) ? (
-          <SearchFailure
-            problem={list.searchProblem}
-            onEdit={onEdit}
-            onRetry={retry}
-          />
-        ) : failure && rows.length === 0 ? (
-          // Nothing to show, so why stands in place of the matches.
-          <ProblemNotice
-            problem={failure}
-            login={login}
-            url={undefined}
-            onRetry={retry}
-            className="px-4 py-6"
-          />
-        ) : (
-          list && (
-            <>
-              {rows.length > 0 && <IssueColumnHeader sticky />}
-              {rows.map((row, index) => (
-                <Fragment key={row.node.issue.id}>
-                  {row.missingParent?.status === "failed" && (
-                    <MissingParentRow
-                      missingParent={row.missingParent}
+      <IssueContextMenu targetAt={menuTarget}>
+        <div
+          ref={scroller}
+          role="tree"
+          aria-label={`Matches of ${view.name}`}
+          tabIndex={0}
+          data-pane-focus
+          onKeyDown={onKeyDown}
+          onScroll={onScroll}
+          className="group min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          {list?.searchProblem &&
+          // GitHub rejects the search whatever it matched before.
+          (list.searchProblem.kind !== "too-large" || rows.length === 0) ? (
+            <SearchFailure
+              problem={list.searchProblem}
+              onEdit={onEdit}
+              onRetry={retry}
+            />
+          ) : failure && rows.length === 0 ? (
+            // Nothing to show, so why stands in place of the matches.
+            <ProblemNotice
+              problem={failure}
+              login={login}
+              url={undefined}
+              onRetry={retry}
+              className="px-4 py-6"
+            />
+          ) : (
+            list && (
+              <>
+                {rows.length > 0 && <IssueColumnHeader sticky />}
+                {rows.map((row, index) => (
+                  <Fragment key={row.node.issue.id}>
+                    {row.missingParent?.status === "failed" && (
+                      <MissingParentRow
+                        missingParent={row.missingParent}
+                        onRetry={retry}
+                      />
+                    )}
+                    <IssueRow
+                      row={row}
+                      matchedBy={
+                        labelFilter.length > 0 ? "search and labels" : "search"
+                      }
+                      withRepository
+                      selected={index === selected}
+                      login={login}
+                      onOpen={onOpen}
+                      onSelect={select}
+                      onToggle={toggle}
                       onRetry={retry}
+                      onFilterLabel={filterLabel}
                     />
-                  )}
-                  <IssueRow
-                    row={row}
-                    matchedBy={
-                      labelFilter.length > 0 ? "search and labels" : "search"
-                    }
-                    withRepository
-                    selected={index === selected}
-                    login={login}
-                    onOpen={onOpen}
-                    onSelect={select}
-                    onToggle={toggle}
-                    onRetry={retry}
-                    onFilterLabel={filterLabel}
-                  />
-                </Fragment>
-              ))}
-              {labelFilter.length > 0 &&
-                list.loading.status !== "loading" &&
-                list.inScope > 0 &&
-                (rows.length === 0 ? (
-                  <NoLabelMatches
-                    status={filterStatus}
-                    onClear={clearLabelFilter}
-                  />
-                ) : (
-                  <p role="status" className="px-4 py-3 text-muted-foreground">
-                    {filterStatus}
-                  </p>
+                  </Fragment>
                 ))}
-              {list.loading.status !== "loading" && list.inScope === 0 && (
-                <BodyState title="No matching issues" role="status">
-                  <p>GitHub found nothing for this search.</p>
-                  <ul className="list-disc space-y-1 pl-5">
-                    <li>
-                      GitHub silently ignores qualifiers it doesn&apos;t know: a
-                      typo such as <code>lable:bug</code> returns nothing,
-                      without an error.
-                    </li>
-                    <li>
-                      Inside an <code>OR</code> group, repositories you
-                      can&apos;t read are dropped without notice.
-                    </li>
-                  </ul>
-                  <EditViewButton onEdit={onEdit} />
-                </BodyState>
-              )}
-            </>
-          )
-        )}
-      </div>
+                {labelFilter.length > 0 &&
+                  list.loading.status !== "loading" &&
+                  list.inScope > 0 &&
+                  (rows.length === 0 ? (
+                    <NoLabelMatches
+                      status={filterStatus}
+                      onClear={clearLabelFilter}
+                    />
+                  ) : (
+                    <p
+                      role="status"
+                      className="px-4 py-3 text-muted-foreground"
+                    >
+                      {filterStatus}
+                    </p>
+                  ))}
+                {list.loading.status !== "loading" && list.inScope === 0 && (
+                  <BodyState title="No matching issues" role="status">
+                    <p>GitHub found nothing for this search.</p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      <li>
+                        GitHub silently ignores qualifiers it doesn&apos;t know:
+                        a typo such as <code>lable:bug</code> returns nothing,
+                        without an error.
+                      </li>
+                      <li>
+                        Inside an <code>OR</code> group, repositories you
+                        can&apos;t read are dropped without notice.
+                      </li>
+                    </ul>
+                    <EditViewButton onEdit={onEdit} />
+                  </BodyState>
+                )}
+              </>
+            )
+          )}
+        </div>
+      </IssueContextMenu>
     </>
   );
 }

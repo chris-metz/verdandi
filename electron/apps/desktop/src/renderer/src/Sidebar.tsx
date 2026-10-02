@@ -9,10 +9,17 @@ import type {
 import { ListFilter, TriangleAlert } from "lucide-react";
 import { problemText } from "./problem-text";
 import { ContextMenu } from "@base-ui/react/context-menu";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
 import { ConfigProblems } from "./ConfigProblems";
+import { opensInNewTab } from "./open-in-new-tab";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
 import { RateLimitsButton } from "./RateLimitsButton";
 import {
@@ -32,7 +39,9 @@ import {
 /**
  * All, pinned on top, then the sidebar's sections, Repositories and Views,
  * then the account. Entries are selected by click or by the keys the window
- * handles; the sidebar pane itself holds the keyboard, not its entries.
+ * handles, into the tab shown; the sidebar pane itself holds the keyboard,
+ * not its entries. A click with ⌘ held (Ctrl elsewhere) opens an entry in a
+ * new tab instead, in the background.
  */
 export function Sidebar({
   sidebar,
@@ -40,6 +49,7 @@ export function Sidebar({
   items,
   selected,
   onSelect,
+  onSelectInNewTab,
   onReorder,
   onAddRepository,
   onRemoveRepository,
@@ -58,8 +68,10 @@ export function Sidebar({
   setup: Setup | undefined;
   /** The sidebar's entries, in visual order. */
   items: readonly SidebarItem[];
+  /** The entry of the tab shown; none for a new tab. */
   selected: Scope | undefined;
   onSelect: (scope: Scope) => void;
+  onSelectInNewTab: (scope: Scope) => void;
   onReorder: (
     entry: SidebarEntryKey,
     destination: SidebarDestination,
@@ -133,7 +145,9 @@ export function Sidebar({
           dragged.current = entry;
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", key);
-          onSelect(item.scope);
+          // Choosing the entry the tab shows again would drop its issue pages.
+          if (!selected || !sameScope(item.scope, selected))
+            onSelect(item.scope);
         }}
         onDragOver={(event) => {
           if (!writable || !entry || dragged.current?.kind !== entry.kind)
@@ -174,8 +188,9 @@ export function Sidebar({
         shortcut={
           shortcutsShown ? entryShortcut(position, modifier) : undefined
         }
-        onSelect={() => {
-          onSelect(item.scope);
+        onSelect={(click) => {
+          if (opensInNewTab(click)) onSelectInNewTab(item.scope);
+          else onSelect(item.scope);
         }}
       />
     );
@@ -410,7 +425,8 @@ function Entry({
   selected: boolean;
   focused: boolean;
   shortcut: string | undefined;
-  onSelect: () => void;
+  /** Selects the entry, or opens it in a new tab, as the click asks. */
+  onSelect: (click: MouseEvent) => void;
   draggable: boolean;
   dropSide: "before" | "after" | undefined;
   onDragStart: React.DragEventHandler<HTMLLIElement>;

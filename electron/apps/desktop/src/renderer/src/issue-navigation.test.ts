@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { navigateIssues } from "./issue-navigation";
-import { rememberedPlace, rememberPlace } from "./list-places";
+import { copyPlace, rememberedPlace, rememberPlace } from "./list-places";
 
 const parent = { id: "parent", reference: "acme/api#1", title: "Parent" };
 const subIssue = { id: "sub", reference: "other/work#2", title: "Sub-issue" };
@@ -8,7 +8,7 @@ const subIssue = { id: "sub", reference: "other/work#2", title: "Sub-issue" };
 describe("issue page navigation", () => {
   it("steps back to each visit's cursor, expansion and scroll, then the list's place", () => {
     const scope = { kind: "all" } as const;
-    rememberPlace(scope, { selectedId: "parent", scrollTop: 480 });
+    rememberPlace(0, scope, { selectedId: "parent", scrollTop: 480 });
     let stack = navigateIssues([], { kind: "open", issue: parent });
     stack = navigateIssues(stack, {
       kind: "remember",
@@ -28,9 +28,28 @@ describe("issue page navigation", () => {
     });
     stack = navigateIssues(stack, { kind: "back" });
     expect(stack).toEqual([]);
-    expect(rememberedPlace(scope)).toEqual({
+    expect(rememberedPlace(0, scope)).toEqual({
       selectedId: "parent",
       scrollTop: 480,
+    });
+  });
+
+  it("keeps each tab's own place in a list it shows, as another tab on the same entry moves", () => {
+    const scope = { kind: "all" } as const;
+    rememberPlace(1, scope, { selectedId: "parent", scrollTop: 480 });
+    copyPlace(1, 2, scope);
+    rememberPlace(2, scope, { selectedId: "sub", scrollTop: 90 });
+    expect(rememberedPlace(1, scope)).toEqual({
+      selectedId: "parent",
+      scrollTop: 480,
+    });
+    expect(rememberedPlace(2, scope)).toEqual({
+      selectedId: "sub",
+      scrollTop: 90,
+    });
+    expect(rememberedPlace(3, scope)).toEqual({
+      selectedId: undefined,
+      scrollTop: 0,
     });
   });
 });

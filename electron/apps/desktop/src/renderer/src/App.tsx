@@ -1,27 +1,41 @@
 import type {
   IssueList,
+  RecentIssue,
   RepositoryAddress,
+  RestoredTabs,
   SavedView,
   SidebarEntryKey,
   SidebarDestination,
   Screen,
   TrackedRepository,
 } from "@verdandi/core/contract";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "@/lib/utils";
 import { useConfig } from "./config";
+import { openedIssue, recentIssueOf, tabEntryOf } from "./go-to-issue";
 import { GoToIssueDialog } from "./GoToIssueDialog";
-import { navigateIssues } from "./issue-navigation";
+import type { IssueDestination, IssueNavigation } from "./issue-navigation";
 import { MainArea } from "./MainArea";
+import { NewTabPane } from "./NewTabPane";
 import { Notices } from "./Notices";
+import { OpenInNewTab } from "./open-in-new-tab";
 import {
   commandForWindowKey,
   shortcutModifier,
+  tabStepForKey,
   type Pane,
 } from "./pane-navigation";
 import { RepositoryPicker } from "./RepositoryPicker";
 import { RemoveEntryDialog, type RemovableEntry } from "./RemoveEntryDialog";
-import { forgetPlace, movePlace } from "./list-places";
+import { copyPlace, forgetPlace, movePlace } from "./list-places";
 import { problemText } from "./problem-text";
 import { unavailableText } from "./repository-picker";
 import {
@@ -34,6 +48,15 @@ import { SettingsDialog } from "./SettingsDialog";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder, followSelection } from "./sidebar-entries";
+import { TabBar } from "./TabBar";
+import {
+  restoredTabs,
+  savedTabs,
+  shownTab,
+  updateTabs,
+  type TabAction,
+  type TabState,
+} from "./tabs";
 import { ViewDialog } from "./ViewDialog";
 import type { ViewDialogPurpose } from "./view-dialog";
 
@@ -43,16 +66,29 @@ const modifier = shortcutModifier(window.desktop.platform);
 /** The mark on the pane that has the keyboard: an accent edge on top. */
 const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
 
+/** The tabs, once restored at launch. */
+function reduceTabs(
+  state: TabState | undefined,
+  action: TabAction | { kind: "restore"; tabs: RestoredTabs },
+): TabState | undefined {
+  if (action.kind === "restore") return state ?? restoredTabs(action.tabs);
+  return state && updateTabs(state, action);
+}
+
 /**
  * The window: the sidebar and the main area, which have the keyboard in turn.
  * The pane that has it follows the DOM focus, and survives the main area's
- * list being replaced when another entry is selected. What is on screen is
- * read again with `r`, and when it is old as the window regains focus. When
- * GitHub is read as another account, the issue pages opened are dropped for
- * the selected entry's list. A repository renamed or transferred stays
- * selected under its new name, with its issue pages and place in its list.
- * While the setup blocker is up, everything behind it stays as it was but
- * is inert; once it goes, the pane that had the keyboard has it again.
+ * list being replaced when another entry is selected. The main area holds
+ * tabs, restored as they were at launch, and the sidebar shows into the tab
+ * shown, which has the keyboard once shown. What is on screen is read again
+ * with `r`, and when it is old as the window regains focus. When GitHub is
+ * read as another account, every tab stays, read anew as it shows. A
+ * repository renamed or transferred stays in its tabs under its new name,
+ * with their issue pages and places in its list, and a tab whose entry is
+ * removed shows All, its issue pages kept. Every issue opened, whichever
+ * way, becomes the first recent issue. While the setup blocker is up,
+ * everything behind it stays as it was but is inert; once it goes, the pane
+ * that had the keyboard has it again.
  */
 export function App() {
   const setup = useSetup();
@@ -60,9 +96,12 @@ export function App() {
   const sidebar = useSidebar();
   const items = useMemo(() => entryOrder(sidebar), [sidebar]);
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
-  const [selected, setSelected] = useState<Scope>();
-  // The issue pages opened from the selected entry's list, the last on top.
-  const [stack, navigate] = useReducer(navigateIssues, []);
+  const [tabs, dispatch] = useReducer(reduceTabs, undefined);
+  const tab = tabs && shownTab(tabs);
+  /** The entry of the tab shown; none for a new tab. */
+  const selected = tab?.entry;
+  // The issue pages opened from the tab's list, the last on top.
+  const stack = useMemo(() => tab?.stack ?? [], [tab]);
   const shownIssueId = stack.at(-1)?.issue.id;
   const screen = useMemo((): Screen | undefined => {
     if (shownIssueId !== undefined) {
@@ -81,24 +120,23 @@ export function App() {
   const [picking, setPicking] = useState(false);
   /** The sidebar entry whose removal is being confirmed. */
   const [removing, setRemoving] = useState<RemovableEntry>();
-  const removalPending = useRef(false);
   /**
    * The renames the core announced, by the old `owner/name` in lower case,
-   * to follow a selection that does not know its repository's ID.
+   * to follow a tab's entry that does not know its repository's ID.
    */
   const renamed = useRef(new Map<string, RepositoryAddress>());
   /** The view dialog, open for a new view, or to edit or duplicate a view. */
   const [viewDialog, setViewDialog] = useState<ViewDialogPurpose>();
   const config = useConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** The repository the Go to issue dialog is open for. */
-  const [goingTo, setGoingTo] = useState<RepositoryAddress>();
+  /** Whether the Go to Issue dialog is open over the tab shown. */
+  const [goToIssueOpen, setGoToIssueOpen] = useState(false);
   const dialogOpen =
     picking ||
     removing !== undefined ||
     viewDialog !== undefined ||
     settingsOpen ||
-    goingTo !== undefined;
+    goToIssueOpen;
   const login =
     setup?.status === "ready" && setup.account.status === "known"
       ? setup.account.account.login
@@ -226,38 +264,81 @@ export function App() {
     refocusPane();
   }
 
-  /** Opens the Go to issue dialog, unless the setup blocker is up. */
-  function openGoToIssue(repository: RepositoryAddress) {
-    if (!blocked) setGoingTo(repository);
+  /** Opens the Go to Issue dialog, unless the setup blocker is up. */
+  function openGoToIssue() {
+    if (!blocked) setGoToIssueOpen(true);
   }
 
   /** Shows a view just saved, with its list in front of any issue page. */
   function showSaved(view: SavedView) {
     setViewDialog(undefined);
-    const scope = { kind: "view" as const, view };
-    if (selected && sameScope(selected, scope)) {
-      setSelected(scope);
-      navigate({ kind: "list" });
-    } else select(scope);
+    select({ kind: "view", view });
     focusPane(mainPane.current);
   }
 
-  /** Selects an entry, whose list starts without issue pages on top. */
+  /**
+   * Shows an entry chosen in the sidebar in the tab shown, its list in place
+   * of what the tab showed.
+   */
   function select(scope: Scope) {
-    if (selected && sameScope(scope, selected)) return;
-    setSelected(scope);
-    navigate({ kind: "list" });
+    dispatch({ kind: "choose", entry: scope });
   }
 
-  // Restore only the sidebar entry; the issue stack and list places start fresh.
+  /** Goes to an issue page, or back, within the tab shown. */
+  function navigate(navigation: IssueNavigation) {
+    if (navigation.kind === "open") recordRecent(navigation.issue, selected);
+    dispatch({ kind: "navigate", navigation });
+  }
+
+  /**
+   * Opens an issue chosen in Go to Issue: over the tab's list, or in a new
+   * tab over its repository's list when the repository is tracked, and
+   * over All otherwise.
+   */
+  function goTo(issue: RecentIssue) {
+    void window.verdandi.recordRecentIssue(issue).catch(() => undefined);
+    if (selected) {
+      dispatch({
+        kind: "navigate",
+        navigation: { kind: "open", issue: openedIssue(issue, selected) },
+      });
+      return;
+    }
+    const entry = tabEntryOf(
+      issue.repository,
+      sidebar?.status === "read"
+        ? sidebar.repositories.map(({ repository }) => repository)
+        : [],
+    );
+    dispatch({ kind: "open-here", entry, issue: openedIssue(issue, entry) });
+  }
+
+  // Open in New Tab, the same function for every pane all along, as rows
+  // show again only when it changes.
+  const latest = useRef({ tabs, selected });
+  useLayoutEffect(() => {
+    latest.current = { tabs, selected };
+  });
+  const openInNewTab = useCallback((issue: IssueDestination) => {
+    const { tabs, selected } = latest.current;
+    if (!tabs) return;
+    recordRecent(issue, selected);
+    // The new tab starts where the tab shown is in the list, and gets the
+    // next ID.
+    copyPlace(tabs.shown, tabs.next, selected ?? { kind: "all" });
+    dispatch({ kind: "open-in-new-tab", issue });
+  }, []);
+
+  // The tabs as they were at launch; a tab reads its screen once shown.
   useEffect(() => {
     let current = true;
-    void window.verdandi.getSelectedSidebarEntry().then(
-      (entry) => {
-        if (current) setSelected((selected) => selected ?? entry);
+    window.verdandi.getTabs().then(
+      (restored) => {
+        if (current) dispatch({ kind: "restore", tabs: restored });
       },
       () => {
-        if (current) setSelected((selected) => selected ?? { kind: "all" });
+        if (current)
+          dispatch({ kind: "restore", tabs: { tabs: [], shown: 0 } });
       },
     );
     return () => {
@@ -265,16 +346,47 @@ export function App() {
     };
   }, []);
 
+  // Kept for the next launch whenever a tab, its entry or its issue pages
+  // change, but not as places within them do.
+  const saved = useRef<string>(undefined);
   useEffect(() => {
-    if (!selected) return;
-    void window.verdandi
-      .selectSidebarEntry(
-        selected.kind === "view"
-          ? { kind: "view", id: selected.view.id }
-          : selected,
-      )
-      .catch(() => undefined);
-  }, [selected]);
+    if (!tabs) return;
+    const tabsToSave = savedTabs(tabs);
+    const json = JSON.stringify(tabsToSave);
+    if (json === saved.current) return;
+    saved.current = json;
+    void window.verdandi.saveTabs(tabsToSave).catch(() => undefined);
+  }, [tabs]);
+
+  // The tab shown has the keyboard, once another is shown.
+  const shownBefore = useRef(tabs?.shown);
+  useEffect(() => {
+    const before = shownBefore.current;
+    shownBefore.current = tabs?.shown;
+    if (before !== undefined && before !== tabs?.shown)
+      focusPane(mainPane.current);
+  }, [tabs?.shown]);
+
+  // New Tab, Close Tab and Reopen Closed Tab in the menu, with their
+  // shortcuts, which never reach the page.
+  useEffect(
+    () =>
+      window.desktop.onTabCommand((command) => {
+        if (blocked || dialogOpen || !tabs) return;
+        switch (command) {
+          case "new-tab":
+            dispatch({ kind: "new" });
+            break;
+          case "close-tab":
+            dispatch({ kind: "close", id: tabs.shown });
+            break;
+          case "reopen-closed-tab":
+            dispatch({ kind: "reopen" });
+            break;
+        }
+      }),
+    [blocked, dialogOpen, tabs],
+  );
 
   // On first launch, without a settings file, the picker opens once the
   // setup is ready; with a file, even an empty one, it never opens on its own.
@@ -321,12 +433,9 @@ export function App() {
     return lists.current.get(scopeLabel(scope));
   }
 
-  // The issue pages were opened as the previous account, which may be all
-  // that could read them: the selected entry's list is read anew instead.
   useEffect(
     () =>
       window.verdandi.on("notice", (notice) => {
-        if (notice.kind === "account-changed") navigate({ kind: "list" });
         // The sidebar follows with the new names; places move ahead of it.
         if (notice.kind === "repositories-renamed") {
           for (const { from, to } of notice.renamed) {
@@ -341,33 +450,36 @@ export function App() {
     [],
   );
 
-  // A hand edit or Reset can remove the selected entry or rename a view,
-  // and GitHub can rename or transfer a repository, which stays selected
-  // with its issue pages.
-  useEffect(() =>
-    window.verdandi.on("sidebarChanged", (changed) => {
-      if (!selected || changed.status !== "read") return;
-      const current = followSelection(
-        selected,
-        entryOrder(changed).map((item) => item.scope),
-        renamed.current,
-      );
-      if (!current && !removalPending.current) select({ kind: "all" });
-      else if (
-        current?.kind === "view" &&
-        selected.kind === "view" &&
-        (current.view.name !== selected.view.name ||
-          current.view.query !== selected.view.query)
-      )
-        setSelected(current);
-      else if (
-        current?.kind === "repository" &&
-        !sameScope(current, selected)
-      ) {
-        movePlace(selected, current);
-        setSelected(current);
-      }
-    }),
+  // A removal, a hand edit or Reset can remove an entry or rename a view,
+  // and GitHub can rename or transfer a repository, which stays in its tabs
+  // with their issue pages.
+  useEffect(
+    () =>
+      window.verdandi.on("sidebarChanged", (changed) => {
+        if (changed.status !== "read") return;
+        const scopes = entryOrder(changed).map((item) => item.scope);
+        /** An entry as the sidebar lists it now, or none once it is gone. */
+        function follow(entry: Scope): Scope | undefined {
+          const current = followSelection(entry, scopes, renamed.current);
+          if (current?.kind === "view" && entry.kind === "view")
+            return current.view.name !== entry.view.name ||
+              current.view.query !== entry.view.query
+              ? current
+              : entry;
+          return current && sameScope(current, entry) ? entry : current;
+        }
+        const { tabs } = latest.current;
+        for (const { entry } of [
+          ...(tabs?.tabs ?? []),
+          ...(tabs?.closed.map((closed) => closed.tab) ?? []),
+        ]) {
+          const current = entry && follow(entry);
+          if (entry && current?.kind === "repository" && current !== entry)
+            movePlace(entry, current);
+        }
+        dispatch({ kind: "follow-entries", follow });
+      }),
+    [],
   );
 
   // Back in the window, what is on screen is read again if it is old.
@@ -386,10 +498,26 @@ export function App() {
       // A key the focused pane has handled is not the window's, and none is
       // while the setup blocker or the picker is up.
       if (event.defaultPrevented || blocked || dialogOpen) return;
+      // The tabs switch wherever the keyboard is, also in a new tab's field.
+      const step = tabStepForKey(event, window.desktop.platform);
+      if (step) {
+        event.preventDefault();
+        dispatch({ kind: "step", by: step });
+        return;
+      }
+      const field =
+        event.target instanceof Element
+          ? event.target.closest(
+              "button, input, textarea, select, [contenteditable=true], [role=menu]",
+            )
+          : null;
+      // A new tab's field leaves Tab, and ⌘/Ctrl+1…9 for the sidebar's
+      // entries, to the window, as a list does.
       if (
-        event.target instanceof Element &&
-        event.target.closest(
-          "button, input, textarea, select, [contenteditable=true], [role=menu]",
+        field &&
+        !(
+          field.hasAttribute("data-pane-focus") &&
+          (event.key === "Tab" || modifier.isHeld(event))
         )
       )
         return;
@@ -430,7 +558,7 @@ export function App() {
           openPicker();
           break;
         case "go-to-issue":
-          openGoToIssue(command.repository);
+          openGoToIssue();
           break;
         case "remove-repository":
           confirmRepositoryRemoval(command.repository);
@@ -456,7 +584,7 @@ export function App() {
   });
 
   return (
-    <>
+    <OpenInNewTab.Provider value={openInNewTab}>
       <div className="flex h-screen text-sm" inert={blocked}>
         <aside
           ref={sidebarPane}
@@ -475,6 +603,9 @@ export function App() {
             items={items}
             selected={selected}
             onSelect={select}
+            onSelectInNewTab={(entry) => {
+              dispatch({ kind: "choose-in-new-tab", entry });
+            }}
             onReorder={reorder}
             onAddRepository={openPicker}
             onRemoveRepository={confirmRepositoryRemoval}
@@ -508,11 +639,38 @@ export function App() {
             focused === "main" && focusedPaneMark,
           )}
         >
-          {selected ? (
-            // A new scope starts from a fresh list, never the previous one's.
+          {tabs && (
+            <TabBar
+              tabs={tabs.tabs}
+              shown={tabs.shown}
+              newTabShortcut={modifier.label("T")}
+              onShow={(id) => {
+                dispatch({ kind: "show", id });
+              }}
+              onClose={(id) => {
+                dispatch({ kind: "close", id });
+              }}
+              onCloseOthers={(id) => {
+                dispatch({ kind: "close-others", id });
+              }}
+              onCloseRight={(id) => {
+                dispatch({ kind: "close-right", id });
+              }}
+              onMove={(id, target, side) => {
+                dispatch({ kind: "move", id, target, side });
+              }}
+              onNew={() => {
+                dispatch({ kind: "new" });
+              }}
+            />
+          )}
+          {tab?.entry ? (
+            // Another tab or scope starts from a fresh list, never the
+            // previous one's.
             <MainArea
-              key={scopeLabel(selected)}
-              scope={selected}
+              key={`${String(tab.id)}:${scopeLabel(tab.entry)}`}
+              tab={tab.id}
+              scope={tab.entry}
               repositories={
                 sidebar?.status === "read" ? sidebar.repositories : []
               }
@@ -529,24 +687,24 @@ export function App() {
                 void trackNewRepository(repository);
               }}
               onEditView={() => {
-                if (selected.kind === "view") editView(selected.view);
+                if (tab.entry?.kind === "view") editView(tab.entry.view);
               }}
-              onGoToIssue={
-                selected.kind === "repository"
-                  ? () => {
-                      openGoToIssue(selected.repository);
-                    }
-                  : undefined
-              }
+              onGoToIssue={openGoToIssue}
               stack={stack}
               login={login}
               onNavigate={navigate}
               hasKeyboard={focused === "main" && !dialogOpen && !blocked}
             />
           ) : (
-            <p className="m-auto text-muted-foreground">
-              Select All or a repository.
-            </p>
+            tab && (
+              <NewTabPane
+                key={tab.id}
+                from={tab.from}
+                login={login}
+                hasKeyboard={focused === "main" && !dialogOpen && !blocked}
+                onChoose={goTo}
+              />
+            )
           )}
         </main>
       </div>
@@ -569,19 +727,14 @@ export function App() {
         <RemoveEntryDialog
           entry={removing}
           returnFocus={sidebarPane}
-          onRemove={async () => {
-            removalPending.current = true;
-            try {
-              return await (removing.kind === "repository"
-                ? window.verdandi.removeRepository(removing.repository)
-                : window.verdandi.removeView(removing.view.id));
-            } finally {
-              removalPending.current = false;
-            }
-          }}
-          onRemoved={(selection) => {
+          onRemove={() =>
+            removing.kind === "repository"
+              ? window.verdandi.removeRepository(removing.repository)
+              : window.verdandi.removeView(removing.view.id)
+          }
+          // Its tabs show All as the sidebar drops it.
+          onRemoved={() => {
             forgetPlace(removing);
-            if (selected && sameScope(selected, removing)) select(selection);
             setRemoving(undefined);
           }}
           onClose={() => {
@@ -609,21 +762,19 @@ export function App() {
           onClose={closeViewDialog}
         />
       )}
-      {goingTo && (
+      {goToIssueOpen && (
         <GoToIssueDialog
-          repository={goingTo}
-          login={login}
-          shown={stack.at(-1)?.issue}
-          trees={() =>
-            pushedList({ kind: "repository", repository: goingTo })?.trees ?? []
+          from={
+            selected?.kind === "repository" ? selected.repository : tab?.from
           }
-          onOpen={(issue) => {
-            setGoingTo(undefined);
-            navigate({ kind: "open", issue });
+          login={login}
+          onChoose={(issue) => {
+            setGoToIssueOpen(false);
+            goTo(issue);
           }}
           refocusPane={refocusPane}
           onClose={() => {
-            setGoingTo(undefined);
+            setGoToIssueOpen(false);
           }}
         />
       )}
@@ -632,8 +783,18 @@ export function App() {
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices onOpenView={openNoticeView} />
-    </>
+    </OpenInNewTab.Provider>
   );
+}
+
+/**
+ * An issue opened becomes the first recent issue, if where it lives is
+ * known.
+ */
+function recordRecent(issue: IssueDestination, entry: Scope | undefined) {
+  const recent = recentIssueOf(issue, entry);
+  if (recent)
+    void window.verdandi.recordRecentIssue(recent).catch(() => undefined);
 }
 
 /**

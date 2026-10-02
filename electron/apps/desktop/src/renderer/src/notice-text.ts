@@ -1,9 +1,19 @@
 import type { Notice, SavedView } from "@verdandi/core/contract";
 import { repositoryLabel } from "./scope";
 
+/** A notice of the window's own, beside the core's. */
+export interface WindowNotice {
+  /** An issue number typed was a pull request's, which opened on GitHub. */
+  kind: "pull-request-opened";
+  /** `owner/name#12`. */
+  reference: string;
+}
+
 /** What a notice tells the user. */
-export function noticeText(notice: Notice): string {
+export function noticeText(notice: Notice | WindowNotice): string {
   switch (notice.kind) {
+    case "pull-request-opened":
+      return `${notice.reference} is a pull request, which Verdandi does not show, so it opened on GitHub.`;
     case "gh-replaced":
       return `The gh you chose at ${notice.previous} is gone or no longer works. Verdandi now uses ${notice.gh.path}.`;
     case "account-changed": {
@@ -33,7 +43,7 @@ export function noticeText(notice: Notice): string {
  * which GitHub's search does not follow.
  */
 export function noticeViews(
-  notice: Notice,
+  notice: Notice | WindowNotice,
 ): { label: string; views: SavedView[] } | undefined {
   if (notice.kind !== "repositories-renamed") return undefined;
   const views = new Map<string, SavedView>();

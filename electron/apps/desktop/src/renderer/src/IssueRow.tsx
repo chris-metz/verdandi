@@ -8,13 +8,14 @@ import type {
   UnreadIssue,
 } from "@verdandi/core/contract";
 import { LoaderCircle, Lock } from "lucide-react";
-import { memo, type ReactNode } from "react";
+import { memo, type MouseEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "./Avatar";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { LabelPill, MoreLabels } from "./LabelFilter";
 import type { ListRow } from "./list-navigation";
+import { preventAutoscroll, useOpenFrom } from "./open-in-new-tab";
 import { problemText } from "./problem-text";
 import {
   colorStyle,
@@ -130,7 +131,8 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  * with matches below it says how many.
  *
  * Clicking a label, or one in the popover of `+N`, filters by it instead of
- * opening the issue.
+ * opening the issue. A middle click, or a click with ⌘ held (Ctrl
+ * elsewhere), opens the issue in a new tab, as it does its parent issue.
  */
 export const IssueRow = memo(function IssueRow({
   row,
@@ -168,6 +170,7 @@ export const IssueRow = memo(function IssueRow({
 }) {
   const { node, depth, parent, missingParent } = row;
   const { issue, mark } = node;
+  const openFrom = useOpenFrom(onOpen);
   const hasSubIssues = node.subIssues.length > 0;
   const read = node.unread ? undefined : node.issue;
   // Where issues are marked, dimming means only "context"; elsewhere it
@@ -184,9 +187,13 @@ export const IssueRow = memo(function IssueRow({
       aria-expanded={hasSubIssues ? node.expanded : undefined}
       data-issue-id={issue.id}
       title={mark && matchedBy && markTitle(mark, matchedBy)}
-      onClick={() => {
+      onClick={(event) => {
         onSelect(issue.id);
-        onOpen(issue);
+        openFrom(event, issue);
+      }}
+      onMouseDown={preventAutoscroll}
+      onAuxClick={(event) => {
+        if (event.button === 1) openFrom(event, issue);
       }}
       className={cn(
         "flex h-8 scroll-mt-7 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap select-none",
@@ -272,9 +279,9 @@ export const IssueRow = memo(function IssueRow({
       {parent && (
         <ParentChip
           parent={parent}
-          onOpen={() => {
-            onSelect(issue.id);
-            onOpen(parent);
+          onOpen={(click) => {
+            if (click.button === 0) onSelect(issue.id);
+            openFrom(click, parent);
           }}
         />
       )}
@@ -479,7 +486,8 @@ function ParentChip({
   onOpen,
 }: {
   parent: ParentIssue;
-  onOpen: () => void;
+  /** Opens the parent issue, where the click asks. */
+  onOpen: (click: MouseEvent) => void;
 }) {
   const failed =
     parent.unread?.status === "failed" ? parent.unread.problem : undefined;
@@ -490,9 +498,15 @@ function ParentChip({
       tabIndex={-1}
       onClick={(event) => {
         event.stopPropagation();
-        onOpen();
+        onOpen(event);
+      }}
+      onAuxClick={(event) => {
+        if (event.button !== 1) return;
+        event.stopPropagation();
+        onOpen(event);
       }}
       title={`Sub-issue of ${parent.reference}: ${parent.title}${why ?? ""}`}
+      data-parent-issue-id={parent.id}
       className={cn(
         "flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-4 text-muted-foreground",
         failed && "border-dashed border-warning",

@@ -42,6 +42,37 @@ function visibleText(text) {
   return window().getByText(text).filter({ visible: true }).first();
 }
 
+/**
+ * Launches the built app with the scratch home, and waits until an element
+ * matching `selector` shows; whether it did.
+ */
+async function start(selector) {
+  app = await electron.launch({
+    executablePath: electronBin,
+    args: [appDir],
+    env: { ...process.env, VERDANDI_HOME: home },
+    timeout,
+  });
+  // Links the app would open in the browser are recorded instead.
+  await app.evaluate(({ shell }) => {
+    globalThis.opened = [];
+    shell.openExternal = (url) => {
+      globalThis.opened.push(url);
+      return Promise.resolve();
+    };
+  });
+  page = await app.firstWindow();
+  // Playwright emulates a light scheme; follow the (native) theme instead.
+  await page.emulateMedia({ colorScheme: null });
+  await page.setViewportSize({ width: 1200, height: 800 });
+  try {
+    await page.waitForSelector(selector, { timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Commands by name, each taking the rest of its line. */
 const commands = {
   /**
@@ -67,37 +98,28 @@ const commands = {
         }),
       );
     }
-    app = await electron.launch({
-      executablePath: electronBin,
-      args: [appDir],
-      env: { ...process.env, VERDANDI_HOME: home },
-      timeout,
-    });
-    // Links the app would open in the browser are recorded instead.
-    await app.evaluate(({ shell }) => {
-      globalThis.opened = [];
-      shell.openExternal = (url) => {
-        globalThis.opened.push(url);
-        return Promise.resolve();
-      };
-    });
-    page = await app.firstWindow();
-    // Playwright emulates a light scheme; follow the (native) theme instead.
-    await page.emulateMedia({ colorScheme: null });
-    await page.setViewportSize({ width: 1200, height: 800 });
-    try {
-      await page.waitForSelector(
-        fresh
-          ? '[role="dialog"]'
-          : '[aria-label="Repositories"] [role="option"]',
-        { timeout },
-      );
-    } catch {
+    const shown = await start(
+      fresh ? '[role="dialog"]' : '[aria-label="Repositories"] [role="option"]',
+    );
+    if (!shown)
       return `launched, but ${fresh ? "no dialog" : "no tracked repository"} shows:\n${await page.innerText("body")}`;
-    }
     return fresh
       ? `launched without settings.json (VERDANDI_HOME=${home})`
       : `launched, tracking ${tracked.join(", ")} (VERDANDI_HOME=${home})`;
+  },
+
+  /**
+   * Quits the app and launches it again with the same scratch home, as the
+   * user would, e.g. to see what it restores; it is not built again.
+   */
+  async relaunch() {
+    if (!app) throw new Error("launch first");
+    await app.close();
+    app = page = undefined;
+    const shown = await start('[role="tablist"]');
+    return shown
+      ? `relaunched (VERDANDI_HOME=${home})`
+      : `relaunched, but no tabs show:\n${await page.innerText("body")}`;
   },
 
   /** Selects a sidebar entry: All, or a tracked repository by owner/name. */
@@ -132,6 +154,12 @@ const commands = {
   async click(selector) {
     await window().click(selector, { timeout });
     return `clicked ${selector}`;
+  },
+
+  /** Right-clicks the first element matching a CSS selector, for its menu. */
+  async rightclick(selector) {
+    await window().click(selector, { button: "right", timeout });
+    return `right-clicked ${selector}`;
   },
 
   /** Clicks the first visible element showing this text. */

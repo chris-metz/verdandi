@@ -1,25 +1,34 @@
 import type { Notice, SavedView } from "@verdandi/core/contract";
 import { useEffect, useState } from "react";
-import { noticeText, noticeViews } from "./notice-text";
+import { noticeText, noticeViews, type WindowNotice } from "./notice-text";
 
 /** How long a notice shows, in milliseconds. */
 const shownFor = 10 * 1000;
 
+const windowNoticeListeners = new Set<(notice: WindowNotice) => void>();
+
+/** Shows a notice of the window's own, as the core's show. */
+export function showNotice(notice: WindowNotice) {
+  for (const listener of windowNoticeListeners) listener(notice);
+}
+
 /**
- * The core's notices, briefly, in the window's corner, above the setup
- * blocker too. Each goes after a while, or when dismissed. A notice that
- * names views opens each one's dialog.
+ * The core's notices and the window's own, briefly, in the window's corner,
+ * above the setup blocker too. Each goes after a while, or when dismissed.
+ * A notice that names views opens each one's dialog.
  */
 export function Notices({
   onOpenView,
 }: {
   onOpenView: (view: SavedView) => void;
 }) {
-  const [notices, setNotices] = useState<{ id: number; notice: Notice }[]>([]);
+  const [notices, setNotices] = useState<
+    { id: number; notice: Notice | WindowNotice }[]
+  >([]);
   useEffect(() => {
     let next = 0;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const unsubscribe = window.verdandi.on("notice", (notice: Notice) => {
+    function show(notice: Notice | WindowNotice) {
       const id = next++;
       setNotices((shown) => [...shown, { id, notice }]);
       const timer = setTimeout(() => {
@@ -27,9 +36,12 @@ export function Notices({
         setNotices((shown) => shown.filter((other) => other.id !== id));
       }, shownFor);
       timers.add(timer);
-    });
+    }
+    const unsubscribe = window.verdandi.on("notice", show);
+    windowNoticeListeners.add(show);
     return () => {
       unsubscribe();
+      windowNoticeListeners.delete(show);
       for (const timer of timers) clearTimeout(timer);
     };
   }, []);
@@ -69,7 +81,7 @@ function NoticeViews({
   notice,
   onOpenView,
 }: {
-  notice: Notice;
+  notice: Notice | WindowNotice;
   onOpenView: (view: SavedView) => void;
 }) {
   const named = noticeViews(notice);

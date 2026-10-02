@@ -24,29 +24,31 @@ It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the a
 
 ## Commands
 
-| Command                               | Does                                                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `launch [owner/name …]`               | Builds and launches the app tracking these repositories (default `cli/cli`), and waits for the sidebar |
-| `launch --fresh`                      | Launches without a settings file, as on first launch, and waits for the repository picker              |
-| `entry <owner/name \| All>`           | Selects a sidebar entry                                                                                |
-| `issue <number \| owner/name#number>` | Opens an issue from the list shown, and waits until its page has read the issue                        |
-| `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                             |
-| `menu <label>`                        | Chooses an application menu item by its label, e.g. `Settings…`; key presses never reach the menu      |
-| `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                 |
-| `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                              |
-| `loaded`                              | Waits until the screen shown has loaded or failed, and prints its header's status                      |
-| `wait <css>` / `wait-text <text>`     | Waits up to a minute for the first match                                                               |
-| `scroll <css>`                        | Scrolls the first match to the top                                                                     |
-| `text [css]`                          | Prints the text shown by the first match, or the whole window                                          |
-| `eval <js>`                           | Evaluates an expression in the window, prints it as JSON                                               |
-| `push <event> <js>`                   | Pushes a contract event to the window as the core would, its payload a JS expression. See below        |
-| `theme <light \| dark>`               | Switches the operating system's appearance, and waits until the page sees it                           |
-| `size <width> <height>`               | Resizes the page, 1200 × 800 at launch                                                                 |
-| `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                     |
-| `opened`                              | The links the app opened in the browser                                                                |
-| `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                       |
-| `config [<toml> \| --remove]`         | Writes `config.toml`, `\n` between lines, or deletes it; with nothing, prints it. See below            |
-| `quit`                                | Closes the app and deletes its scratch home                                                            |
+| Command                               | Does                                                                                                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `launch [owner/name …]`               | Builds and launches the app tracking these repositories (default `cli/cli`), and waits for the sidebar   |
+| `launch --fresh`                      | Launches without a settings file, as on first launch, and waits for the repository picker                |
+| `entry <owner/name \| All>`           | Selects a sidebar entry                                                                                  |
+| `issue <number \| owner/name#number>` | Opens an issue from the list shown, and waits until its page has read the issue                          |
+| `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                               |
+| `rightclick <css>`                    | Right-clicks the first match, for its context menu                                                       |
+| `menu <label>`                        | Chooses an application menu item by its label, e.g. `Settings…` or `New Tab`; key presses never reach it |
+| `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                   |
+| `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                                |
+| `loaded`                              | Waits until the screen shown has loaded or failed, and prints its header's status                        |
+| `wait <css>` / `wait-text <text>`     | Waits up to a minute for the first match                                                                 |
+| `scroll <css>`                        | Scrolls the first match to the top                                                                       |
+| `text [css]`                          | Prints the text shown by the first match, or the whole window                                            |
+| `eval <js>`                           | Evaluates an expression in the window, prints it as JSON                                                 |
+| `push <event> <js>`                   | Pushes a contract event to the window as the core would, its payload a JS expression. See below          |
+| `theme <light \| dark>`               | Switches the operating system's appearance, and waits until the page sees it                             |
+| `size <width> <height>`               | Resizes the page, 1200 × 800 at launch                                                                   |
+| `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                       |
+| `opened`                              | The links the app opened in the browser                                                                  |
+| `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                         |
+| `config [<toml> \| --remove]`         | Writes `config.toml`, `\n` between lines, or deletes it; with nothing, prints it. See below              |
+| `relaunch`                            | Quits the app and launches it again with the same scratch home, to see what it restores                  |
+| `quit`                                | Closes the app and deletes its scratch home                                                              |
 
 A failed command prints `ERROR <command>: …`, the rest still runs, and the exit code is 1. Lines starting with `//` are comments. Run it from a terminal without stdin redirected for a `driver>` prompt.
 
@@ -82,11 +84,14 @@ ss rate-limits-low
 
 - **Public test data only.** This repository is public: read only public repositories, and never name a private one or copy its content anywhere. `cli/cli` has about a thousand open issues in varied Markdown; issue 13840 has 148 comments, two pages.
 - **Wait for data, not time.** `issue` returns once the page has its issue; sub-issues and comments arrive after it. `loaded` waits for all of it, until the header's refresh button stops spinning. Text such as "Updated" is no signal, since issue titles can contain it too.
+- **Menu shortcuts need `menu`.** ⌘T, ⌘W and ⌘⇧T belong to the File menu, so `menu New Tab`, `menu Close Tab` and `menu Reopen Closed Tab` stand in for them; Ctrl+Tab reaches the page, as `press Control+Tab`.
 - **Keys go where the keyboard is.** `entry`, `issue` and `click` click like a mouse and move focus with it, so `press Escape` after `issue` goes back to the list; an `eval` that calls `.click()` moves no focus.
 - **The browser never opens.** `shell.openExternal` only records its links, for `opened` to list.
 - **Text matches visible elements only**, so text inside closed `<details>` is skipped.
 - **Selectors:**
   - sidebar entries: `[role="option"][title="owner/name"]`
+  - tabs: `[role="tab"]`, the one shown `[role="tab"][aria-selected="true"]`, and + `[aria-label="New Tab"]`
+  - the Go to Issue field, in a new tab or the `#` dialog: `[aria-label="Go to Issue"]`
   - list rows: `[role="treeitem"]`
   - issue page sections: `section[aria-label="Description"]`, `section[aria-label="Comments"]`
   - comments: `[data-scroll-anchor^="comment:"]`

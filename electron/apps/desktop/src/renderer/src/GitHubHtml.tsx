@@ -4,8 +4,10 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { followClick } from "./follow-link";
 import { sanitizeGitHubHtml } from "./github-html";
 import { ImageViewer, type ViewedImage } from "./ImageViewer";
-import type { LinkToIssue } from "./link-target";
+import { IssueContextMenu, type IssueMenuTarget } from "./IssueContextMenu";
+import { linkTarget, type LinkToIssue } from "./link-target";
 import { followMedia } from "./media-loading";
+import { opensInNewTab } from "./open-in-new-tab";
 import { problemText } from "./problem-text";
 import { loadThirdPartyImage } from "./third-party-images";
 
@@ -21,7 +23,9 @@ const viewableImage = 'img.media-image[role="button"]';
  * HTML changed beyond the signatures of its media links, so what shows
  * stays as it is, videos playing on, while the page is read again. Its
  * links are followed as `followClick` says. A linked issue that could not
- * be opened says why below it, with **Retry** and **Open on GitHub**.
+ * be opened says why below it, with **Retry** and **Open on GitHub**. A
+ * middle click on it, or a click with ⌘ held (Ctrl elsewhere), opens it in
+ * a new tab, as its right-click menu does, which also copies the link.
  *
  * Its images and videos load as `followMedia` says, and an image opens at
  * its full size in the viewer on a click or Enter.
@@ -39,10 +43,13 @@ export function GitHubHtml({
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
   /**
-   * Opens a linked issue in the app, answering why it could not, if it
-   * could not.
+   * Opens a linked issue in the app, in this tab or a new one, answering
+   * why it could not, if it could not.
    */
-  onOpenIssue: (link: LinkToIssue) => Promise<Problem | undefined>;
+  onOpenIssue: (
+    link: LinkToIssue,
+    inNewTab: boolean,
+  ) => Promise<Problem | undefined>;
   /**
    * Reads the body or comment again for fresh links to its media, after one
    * failed to load.
@@ -75,61 +82,109 @@ export function GitHubHtml({
   const [failed, setFailed] = useState<{
     link: LinkToIssue;
     anchor: HTMLAnchorElement;
+    inNewTab: boolean;
     problem: Problem;
   }>();
 
-  function openIssue(link: LinkToIssue, anchor: HTMLAnchorElement) {
+  function openIssue(
+    link: LinkToIssue,
+    anchor: HTMLAnchorElement,
+    inNewTab: boolean,
+  ) {
     setFailed(undefined);
     // The link shows it is being looked up.
     anchor.setAttribute("aria-busy", "true");
-    void onOpenIssue(link).then((problem) => {
+    void onOpenIssue(link, inNewTab).then((problem) => {
       anchor.removeAttribute("aria-busy");
-      if (problem) setFailed({ link, anchor, problem });
+      if (problem) setFailed({ link, anchor, inNewTab, problem });
     });
+  }
+
+  /** What a right click on a link to an issue offers. */
+  function menuTarget(element: Element): IssueMenuTarget | undefined {
+    const anchor = element.closest("a");
+    const href = anchor?.getAttribute("href");
+    if (!anchor || !container.current?.contains(anchor) || !href)
+      return undefined;
+    const link = linkTarget(href);
+    return link.kind === "issue"
+      ? {
+          openInNewTab: () => {
+            openIssue(link, anchor, true);
+          },
+          url: href,
+          link: href,
+        }
+      : undefined;
   }
 
   return (
     <>
-      <div
-        ref={container}
-        className="markdown-body"
-        onClick={(event) => {
-          // Media's own buttons, e.g. Retry, have been followed.
-          if (event.defaultPrevented) return;
-          const image =
-            event.target instanceof Element
-              ? event.target.closest<HTMLImageElement>(viewableImage)
-              : null;
-          if (image) {
-            view(image);
-            return;
-          }
-          const handled = followClick(event.target, event.currentTarget, url, {
-            openIssue,
-            openExternal: window.desktop.openExternal,
-          });
-          if (handled) event.preventDefault();
-        }}
-        onKeyDown={(event) => {
-          const image = event.target;
-          if (
-            event.key !== "Enter" ||
-            !(image instanceof HTMLImageElement) ||
-            !image.matches(viewableImage)
-          ) {
-            return;
-          }
-          // Enter opens the image, rather than what the page's cursor is on.
-          event.preventDefault();
-          event.stopPropagation();
-          view(image);
-        }}
-        onAuxClick={(event) => {
-          if (event.target instanceof Element && event.target.closest("a")) {
+      <IssueContextMenu targetAt={menuTarget}>
+        <div
+          ref={container}
+          className="markdown-body"
+          onClick={(event) => {
+            // Media's own buttons, e.g. Retry, have been followed.
+            if (event.defaultPrevented) return;
+            const image =
+              event.target instanceof Element
+                ? event.target.closest<HTMLImageElement>(viewableImage)
+                : null;
+            if (image) {
+              view(image);
+              return;
+            }
+            const inNewTab = opensInNewTab(event);
+            const handled = followClick(
+              event.target,
+              event.currentTarget,
+              url,
+              {
+                openIssue: (link, anchor) => {
+                  openIssue(link, anchor, inNewTab);
+                },
+                openExternal: window.desktop.openExternal,
+              },
+            );
+            if (handled) event.preventDefault();
+          }}
+          onKeyDown={(event) => {
+            const image = event.target;
+            if (
+              event.key !== "Enter" ||
+              !(image instanceof HTMLImageElement) ||
+              !image.matches(viewableImage)
+            ) {
+              return;
+            }
+            // Enter opens the image, rather than what the page's cursor is on.
             event.preventDefault();
-          }
-        }}
-      />
+            event.stopPropagation();
+            view(image);
+          }}
+          onMouseDown={(event) => {
+            // A middle click on a link opens it, rather than scrolling.
+            if (
+              event.button === 1 &&
+              event.target instanceof Element &&
+              event.target.closest("a")
+            )
+              event.preventDefault();
+          }}
+          onAuxClick={(event) => {
+            const anchor =
+              event.target instanceof Element
+                ? event.target.closest("a")
+                : null;
+            if (!anchor) return;
+            event.preventDefault();
+            const link = linkTarget(anchor.getAttribute("href") ?? "");
+            if (event.button === 1 && link.kind === "issue")
+              openIssue(link, anchor, true);
+          }}
+        />
+      </IssueContextMenu>
       <ImageViewer
         image={viewed}
         onClose={() => {
@@ -149,7 +204,7 @@ export function GitHubHtml({
             type="button"
             className={actionClass}
             onClick={() => {
-              openIssue(failed.link, failed.anchor);
+              openIssue(failed.link, failed.anchor, failed.inNewTab);
             }}
           >
             Retry

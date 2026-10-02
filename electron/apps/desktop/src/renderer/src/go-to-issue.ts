@@ -1,102 +1,214 @@
 import type {
   IssueLookup,
-  IssueNode,
   Problem,
+  RecentIssue,
   RepositoryAddress,
+  TrackedRepository,
 } from "@verdandi/core/contract";
+import {
+  qualifiedReference,
+  sameRepository,
+} from "@verdandi/core/repository-address";
 import type { IssueDestination } from "./issue-navigation";
 import { linkTarget } from "./link-target";
-import { allNodes } from "./list-navigation";
-import { repositoryLabel } from "./scope";
+import type { SidebarScope as Scope } from "./scope";
 
-/** What the Go to issue dialog shows under its field. */
-export type GoToIssueStatus =
-  | { kind: "idle" }
-  /** What was typed is not an issue number. */
-  | { kind: "invalid" }
-  /** GitHub is being asked for the issue. */
-  | { kind: "looking-up"; number: number }
-  /** The number is a pull request's, whose page Enter opens. */
-  | { kind: "pull-request"; number: number; url: string }
-  | { kind: "failed"; problem: Problem };
+/**
+ * An issue the Go to Issue field names: by its repository and number, or
+ * by its number alone, in the repository of the tab.
+ */
+export interface IssueLocator {
+  repository: RepositoryAddress | undefined;
+  number: number;
+}
 
 /** The largest number GitHub asks for an issue by: a 32-bit `Int`. */
 const largestNumber = 2 ** 31 - 1;
 
 /**
- * The issue number typed in the Go to issue dialog, with or without a
- * leading `#`; none for anything else.
+ * The issue typed in the Go to Issue field: `#12` or `12`, `owner/name#12`,
+ * `owner/name 12`, or a link to an issue on GitHub; none for anything else.
  */
-export function issueNumber(text: string): number | undefined {
-  const digits = /^#?(\d+)$/.exec(text.trim())?.[1];
-  const number = Number(digits);
-  return number >= 1 && number <= largestNumber ? number : undefined;
+export function issueLocator(text: string): IssueLocator | undefined {
+  const trimmed = text.trim();
+  const link = linkTarget(trimmed);
+  if (link.kind === "issue") return numbered(link.repository, link.number);
+  const qualified = /^([\w.-]+)\/([\w.-]+)(?:\s*#|\s+)(\d+)$/.exec(trimmed);
+  if (qualified) {
+    const [, owner = "", name = "", number = ""] = qualified;
+    return numbered({ owner, name }, Number(number));
+  }
+  const bare = /^#?(\d+)$/.exec(trimmed);
+  return bare ? numbered(undefined, Number(bare[1])) : undefined;
 }
 
-/**
- * What ↵ does with a number before asking GitHub, if it needs to ask at all:
- * the issue already shown just closes the dialog, known by its page on
- * GitHub or as the list's issue with the number; an issue the repository's
- * list has, at any depth and collapsed away or not, opens at once; any
- * other is looked up. A repository's list names its own issues `#12`, and
- * those of other repositories `owner/name#12`.
- */
-export function beforeLookUp(
+function numbered(
+  repository: RepositoryAddress | undefined,
   number: number,
-  {
-    repository,
-    shown,
-    trees,
-  }: {
-    repository: RepositoryAddress;
-    /** The issue page on screen, if any. */
-    shown: IssueDestination | undefined;
-    /** The repository's list as last pushed. */
-    trees: readonly IssueNode[];
-  },
-):
-  | { kind: "shown" }
-  | { kind: "open"; issue: IssueDestination }
-  | {
-      kind: "look-up";
-    } {
-  const page = shown?.url === undefined ? undefined : linkTarget(shown.url);
-  if (
-    page?.kind === "issue" &&
-    page.number === number &&
-    sameRepository(page.repository, repository)
-  )
-    return { kind: "shown" };
-  const reference = `#${String(number)}`;
-  const listed = allNodes(trees).find(
-    (node) => node.issue.reference === reference,
-  )?.issue;
-  if (!listed) return { kind: "look-up" };
-  if (listed.id === shown?.id) return { kind: "shown" };
-  const { id, title, url } = listed;
-  return { kind: "open", issue: { id, reference, title, url } };
+): IssueLocator | undefined {
+  return number >= 1 && number <= largestNumber
+    ? { repository, number }
+    : undefined;
 }
 
-/** Whether two addresses name the same repository, as GitHub ignores case. */
-function sameRepository(a: RepositoryAddress, b: RepositoryAddress): boolean {
-  return repositoryLabel(a).toLowerCase() === repositoryLabel(b).toLowerCase();
+/** Somewhere ↩ in the palette goes. */
+export type GoToDestination =
+  /** An issue to ask GitHub about first. */
+  | { kind: "look-up"; repository: RepositoryAddress; number: number }
+  /** A recent issue, which opens without asking GitHub. */
+  | { kind: "recent"; issue: RecentIssue };
+
+/**
+ * What the palette offers for what is typed: the issue typed, as the recent
+ * issue it is if it is one, then the recent issues whose `owner/name#12` or
+ * title has what is typed in it, each once. When it offers nothing for what
+ * is typed, it says what it takes.
+ */
+export function goToChoices(
+  text: string,
+  {
+    from,
+    recents,
+  }: {
+    /** The repository a bare `#12` names, if any. */
+    from: RepositoryAddress | undefined;
+    recents: readonly RecentIssue[];
+  },
+): { destinations: GoToDestination[]; hint: string | undefined } {
+  const locator = issueLocator(text);
+  const repository = locator?.repository ?? from;
+  const typedRecent =
+    locator &&
+    repository &&
+    recents.find(
+      (recent) =>
+        recent.number === locator.number &&
+        sameRepository(recent.repository, repository),
+    );
+  const typed: GoToDestination | undefined = typedRecent
+    ? { kind: "recent", issue: typedRecent }
+    : locator && repository
+      ? { kind: "look-up", repository, number: locator.number }
+      : undefined;
+  const query = text.trim().toLowerCase();
+  const matching = recents.filter(
+    (recent) =>
+      recent !== typedRecent &&
+      (qualifiedReference(recent.repository, recent.number)
+        .toLowerCase()
+        .includes(query) ||
+        recent.title.toLowerCase().includes(query)),
+  );
+  const destinations = [
+    ...(typed ? [typed] : []),
+    ...matching.map((issue) => ({ kind: "recent" as const, issue })),
+  ];
+  return {
+    destinations,
+    hint:
+      query === "" || destinations.length > 0
+        ? undefined
+        : locator
+          ? `#${String(locator.number)} names an issue only in a repository's tab: type owner/name#${String(locator.number)}.`
+          : from
+            ? "Type #12, owner/name#12 or a link to an issue on GitHub."
+            : "Type owner/name#12 or a link to an issue on GitHub.",
+  };
 }
 
 /**
- * What GitHub's answer for the number typed does: an issue it found opens,
- * and otherwise the dialog stays open with the number, saying why. A lookup
- * that was dropped, as when GitHub is read as another account, says
+ * Where an issue opened lives, as far as it is known: by its link, or by
+ * its reference, `#12` naming the repository of the list it was opened
+ * from.
+ */
+export function issueLocatorOf(
+  issue: IssueDestination,
+  entry: Scope | undefined,
+): IssueLocator | undefined {
+  const located =
+    (issue.url === undefined ? undefined : issueLocator(issue.url)) ??
+    issueLocator(issue.reference);
+  if (!located || located.repository || entry?.kind !== "repository")
+    return located;
+  return { repository: entry.repository, number: located.number };
+}
+
+/**
+ * The entry an issue chosen in a new tab opens over: its repository's, if
+ * it is tracked, and All otherwise.
+ */
+export function tabEntryOf(
+  repository: RepositoryAddress,
+  tracked: readonly TrackedRepository[],
+): Scope {
+  const own = tracked.find((one) => sameRepository(one, repository));
+  return own ? { kind: "repository", repository: own } : { kind: "all" };
+}
+
+/**
+ * A recent issue as the list it opens over names it: `#12` in its own
+ * repository's, `owner/name#12` elsewhere.
+ */
+export function openedIssue(
+  issue: RecentIssue,
+  entry: Scope | undefined,
+): IssueDestination {
+  const own =
+    entry?.kind === "repository" &&
+    sameRepository(entry.repository, issue.repository);
+  const qualified = qualifiedReference(issue.repository, issue.number);
+  return {
+    id: issue.id,
+    reference: own ? `#${String(issue.number)}` : qualified,
+    title: issue.title,
+    url: `https://github.com/${qualified.replace("#", "/issues/")}`,
+  };
+}
+
+/**
+ * An issue opened, as a recent issue, if where it lives is known: by its
+ * link, or by its reference in the list it was opened from.
+ */
+export function recentIssueOf(
+  issue: IssueDestination,
+  entry: Scope | undefined,
+): RecentIssue | undefined {
+  const located = issueLocatorOf(issue, entry);
+  if (!located?.repository) return undefined;
+  return {
+    id: issue.id,
+    repository: located.repository,
+    number: located.number,
+    title: issue.title,
+  };
+}
+
+/**
+ * What the palette says under its field: a lookup under way, or why it
+ * failed.
+ */
+export type GoToIssueStatus =
+  | { kind: "idle" }
+  | { kind: "looking-up"; reference: string }
+  | { kind: "failed"; problem: Problem };
+
+/**
+ * What GitHub's answer for the issue typed does: an issue it found opens, a
+ * pull request opens on GitHub, and otherwise the palette says why. A
+ * lookup that was dropped, as when GitHub is read as another account, says
  * nothing, so that Enter asks again.
  */
 export function afterLookUp(
   found: IssueLookup,
-  number: number,
-): { kind: "open"; issue: IssueDestination } | GoToIssueStatus {
+):
+  | { kind: "open"; issue: IssueDestination }
+  | { kind: "pull-request"; url: string }
+  | GoToIssueStatus {
   switch (found.status) {
     case "found":
       return { kind: "open", issue: found.issue };
     case "pull-request":
-      return { kind: "pull-request", number, url: found.url };
+      return { kind: "pull-request", url: found.url };
     case "failed":
       return found.problem.kind === "interrupted"
         ? { kind: "idle" }

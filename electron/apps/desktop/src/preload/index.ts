@@ -5,6 +5,7 @@ import {
   rendererRequestNames,
   type DesktopApi,
   type RendererContract,
+  type TabCommand,
 } from "../shared/ipc";
 
 const requests = Object.fromEntries(
@@ -59,6 +60,15 @@ const desktop: DesktopApi = {
     }
     return () => {
       if (settingsListener === listener) settingsListener = undefined;
+    };
+  },
+  onTabCommand(listener) {
+    const forward = (_: IpcRendererEvent, command: TabCommand) => {
+      listener(command);
+    };
+    ipcRenderer.on(ipcChannels.tabCommand, forward);
+    return () => {
+      ipcRenderer.removeListener(ipcChannels.tabCommand, forward);
     };
   },
   openExternal(url) {
