@@ -188,7 +188,28 @@ function start() {
               },
             },
             { type: "separator" },
-            { role: "close" },
+            // PROTOTYPE (tabs): New Tab and Close Tab instead of Close Window.
+            {
+              label: "New Tab",
+              accelerator: "CmdOrCtrl+T",
+              click: () => {
+                (
+                  BrowserWindow.getFocusedWindow() ??
+                  BrowserWindow.getAllWindows()[0]
+                )?.webContents.send("prototype:tab-command", "new-tab");
+              },
+            },
+            {
+              label: "Close Tab",
+              accelerator: "CmdOrCtrl+W",
+              click: () => {
+                (
+                  BrowserWindow.getFocusedWindow() ??
+                  BrowserWindow.getAllWindows()[0]
+                )?.webContents.send("prototype:tab-command", "close-tab");
+              },
+            },
+            { role: "close", accelerator: "CmdOrCtrl+Shift+W" },
           ],
         },
         { role: "editMenu" },

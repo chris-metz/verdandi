@@ -61,6 +61,15 @@ const desktop: DesktopApi = {
       if (settingsListener === listener) settingsListener = undefined;
     };
   },
+  onPrototypeTabCommand(listener) {
+    const handler = (_event: unknown, command: "new-tab" | "close-tab") => {
+      listener(command);
+    };
+    ipcRenderer.on("prototype:tab-command", handler);
+    return () => {
+      ipcRenderer.off("prototype:tab-command", handler);
+    };
+  },
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
   },

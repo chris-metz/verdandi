@@ -11,7 +11,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useConfig } from "./config";
 import { GoToIssueDialog } from "./GoToIssueDialog";
-import { navigateIssues } from "./issue-navigation";
+import type { IssueDestination, IssueNavigation } from "./issue-navigation";
 import { MainArea } from "./MainArea";
 import { Notices } from "./Notices";
 import {
@@ -36,6 +36,14 @@ import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder, followSelection } from "./sidebar-entries";
 import { ViewDialog } from "./ViewDialog";
 import type { ViewDialogPurpose } from "./view-dialog";
+import { recordRecent } from "./prototype-tabs/recents";
+import { activeTab, initialTabs, reduceTabs } from "./prototype-tabs/tabs";
+import {
+  NewTabPage,
+  PrototypeSwitcher,
+  TabBar,
+  useVariant,
+} from "./prototype-tabs/Variants";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
 const modifier = shortcutModifier(window.desktop.platform);
@@ -60,9 +68,23 @@ export function App() {
   const sidebar = useSidebar();
   const items = useMemo(() => entryOrder(sidebar), [sidebar]);
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
-  const [selected, setSelected] = useState<Scope>();
-  // The issue pages opened from the selected entry's list, the last on top.
-  const [stack, navigate] = useReducer(navigateIssues, []);
+  // PROTOTYPE (tabs): the selected entry and the issue pages opened from its
+  // list, the last on top, are the active tab's.
+  const [tabs, dispatchTabs] = useReducer(reduceTabs, undefined, initialTabs);
+  const tab = activeTab(tabs);
+  const selected = tab.scope;
+  const stack = tab.stack;
+  const [variant, setVariant] = useVariant();
+  function setSelected(
+    update:
+      Scope | undefined | ((scope: Scope | undefined) => Scope | undefined),
+  ) {
+    dispatchTabs({ kind: "set-scope", update });
+  }
+  function navigate(action: IssueNavigation) {
+    if (action.kind === "open") recordRecent(action.issue, selected);
+    dispatchTabs({ kind: "navigate", action });
+  }
   const shownIssueId = stack.at(-1)?.issue.id;
   const screen = useMemo((): Screen | undefined => {
     if (shownIssueId !== undefined) {
@@ -326,7 +348,8 @@ export function App() {
   useEffect(
     () =>
       window.verdandi.on("notice", (notice) => {
-        if (notice.kind === "account-changed") navigate({ kind: "list" });
+        if (notice.kind === "account-changed")
+          dispatchTabs({ kind: "navigate", action: { kind: "list" } });
         // The sidebar follows with the new names; places move ahead of it.
         if (notice.kind === "repositories-renamed") {
           for (const { from, to } of notice.renamed) {
@@ -455,6 +478,97 @@ export function App() {
     };
   });
 
+  // PROTOTYPE (tabs): New Tab, Close Tab and switching tabs.
+  function newTab() {
+    dispatchTabs({
+      kind: "new",
+      from: selected?.kind === "repository" ? selected.repository : undefined,
+    });
+  }
+
+  useEffect(() =>
+    window.desktop.onPrototypeTabCommand((command) => {
+      if (blocked || dialogOpen) return;
+      if (command === "new-tab") newTab();
+      else dispatchTabs({ kind: "close", id: tabs.activeId });
+    }),
+  );
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (blocked || dialogOpen) return;
+      const step =
+        event.ctrlKey && !event.metaKey && event.key === "Tab"
+          ? event.shiftKey
+            ? -1
+            : 1
+          : modifier.isHeld(event) &&
+              event.shiftKey &&
+              (event.code === "BracketRight" || event.code === "BracketLeft")
+            ? event.code === "BracketRight"
+              ? 1
+              : -1
+            : undefined;
+      if (step === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dispatchTabs({ kind: "cycle", step });
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  });
+
+  // The tab shown has the keyboard.
+  const shownTab = useRef(tabs.activeId);
+  useEffect(() => {
+    if (shownTab.current === tabs.activeId) return;
+    shownTab.current = tabs.activeId;
+    requestAnimationFrame(() => {
+      focusPane(mainPane.current);
+    });
+  }, [tabs.activeId]);
+
+  /** Opens an issue chosen on a new tab's page, in its repository's list. */
+  function openFromNewTab(
+    issue: IssueDestination,
+    repository: RepositoryAddress | undefined,
+  ) {
+    const tracked =
+      repository && sidebar?.status === "read"
+        ? sidebar.repositories.find(
+            (entry) =>
+              repositoryLabel(entry.repository).toLowerCase() ===
+              repositoryLabel(repository).toLowerCase(),
+          )
+        : undefined;
+    const scope: Scope = tracked
+      ? { kind: "repository", repository: tracked.repository }
+      : { kind: "all" };
+    recordRecent(issue, scope);
+    dispatchTabs({ kind: "open-in-tab", scope, issue });
+    requestAnimationFrame(() => {
+      focusPane(mainPane.current);
+    });
+  }
+
+  const tabBar = (
+    <TabBar
+      variant={variant}
+      tabs={tabs.tabs}
+      activeId={tabs.activeId}
+      onActivate={(id) => {
+        dispatchTabs({ kind: "activate", id });
+      }}
+      onClose={(id) => {
+        dispatchTabs({ kind: "close", id });
+      }}
+      onNew={newTab}
+      newShortcut={modifier.label("T")}
+    />
+  );
+
   return (
     <>
       <div className="flex h-screen text-sm" inert={blocked}>
@@ -508,10 +622,11 @@ export function App() {
             focused === "main" && focusedPaneMark,
           )}
         >
+          {variant !== "C" && tabBar}
           {selected ? (
             // A new scope starts from a fresh list, never the previous one's.
             <MainArea
-              key={scopeLabel(selected)}
+              key={`${String(tab.id)}:${scopeLabel(selected)}`}
               scope={selected}
               repositories={
                 sidebar?.status === "read" ? sidebar.repositories : []
@@ -543,11 +658,28 @@ export function App() {
               onNavigate={navigate}
               hasKeyboard={focused === "main" && !dialogOpen && !blocked}
             />
+          ) : tab.isNew ? (
+            <NewTabPage
+              variant={variant}
+              tab={tab}
+              tabs={tabs.tabs}
+              tracked={
+                sidebar?.status === "read"
+                  ? sidebar.repositories.map(({ repository }) => repository)
+                  : []
+              }
+              login={login}
+              onOpen={openFromNewTab}
+              onActivate={(id) => {
+                dispatchTabs({ kind: "activate", id });
+              }}
+            />
           ) : (
             <p className="m-auto text-muted-foreground">
               Select All or a repository.
             </p>
           )}
+          {variant === "C" && tabBar}
         </main>
       </div>
       {picking && (
@@ -632,6 +764,7 @@ export function App() {
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices onOpenView={openNoticeView} />
+      <PrototypeSwitcher variant={variant} onChange={setVariant} />
     </>
   );
 }

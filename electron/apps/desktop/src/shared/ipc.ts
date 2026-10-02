@@ -69,6 +69,10 @@ export interface DesktopApi {
    * there was a listener goes to the first one.
    */
   onOpenSettings: (listener: () => void) => () => void;
+  /** PROTOTYPE (tabs): the menu's New Tab and Close Tab. */
+  onPrototypeTabCommand: (
+    listener: (command: "new-tab" | "close-tab") => void,
+  ) => () => void;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**
