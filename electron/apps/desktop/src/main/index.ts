@@ -36,6 +36,7 @@ import {
   type DesktopApi,
   type TabCommand,
 } from "../shared/ipc";
+import { fontDefaults } from "../shared/fonts";
 import { shownTheme, themeCatalogue } from "../shared/themes";
 import icon from "../../build/icon.png?asset";
 import { loadImage } from "./load-image";
@@ -66,7 +67,7 @@ function start() {
     host,
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
-    config: createConfigFile(host, themeCatalogue),
+    config: createConfigFile(host, themeCatalogue, fontDefaults),
   });
 
   // Native menus and dialogs, and the renderer's prefers-color-scheme, follow

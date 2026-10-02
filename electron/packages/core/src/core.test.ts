@@ -31,6 +31,7 @@ import type { GitHubError } from "./github/port.ts";
 import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
+import { testFonts } from "./testing/fonts.ts";
 import { testThemes } from "./testing/themes.ts";
 import { createFakeGitHub, type FakeGitHub } from "./testing/fake-github.ts";
 
@@ -149,7 +150,7 @@ function createTestCore(
     host: machine.host,
     settings: createSettingsFile(verdandiHome()),
     localState: createLocalStateFile(verdandiHome()),
-    config: createConfigFile(verdandiHome(), testThemes),
+    config: createConfigFile(verdandiHome(), testThemes, testFonts),
     now: clock.now,
     ...(timers ? {} : { wait: () => Promise.resolve() }),
   });
@@ -2106,7 +2107,7 @@ describe("sidebar", () => {
         homedir,
       }),
       localState: createLocalStateFile(verdandiHome()),
-      config: createConfigFile(verdandiHome(), testThemes),
+      config: createConfigFile(verdandiHome(), testThemes, testFonts),
     });
 
     cores.push(core);

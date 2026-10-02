@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { configDirectory } from "../directories.ts";
+import { testFonts } from "../testing/fonts.ts";
 import { testThemes } from "../testing/themes.ts";
 import { createConfigFile } from "./config-file.ts";
 
@@ -18,7 +19,7 @@ it("watches for its folder without creating it, and sees the file once it is mad
     homedir: root,
   };
   const folder = configDirectory(host);
-  const storage = createConfigFile(host, testThemes);
+  const storage = createConfigFile(host, testThemes, testFonts);
   let changes = 0;
   const stop = storage.watch(() => {
     changes++;
@@ -49,7 +50,7 @@ it("creates its folder with the first change", async () => {
     },
     homedir: root,
   };
-  const storage = createConfigFile(host, testThemes);
+  const storage = createConfigFile(host, testThemes, testFonts);
   try {
     expect(await storage.change({ lightTheme: "github-light" })).toEqual({
       ok: true,

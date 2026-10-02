@@ -10,7 +10,7 @@ import type {
   ConfigProblem,
   ConfigState,
 } from "../contract.ts";
-import type { ThemeCatalogue } from "./port.ts";
+import type { FontDefaults, ThemeCatalogue } from "./port.ts";
 
 const appearances: readonly unknown[] = [
   "system",
@@ -18,12 +18,24 @@ const appearances: readonly unknown[] = [
   "dark",
 ] satisfies Appearance[];
 
+/**
+ * What `config.toml` is checked against: the interface's themes, the fonts
+ * it uses by default, and the font families installed, once it has said.
+ */
+export interface ConfigCatalogue {
+  themes: ThemeCatalogue;
+  fonts: FontDefaults;
+  installedFonts: readonly string[] | undefined;
+}
+
 /** What applies without a file, and in place of a value that cannot be used. */
-export function defaultConfig(catalogue: ThemeCatalogue): Config {
+export function defaultConfig(themes: ThemeCatalogue): Config {
   return {
     appearance: "system",
-    lightTheme: catalogue.defaults.light,
-    darkTheme: catalogue.defaults.dark,
+    lightTheme: themes.defaults.light,
+    darkTheme: themes.defaults.dark,
+    interfaceFont: null,
+    codeFont: null,
   };
 }
 
@@ -34,10 +46,13 @@ export function defaultConfig(catalogue: ThemeCatalogue): Config {
  */
 export function readConfig(
   text: string,
-  catalogue: ThemeCatalogue,
+  catalogue: ConfigCatalogue,
 ): Pick<ConfigState, "config" | "status" | "problems"> {
-  const defaults = defaultConfig(catalogue);
+  const defaults = defaultConfig(catalogue.themes);
   const config = { ...defaults };
+  // A default font is null in the configuration, but the user is told its
+  // name.
+  const fallbacks = { ...defaults, ...catalogue.fonts };
   let values: Record<string, unknown>;
   let lines: Map<string, number>;
   try {
@@ -60,11 +75,12 @@ export function readConfig(
   const problems: ConfigProblem[] = [];
   for (const [key, value] of Object.entries(values)) {
     const line = lines.get(key);
-    const problem = (message: string) => {
+    const problem = (message: string, missingFont?: string) => {
       problems.push({
         key,
         ...(line === undefined ? {} : { line }),
         message: `${place(line)}: ${message}`,
+        ...(missingFont === undefined ? {} : { missingFont }),
       });
     };
     const checked = checkValue(key, value, catalogue);
@@ -72,7 +88,17 @@ export function readConfig(
       problem(`Verdandi does not know the key ${key}, and ignores it.`);
     else if ("problem" in checked)
       problem(
-        `${checked.problem} Verdandi uses "${defaults[checked.field]}" instead.`,
+        [
+          checked.problem,
+          `Verdandi uses "${fallbacks[checked.field]}" instead.`,
+          // The interface lists the installed families as it starts.
+          ...(checked.missingFont === undefined
+            ? []
+            : [
+                "If you installed it since Verdandi started, restart Verdandi.",
+              ]),
+        ].join(" "),
+        checked.missingFont,
       );
     else Object.assign(config, checked.use);
   }
@@ -87,19 +113,22 @@ const fileKeys = {
   appearance: "appearance",
   lightTheme: "light_theme",
   darkTheme: "dark_theme",
+  interfaceFont: "font",
+  codeFont: "code_font",
 } as const satisfies Record<keyof Config, string>;
 
 /**
  * What Verdandi makes of a key in the file and its value: what it sets, or
- * which setting cannot use it and why. A key it does not know sets nothing.
+ * which setting cannot use it and why, with the font family when it is not
+ * installed. A key it does not know sets nothing.
  */
 function checkValue(
   key: string,
   value: unknown,
-  catalogue: ThemeCatalogue,
+  catalogue: ConfigCatalogue,
 ):
   | { use: Partial<Config> }
-  | { field: keyof Config; problem: string }
+  | { field: keyof Config; problem: string; missingFont?: string }
   | undefined {
   const theme = (field: "lightTheme" | "darkTheme") => {
     const kind = field === "lightTheme" ? "light" : "dark";
@@ -108,11 +137,30 @@ function checkValue(
         field,
         problem: `${key} is ${shown(value)}, but must be the ID of a ${kind} theme, in quotes.`,
       };
-    const found = catalogue.themes.find(({ id }) => id === value);
+    const found = catalogue.themes.themes.find(({ id }) => id === value);
     if (found?.kind === kind) return { use: { [field]: value } };
     return {
       field,
       problem: `${key} is ${shown(value)}, which is ${found ? `a ${found.kind} theme` : "not a theme"}.`,
+    };
+  };
+  const family = (field: "interfaceFont" | "codeFont") => {
+    if (typeof value !== "string" || value.trim() === "")
+      return {
+        field,
+        problem: `${key} is ${shown(value)}, but must be the name of a font family, in quotes.`,
+      };
+    const { installedFonts } = catalogue;
+    if (installedFonts === undefined) return { use: { [field]: value } };
+    const name = value.toLowerCase();
+    const found = installedFonts.find(
+      (family) => family.toLowerCase() === name,
+    );
+    if (found !== undefined) return { use: { [field]: found } };
+    return {
+      field,
+      problem: `${key} is ${shown(value)}, which is not installed.`,
+      missingFont: value,
     };
   };
   switch (key) {
@@ -127,26 +175,36 @@ function checkValue(
       return theme("lightTheme");
     case fileKeys.darkTheme:
       return theme("darkTheme");
+    case fileKeys.interfaceFont:
+      return family("interfaceFont");
+    case fileKeys.codeFont:
+      return family("codeFont");
     default:
       return undefined;
   }
 }
 
 /**
- * The text of `config.toml` with each value given set under its key, and
- * nothing else in it changed: comments, key order and formatting stay as
- * they are. Without a file, the text holds only these keys. Text that is
+ * The text of `config.toml` with each value given set under its key, or a
+ * font's key removed for its default, and nothing else in it changed:
+ * comments, key order and formatting stay as they are. Without a file, the
+ * text holds only the keys set, and there is none without any. Text that is
  * not valid TOML is not changed, nor is any text for a value that cannot be
  * used.
  */
 export function changeConfigText(
   text: string | undefined,
   change: Partial<Config>,
-  catalogue: ThemeCatalogue,
-): { ok: true; text: string } | { ok: false; message: string } {
+  catalogue: ConfigCatalogue,
+): { ok: true; text: string | undefined } | { ok: false; message: string } {
   const updates: Record<string, unknown> = {};
+  const removed = new Set<string>();
   for (const [field, value] of Object.entries(change) as [string, unknown][]) {
     const key = (fileKeys as Record<string, string | undefined>)[field];
+    if (value === null && (field === "interfaceFont" || field === "codeFont")) {
+      removed.add(fileKeys[field]);
+      continue;
+    }
     const checked =
       key === undefined ? undefined : checkValue(key, value, catalogue);
     if (checked === undefined)
@@ -158,7 +216,11 @@ export function changeConfigText(
       return { ok: false, message: `${checked.problem} Nothing was written.` };
     updates[key as string] = value;
   }
-  if (text === undefined) return { ok: true, text: stringify(updates) };
+  if (text === undefined)
+    return {
+      ok: true,
+      text: Object.keys(updates).length === 0 ? undefined : stringify(updates),
+    };
   let values: Record<string, unknown>;
   try {
     values = parse(text) as Record<string, unknown>;
@@ -168,7 +230,44 @@ export function changeConfigText(
       message: `${syntaxError(error).sentence} Nothing is written to it until it is fixed.`,
     };
   }
-  return { ok: true, text: patch(text, { ...values, ...updates }) };
+  const kept = Object.fromEntries(
+    Object.entries(values).filter(([key]) => !removed.has(key)),
+  );
+  return {
+    ok: true,
+    text: patch(withoutKeyLines(text, removed), { ...kept, ...updates }),
+  };
+}
+
+/**
+ * The text without the lines of each top-level key-value with one of these
+ * keys, but with the comments above it, which patching would remove with
+ * it, e.g. one heading several keys. A key given another way, e.g. as a
+ * table, is left for patching to remove.
+ */
+function withoutKeyLines(text: string, keys: ReadonlySet<string>): string {
+  if (keys.size === 0) return text;
+  const blocks: unknown = parseDocument(text).cst;
+  if (!Array.isArray(blocks)) return text;
+  const removed = new Set<number>();
+  for (const block of blocks as SyntaxBlock[]) {
+    // A dotted key, e.g. font.name, is a table's.
+    const [key, ...dotted] = block.key?.value ?? [];
+    if (
+      block.type !== "KeyValue" ||
+      key === undefined ||
+      dotted.length > 0 ||
+      !keys.has(key) ||
+      !block.loc
+    )
+      continue;
+    for (let line = block.loc.start.line; line <= block.loc.end.line; line++)
+      removed.add(line);
+  }
+  return text
+    .split("\n")
+    .filter((_, index) => !removed.has(index + 1))
+    .join("\n");
 }
 
 /** "config.toml, line 3", or only the file when the line is not known. */
@@ -206,8 +305,9 @@ function keyLines(blocks: unknown): Map<string, number> {
 
 /** A top-level key-value, table or array of tables in the syntax tree. */
 interface SyntaxBlock {
+  type?: string;
   key?: { value?: string[]; item?: { value?: string[] } };
-  loc?: { start: { line: number } };
+  loc?: { start: { line: number }; end: { line: number } };
 }
 
 /**

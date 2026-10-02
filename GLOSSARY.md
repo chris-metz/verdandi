@@ -105,3 +105,11 @@ _Avoid_: colour scheme, skin, palette
 **Appearance**:
 Whether Verdandi shows the user's light theme or dark theme: following the operating system, always light, or always dark. It follows the operating system unless the user chooses otherwise.
 _Avoid_: mode, dark mode, colour mode
+
+**Interface font**:
+The font family Verdandi shows all text in but code. The user chooses it from the fonts installed on their machine; unless they do, it is one Verdandi ships.
+_Avoid_: UI font, body font, system font
+
+**Code font**:
+The font family Verdandi shows code in, such as code in issue bodies and comments. The user chooses it as they do the interface font; unless they do, it is a monospace font Verdandi ships.
+_Avoid_: monospace font, mono font

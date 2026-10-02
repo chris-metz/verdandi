@@ -18,6 +18,7 @@ import { createCore } from "./core.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
 import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
+import { testFonts } from "./testing/fonts.ts";
 import { testThemes } from "./testing/themes.ts";
 import { createFakeGitHub } from "./testing/fake-github.ts";
 
@@ -34,7 +35,7 @@ beforeEach(async () => {
     host,
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
-    config: createConfigFile(host, testThemes),
+    config: createConfigFile(host, testThemes, testFonts),
     github: () => createFakeGitHub({ login: "octo-reader" }),
     runCommand: () => Promise.resolve({ kind: "not-found" }),
   });

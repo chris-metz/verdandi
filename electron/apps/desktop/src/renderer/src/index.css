@@ -2,18 +2,21 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "./github-markdown.css";
 
 /*
  * Every colour comes from the shown theme, which `theme.ts` sets on <html> as
  * custom properties, e.g. `--background`. `dark:` follows whether that theme
- * is dark.
+ * is dark. The chosen fonts come the same way from `fonts.ts`, as
+ * `--interface-font` and `--code-font`, with the shipped ones until then.
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: "Geist Variable", sans-serif;
+  --font-sans: var(--interface-font, "Geist Variable", sans-serif);
+  --font-mono: var(--code-font, "Geist Mono Variable", monospace);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

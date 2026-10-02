@@ -4,6 +4,9 @@ import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { builtInThemes, type Theme } from "../../shared/themes";
+import { FontPicker } from "./FontPicker";
+import type { FontUse } from "./fonts";
+import { useFonts } from "./installed-fonts";
 
 /** The dialog's sections, in its sidebar's order, each with its settings. */
 const sections = [
@@ -82,6 +85,12 @@ export function SettingsDialog({
   );
 }
 
+/** The fonts, in the dialog's order, each with its key in `config.toml`. */
+const fontSettings: readonly { use: FontUse; label: string; key: string }[] = [
+  { use: "interfaceFont", label: "Interface font", key: "font" },
+  { use: "codeFont", label: "Code font", key: "code_font" },
+];
+
 /** The appearances, in the segmented control's order. */
 const appearances: readonly { value: Appearance; label: string }[] = [
   { value: "system", label: "System" },
@@ -90,13 +99,15 @@ const appearances: readonly { value: Appearance; label: string }[] = [
 ];
 
 /**
- * The appearance, and the light and dark theme, each chosen at once. While
- * the file cannot be read as TOML, they cannot be changed.
+ * The appearance, the light and dark theme, and the interface and code
+ * font, each chosen at once. While the file cannot be read as TOML, they
+ * cannot be changed.
  */
 function AppearanceSection({ config }: { config: ConfigState }) {
   // Why the last choice was not written, until the file changes.
   const [error, setError] = useState<{ message: string; for: ConfigState }>();
   const disabled = config.status === "unreadable";
+  const fonts = useFonts();
 
   async function choose(change: Partial<Config>) {
     setError(undefined);
@@ -165,6 +176,28 @@ function AppearanceSection({ config }: { config: ConfigState }) {
           void choose({ darkTheme: id });
         }}
       />
+      <div className="grid grid-cols-2 gap-4">
+        {fontSettings.map(({ use, label, key }) => (
+          <Setting key={use} label={label}>
+            {(labelId) => (
+              <FontPicker
+                labelId={labelId}
+                use={use}
+                chosen={config.config[use]}
+                missing={
+                  config.problems.find((problem) => problem.key === key)
+                    ?.missingFont
+                }
+                fonts={fonts}
+                disabled={disabled}
+                onChoose={(family) => {
+                  void choose({ [use]: family });
+                }}
+              />
+            )}
+          </Setting>
+        ))}
+      </div>
       <ConfigFileLink config={config} />
     </div>
   );

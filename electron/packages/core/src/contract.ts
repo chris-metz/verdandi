@@ -263,6 +263,16 @@ export interface Config {
   lightTheme: string;
   /** The ID of the dark theme. */
   darkTheme: string;
+  /**
+   * The interface font's family, for everything but code, or null for the
+   * default, which the interface ships.
+   */
+  interfaceFont: string | null;
+  /**
+   * The code font's family, for code in issue bodies and comments, or null
+   * for the default, which the interface ships.
+   */
+  codeFont: string | null;
 }
 
 /** `config.toml` as Verdandi read it, and what it uses of it. */
@@ -303,6 +313,8 @@ export interface ConfigProblem {
    * instead.
    */
   message: string;
+  /** The font family the key names, when it is not installed. */
+  missingFont?: string;
 }
 
 /** A saved GitHub issue search, in sidebar order. */
@@ -1482,6 +1494,13 @@ export interface CoreRequests {
    * nothing is written. The new state is pushed as `configChanged` at once.
    */
   changeConfig: (change: Partial<Config>) => Promise<ConfigChangeResult>;
+  /**
+   * The font families installed, as the interface found them, with those it
+   * ships: from now on each font in `config.toml` is checked against them,
+   * ignoring case, and one not among them cannot be used. Until then, a font
+   * is checked only for its type. The new state is pushed as `configChanged`.
+   */
+  setInstalledFonts: (families: string[]) => Promise<void>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -1575,6 +1594,7 @@ const requests: Record<keyof CoreRequests, true> = {
   openView: true,
   getConfig: true,
   changeConfig: true,
+  setInstalledFonts: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,

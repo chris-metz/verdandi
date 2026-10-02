@@ -6,8 +6,9 @@ import {
   changeConfigText,
   defaultConfig,
   readConfig,
+  type ConfigCatalogue,
 } from "./config-document.ts";
-import type { ConfigStorage, ThemeCatalogue } from "./port.ts";
+import type { ConfigStorage, FontDefaults, ThemeCatalogue } from "./port.ts";
 import { watchFile } from "./watch-file.ts";
 import { writeWhole } from "./write-whole.ts";
 
@@ -17,8 +18,14 @@ import { writeWhole } from "./write-whole.ts";
  */
 export function createConfigFile(
   host: HostEnvironment,
-  catalogue: ThemeCatalogue,
+  themes: ThemeCatalogue,
+  fonts: FontDefaults,
 ): ConfigStorage {
+  const catalogue: ConfigCatalogue = {
+    themes,
+    fonts,
+    installedFonts: undefined,
+  };
   const paths = host.platform === "win32" ? path.win32 : path.posix;
   const folder = configDirectory(host);
   const file = paths.join(folder, "config.toml");
@@ -57,7 +64,7 @@ export function createConfigFile(
     const found = await readText();
     if ("reason" in found)
       return {
-        config: defaultConfig(catalogue),
+        config: defaultConfig(themes),
         file,
         status: "unreadable",
         problems: [
@@ -68,7 +75,7 @@ export function createConfigFile(
       };
     if (found.text === undefined)
       return {
-        config: defaultConfig(catalogue),
+        config: defaultConfig(themes),
         file,
         status: "missing",
         problems: [],
@@ -101,6 +108,9 @@ export function createConfigFile(
       watching = watcher.ready;
       return watcher.close;
     },
+    setInstalledFonts(families) {
+      catalogue.installedFonts = families;
+    },
     change(change) {
       // A change always starts from the file as it is now.
       return serial(async () => {
@@ -112,7 +122,8 @@ export function createConfigFile(
           };
         const changed = changeConfigText(found.text, change, catalogue);
         if (!changed.ok) return changed;
-        if (changed.text === found.text) return { ok: true };
+        if (changed.text === undefined || changed.text === found.text)
+          return { ok: true };
         try {
           if (found.text === undefined) {
             // The first change creates the folder, which reading never does.

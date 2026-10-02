@@ -51,6 +51,8 @@ describe("followAppearance", () => {
         appearance: "system",
         lightTheme: "github-light",
         darkTheme: "github-dark",
+        interfaceFont: null,
+        codeFont: null,
         ...next,
       },
       file: "/home/octo/.config/verdandi/config.toml",

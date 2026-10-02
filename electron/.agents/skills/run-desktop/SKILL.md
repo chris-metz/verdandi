@@ -54,7 +54,7 @@ A failed command prints `ERROR <command>: …`, the rest still runs, and the exi
 
 ## The look
 
-`config.toml` sets the appearance and the themes. Write it before `launch` for the app to start with it, or after to change it while the app runs: then `config` waits until the app has read it, and prints what it uses and any problems.
+`config.toml` sets the appearance, the themes and the fonts. Write it before `launch` for the app to start with it, or after to change it while the app runs: then `config` waits until the app has read it, and prints what it uses and any problems.
 
 ```bash
 node electron/.agents/skills/run-desktop/driver.mjs <<'EOF'
@@ -68,7 +68,7 @@ EOF
 
 `theme` switches the appearance as the operating system would, overriding the file's until it changes again.
 
-The settings dialog opens with `menu Settings…`; its tiles and the appearance control are `[role="radio"]` in `[role="radiogroup"]`.
+The settings dialog opens with `menu Settings…`; its tiles and the appearance control are `[role="radio"]` in `[role="radiogroup"]`, and each font picker is a `[role="combobox"]` field over a `[role="listbox"]` of `[role="option"]`s, the interface font's first.
 
 ## States GitHub won't produce on demand
 

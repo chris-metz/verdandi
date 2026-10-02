@@ -6,6 +6,7 @@ import { createCore } from "./core.ts";
 import { createConfigFile } from "./settings/config-file.ts";
 import { createLocalStateFile } from "./settings/local-state-file.ts";
 import { createSettingsFile } from "./settings/settings-file.ts";
+import { testFonts } from "./testing/fonts.ts";
 import { testThemes } from "./testing/themes.ts";
 import { createFakeGitHub } from "./testing/fake-github.ts";
 import type {
@@ -29,7 +30,7 @@ function launch() {
     host,
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
-    config: createConfigFile(host, testThemes),
+    config: createConfigFile(host, testThemes, testFonts),
     github: () => github,
     runCommand: () =>
       Promise.resolve({

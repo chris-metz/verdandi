@@ -6,5 +6,10 @@ declare global {
     verdandi: RendererContract;
     /** What the desktop app offers besides the contract, exposed by preload. */
     desktop: DesktopApi;
+    /**
+     * The font faces installed, by the Local Font Access API, which
+     * TypeScript's DOM types lack. It fails while the window is hidden.
+     */
+    queryLocalFonts?: () => Promise<readonly { family: string }[]>;
   }
 }

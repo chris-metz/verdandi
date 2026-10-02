@@ -188,6 +188,11 @@ export interface ConfigStorage {
    * TOML, nor a value that cannot be used.
    */
   change(change: Partial<Config>): Promise<ConfigChangeResult>;
+  /**
+   * The font families installed, from now on: `read` and `change` check each
+   * font against them, ignoring case. Until then, they check only its type.
+   */
+  setInstalledFonts(families: readonly string[]): void;
 }
 
 /**
@@ -198,4 +203,14 @@ export interface ConfigStorage {
 export interface ThemeCatalogue {
   themes: readonly { id: string; kind: "light" | "dark" }[];
   defaults: { light: string; dark: string };
+}
+
+/**
+ * The font families an interface ships and uses when none is chosen or the
+ * chosen one cannot be used: one for the interface, one for code. The core
+ * names them, but has no fonts itself.
+ */
+export interface FontDefaults {
+  interfaceFont: string;
+  codeFont: string;
 }

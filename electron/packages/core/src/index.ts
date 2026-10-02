@@ -20,6 +20,7 @@ export { createLocalStateFile } from "./settings/local-state-file.ts";
 export { createSettingsFile } from "./settings/settings-file.ts";
 export type {
   ConfigStorage,
+  FontDefaults,
   LocalState,
   LocalStateStorage,
   Settings,

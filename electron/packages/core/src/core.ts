@@ -662,6 +662,10 @@ export function createCore({
       if (result.ok) events.emit("configChanged", await config.read());
       return result;
     },
+    async setInstalledFonts(families) {
+      config.setInstalledFonts(families);
+      events.emit("configChanged", await config.read());
+    },
     checkSetupAgain() {
       return setup.checkAgain();
     },

@@ -160,9 +160,7 @@
   /* Code */
 
   .markdown-body :is(code, kbd, pre, samp, tt) {
-    font-family:
-      ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-      "Liberation Mono", monospace;
+    font-family: --theme(--font-mono);
   }
 
   .markdown-body :is(code, tt) {
