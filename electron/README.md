@@ -92,7 +92,7 @@ light_theme = "github-light"        # one of the light themes below
 dark_theme = "github-dark-dimmed"   # one of the dark themes below
 font = "Inter"                      # an installed font family, for everything but code
 code_font = "JetBrains Mono"        # an installed font family, for code
-text_size = 15                      # pixels for body text, from 11 to 20; 14 without it
+text_size = 15                      # pixels for body text, a whole number from 11 to 20; 14 without it
 ```
 
 - Light themes: `github-light`, `catppuccin-latte`, `tokyo-night-day`, `rose-pine-dawn`, `solarized-light`

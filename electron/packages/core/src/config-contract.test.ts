@@ -115,7 +115,7 @@ it.each([
   ['code_font = "JetBrains Mono"', { codeFont: "JetBrains Mono" }],
   ["text_size = 11", { textSize: 11 }],
   ["text_size = 20", { textSize: 20 }],
-  ["text_size = 15.5", { textSize: 15.5 }],
+  ["text_size = 15.0", { textSize: 15 }],
   ["", {}],
 ])("reads %j, with defaults for the other keys", async (text, config) => {
   await write(text);
@@ -191,25 +191,31 @@ it.each([
     "a text size below the smallest",
     "text_size = 10",
     "text_size",
-    "config.toml, line 2: text_size is 10, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+    "config.toml, line 2: text_size is 10, but must be a whole number from 11 to 20. Verdandi uses 14 instead.",
   ],
   [
     "a text size above the largest",
     "text_size = 20.5",
     "text_size",
-    "config.toml, line 2: text_size is 20.5, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+    "config.toml, line 2: text_size is 20.5, but must be a whole number from 11 to 20. Verdandi uses 14 instead.",
+  ],
+  [
+    "a text size between two whole numbers",
+    "text_size = 15.5",
+    "text_size",
+    "config.toml, line 2: text_size is 15.5, but must be a whole number from 11 to 20. Verdandi uses 14 instead.",
   ],
   [
     "a text size in quotes",
     'text_size = "16"',
     "text_size",
-    'config.toml, line 2: text_size is "16", but must be a number from 11 to 20, without quotes. Verdandi uses 14 instead.',
+    'config.toml, line 2: text_size is "16", but must be a whole number from 11 to 20, without quotes. Verdandi uses 14 instead.',
   ],
   [
     "a text size that is not a number",
     "text_size = nan",
     "text_size",
-    "config.toml, line 2: text_size is NaN, but must be a number from 11 to 20. Verdandi uses 14 instead.",
+    "config.toml, line 2: text_size is NaN, but must be a whole number from 11 to 20. Verdandi uses 14 instead.",
   ],
 ])(
   "falls back to the default for %s, and still uses the other values",
@@ -667,11 +673,15 @@ it.each([
   ],
   [
     { textSize: 21 },
-    "text_size is 21, but must be a number from 11 to 20. Nothing was written.",
+    "text_size is 21, but must be a whole number from 11 to 20. Nothing was written.",
+  ],
+  [
+    { textSize: 15.5 },
+    "text_size is 15.5, but must be a whole number from 11 to 20. Nothing was written.",
   ],
   [
     { textSize: Number.NaN },
-    "text_size is NaN, but must be a number from 11 to 20. Nothing was written.",
+    "text_size is NaN, but must be a whole number from 11 to 20. Nothing was written.",
   ],
 ])("writes nothing it could not use itself: %j", async (change, message) => {
   const text = 'appearance = "dark"\n';

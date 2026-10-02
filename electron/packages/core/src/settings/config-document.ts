@@ -200,12 +200,17 @@ function checkValue(
       return family("codeFont");
     case fileKeys.textSize: {
       const { smallest, largest } = textSizes;
-      if (typeof value === "number" && value >= smallest && value <= largest)
+      if (
+        typeof value === "number" &&
+        Number.isInteger(value) &&
+        value >= smallest &&
+        value <= largest
+      )
         return { use: { textSize: value } };
       const quotes = typeof value === "string" ? ", without quotes" : "";
       return {
         field: "textSize",
-        problem: `${key} is ${shown(value)}, but must be a number from ${String(smallest)} to ${String(largest)}${quotes}.`,
+        problem: `${key} is ${shown(value)}, but must be a whole number from ${String(smallest)} to ${String(largest)}${quotes}.`,
       };
     }
     default:

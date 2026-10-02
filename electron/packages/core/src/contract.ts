@@ -274,7 +274,7 @@ export interface Config {
    */
   codeFont: string | null;
   /**
-   * The size of body text in pixels, within `textSizes`. Other text grows
+   * The size of body text in whole pixels, within `textSizes`. Other text grows
    * and shrinks with it in proportion; spacing and icons stay as they are.
    */
   textSize: number;
