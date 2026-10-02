@@ -82,6 +82,20 @@ _Avoid_: nonmatch, filler issue
 What the main area shows for a sidebar entry: its matches, each under its parent issue, together with the context issues needed to place them.
 _Avoid_: tree view, feed, board
 
+### Tabs
+
+**Tab**:
+One of the places open side by side in the main area, shown one at a time: a sidebar entry's list with the issues opened from it one after another, or a new tab. Choosing a sidebar entry shows it in the tab shown.
+_Avoid_: window, page
+
+**New tab**:
+A tab with nothing chosen in it yet, offering the recent issues and a field to go to an issue by its number or link.
+_Avoid_: blank tab, start page, home
+
+**Recent issue**:
+One of the issues the user opened last, whichever way they opened it, newest first. In the macOS app, only an issue gone to by its number or link is one.
+_Avoid_: history, recently viewed
+
 ### Look
 
 **Theme**:
