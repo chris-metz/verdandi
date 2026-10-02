@@ -36,9 +36,10 @@ import {
   type NewTabSearch,
 } from "./use-new-tab-search";
 
-export type VariantKey = "A" | "B" | "C";
+export type VariantKey = "D" | "A" | "B" | "C";
 
 export const variants: readonly { key: VariantKey; name: string }[] = [
+  { key: "D", name: "Chosen: tabs from B + wider page from A" },
   { key: "A", name: "Browser strip + palette" },
   { key: "B", name: "Flat tabs + cards and repository picker" },
   { key: "C", name: "Bottom tabs + list page" },
@@ -48,7 +49,7 @@ export const variants: readonly { key: VariantKey; name: string }[] = [
 export function useVariant(): [VariantKey, (key: VariantKey) => void] {
   const [variant, setVariant] = useState<VariantKey>(() => {
     const key = new URLSearchParams(window.location.search).get("variant");
-    return variants.find((each) => each.key === key)?.key ?? "A";
+    return variants.find((each) => each.key === key)?.key ?? "D";
   });
   function set(key: VariantKey) {
     const url = new URL(window.location.href);
@@ -155,7 +156,8 @@ function tabHandlers(
 }
 
 export function TabBar(props: TabBarProps) {
-  if (props.variant === "B") return <FlatTabBar {...props} />;
+  if (props.variant === "B" || props.variant === "D")
+    return <FlatTabBar {...props} />;
   if (props.variant === "C") return <BottomTabBar {...props} />;
   return <StripTabBar {...props} />;
 }
@@ -349,7 +351,7 @@ export function NewTabPage(props: NewTabPageProps) {
   const key = `${props.variant}:${String(props.tab.id)}`;
   if (props.variant === "B") return <CardsPage key={key} {...props} />;
   if (props.variant === "C") return <ListPage key={key} {...props} />;
-  return <PalettePage key={key} {...props} />;
+  return <PalettePage key={key} wide={props.variant === "D"} {...props} />;
 }
 
 function StatusLine({ search }: { search: NewTabSearch }) {
@@ -405,13 +407,18 @@ function KeyHint({ keys, children }: { keys: string; children: ReactNode }) {
 }
 
 /** A: the macOS palette, inline and centred. */
-function PalettePage({ tab, login, onOpen }: NewTabPageProps) {
+function PalettePage({
+  tab,
+  login,
+  onOpen,
+  wide = false,
+}: NewTabPageProps & { wide?: boolean }) {
   const search = useNewTabSearch({ from: tab.from, login, onOpen });
   const { destinations, highlighted } = search;
   const firstRecent = destinations.findIndex((each) => each.kind === "recent");
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pt-[14vh] pb-16">
-      <div className="w-full max-w-xl">
+      <div className={cn("w-full", wide ? "max-w-3xl" : "max-w-xl")}>
         <div className="flex h-14 items-center gap-3 rounded-2xl border bg-card px-4 shadow-sm focus-within:ring-3 focus-within:ring-ring/40">
           <Hash className="size-5 shrink-0 text-muted-foreground" />
           <input
@@ -464,7 +471,12 @@ function PalettePage({ tab, login, onOpen }: NewTabPageProps) {
                     {parts.number}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{parts.title}</span>
-                  <span className="max-w-40 shrink-0 truncate text-xs text-muted-foreground">
+                  <span
+                    className={cn(
+                      "shrink-0 truncate text-xs text-muted-foreground",
+                      wide ? "max-w-80" : "max-w-40",
+                    )}
+                  >
                     {parts.repository}
                   </span>
                   <CornerDownLeft

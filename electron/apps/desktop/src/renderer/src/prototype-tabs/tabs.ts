@@ -20,6 +20,8 @@ export interface PrototypeTab {
   isNew: boolean;
   /** The repository a bare `#12` names on the new tab's page. */
   from?: RepositoryAddress | undefined;
+  /** The tab it was opened from with Open in New Tab. */
+  openerId?: number | undefined;
 }
 
 export interface TabsState {
@@ -39,7 +41,8 @@ export type TabsAction =
         Scope | undefined | ((scope: Scope | undefined) => Scope | undefined);
     }
   | { kind: "navigate"; action: IssueNavigation }
-  | { kind: "open-in-tab"; scope: Scope; issue: IssueDestination };
+  | { kind: "open-in-tab"; scope: Scope; issue: IssueDestination }
+  | { kind: "open-in-new-tab"; scope: Scope; issue: IssueDestination };
 
 export function initialTabs(): TabsState {
   return {
@@ -119,6 +122,22 @@ export function reduceTabs(state: TabsState, action: TabsAction): TabsState {
         ...tab,
         stack: navigateIssues(tab.stack, action.action),
       }));
+    case "open-in-new-tab": {
+      // In the background, after the tabs already opened from this one, as
+      // browsers do.
+      const tab: PrototypeTab = {
+        id: state.nextId,
+        scope: action.scope,
+        stack: navigateIssues([], { kind: "open", issue: action.issue }),
+        isNew: false,
+        openerId: state.activeId,
+      };
+      let index = state.tabs.findIndex((each) => each.id === state.activeId);
+      while (state.tabs[index + 1]?.openerId === state.activeId) index += 1;
+      const tabs = [...state.tabs];
+      tabs.splice(index + 1, 0, tab);
+      return { ...state, tabs, nextId: state.nextId + 1 };
+    }
     case "open-in-tab":
       return updateActive(state, (tab) => ({
         ...tab,

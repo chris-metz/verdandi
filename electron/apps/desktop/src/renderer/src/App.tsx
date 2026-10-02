@@ -36,6 +36,7 @@ import { Sidebar, useSidebar } from "./Sidebar";
 import { entryOrder, followSelection } from "./sidebar-entries";
 import { ViewDialog } from "./ViewDialog";
 import type { ViewDialogPurpose } from "./view-dialog";
+import { OpenInNewTab } from "./prototype-tabs/open-in-new-tab";
 import { recordRecent } from "./prototype-tabs/recents";
 import { activeTab, initialTabs, reduceTabs } from "./prototype-tabs/tabs";
 import {
@@ -553,6 +554,17 @@ export function App() {
     });
   }
 
+  /** Opens an issue of the list shown in a new tab, in the background. */
+  function openInNewTab(issue: IssueDestination) {
+    if (!selected) return;
+    recordRecent(issue, selected);
+    dispatchTabs({ kind: "open-in-new-tab", scope: selected, issue });
+    // The list keeps the keyboard once the menu has closed.
+    setTimeout(() => {
+      focusPane(mainPane.current);
+    }, 0);
+  }
+
   const tabBar = (
     <TabBar
       variant={variant}
@@ -570,7 +582,7 @@ export function App() {
   );
 
   return (
-    <>
+    <OpenInNewTab.Provider value={openInNewTab}>
       <div className="flex h-screen text-sm" inert={blocked}>
         <aside
           ref={sidebarPane}
@@ -765,7 +777,7 @@ export function App() {
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices onOpenView={openNoticeView} />
       <PrototypeSwitcher variant={variant} onChange={setVariant} />
-    </>
+    </OpenInNewTab.Provider>
   );
 }
 

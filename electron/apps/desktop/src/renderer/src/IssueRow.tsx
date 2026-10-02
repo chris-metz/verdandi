@@ -7,6 +7,7 @@ import type {
   SubIssueProgress,
   UnreadIssue,
 } from "@verdandi/core/contract";
+import { ContextMenu } from "@base-ui/react/context-menu";
 import { LoaderCircle, Lock } from "lucide-react";
 import { memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,7 @@ import type { IssueDestination } from "./issue-navigation";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { LabelPill, MoreLabels } from "./LabelFilter";
 import type { ListRow } from "./list-navigation";
+import { useOpenInNewTab } from "./prototype-tabs/open-in-new-tab";
 import { problemText } from "./problem-text";
 import {
   colorStyle,
@@ -168,6 +170,7 @@ export const IssueRow = memo(function IssueRow({
 }) {
   const { node, depth, parent, missingParent } = row;
   const { issue, mark } = node;
+  const openInNewTab = useOpenInNewTab();
   const hasSubIssues = node.subIssues.length > 0;
   const read = node.unread ? undefined : node.issue;
   // Where issues are marked, dimming means only "context"; elsewhere it
@@ -176,7 +179,7 @@ export const IssueRow = memo(function IssueRow({
   const stateDimmed = mark === undefined && issue.state !== listState;
   const inside =
     hasSubIssues && !node.expanded ? (mark?.matchesInside ?? 0) : 0;
-  return (
+  const element = (
     <div
       role="treeitem"
       aria-level={depth + 1}
@@ -184,9 +187,15 @@ export const IssueRow = memo(function IssueRow({
       aria-expanded={hasSubIssues ? node.expanded : undefined}
       data-issue-id={issue.id}
       title={mark && matchedBy && markTitle(mark, matchedBy)}
-      onClick={() => {
+      onClick={(event) => {
         onSelect(issue.id);
-        onOpen(issue);
+        // PROTOTYPE (tabs): ⌘-click opens it in a new tab, as in a browser.
+        if (openInNewTab && (event.metaKey || event.ctrlKey))
+          openInNewTab(issue);
+        else onOpen(issue);
+      }}
+      onAuxClick={(event) => {
+        if (openInNewTab && event.button === 1) openInNewTab(issue);
       }}
       className={cn(
         "flex h-8 scroll-mt-7 items-center gap-1.5 pr-4 pl-3 whitespace-nowrap select-none",
@@ -292,6 +301,35 @@ export const IssueRow = memo(function IssueRow({
         </span>
       ))}
     </div>
+  );
+  // PROTOTYPE (tabs): a right click offers Open in New Tab.
+  if (!openInNewTab) return element;
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger render={element} />
+      <ContextMenu.Portal>
+        <ContextMenu.Positioner className="z-50">
+          <ContextMenu.Popup className="min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md outline-none">
+            <ContextMenu.Item
+              onClick={() => {
+                openInNewTab(issue);
+              }}
+              className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
+            >
+              Open in New Tab
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              onClick={() => {
+                window.desktop.openExternal(issue.url);
+              }}
+              className="cursor-default rounded px-2 py-1.5 outline-none data-highlighted:bg-accent"
+            >
+              Open on GitHub
+            </ContextMenu.Item>
+          </ContextMenu.Popup>
+        </ContextMenu.Positioner>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 });
 
