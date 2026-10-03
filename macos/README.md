@@ -69,6 +69,8 @@ VERDANDI_ABOUT=1 scripts/snap.sh /tmp/about.png 3               # the About wind
 VERDANDI_POPOVER=rate-limits VERDANDI_RATE_LIMITS=low scripts/snap.sh /tmp/limits.png 4
 VERDANDI_SHEET=go-to-issue VERDANDI_GO_TO='#12' scripts/snap.sh /tmp/go.png 4
 VERDANDI_NOTICES=sample scripts/snap.sh /tmp/notices.png 4
+VERDANDI_SELECT=repo:chris-metz/verdandi VERDANDI_ISSUE='chris-metz/verdandi#8' \
+  VERDANDI_BODY=/tmp/body.html VERDANDI_LOAD_IMAGES=1 scripts/snap.sh /tmp/images.png 10
 ```
 
 Without `VERDANDI_SELECT`, the window opens on the entry chosen last in
@@ -95,7 +97,8 @@ writes the menu bar, each item with its shortcut and whether it is enabled.
 
 - `Sources/VerdandiCore`: what does not draw. `GitHubClient` (every read of
   GitHub, through `gh api`), `Settings` (settings.json), `RunCommand`,
-  `GhLocator`, `IssueLocator` (an issue as typed), the models.
+  `GhLocator`, `IssueLocator` (an issue as typed), `ImageLoader` (an image
+  from elsewhere than GitHub, once the user asks), the models.
 - `Sources/Verdandi`: the SwiftUI app, one folder per feature.
   - `App/`: `AppModel` (setup, settings, navigation, shared state),
     `IssueStore` (every issue read, by node ID), the window, launch options.

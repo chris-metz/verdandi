@@ -93,6 +93,8 @@ final class AppModel {
   // MARK: Shared state
 
   let issues = IssueStore()
+  /// The images from elsewhere than GitHub that bodies show, loaded on request.
+  let images = ThirdPartyImages()
   private(set) var rateLimits: [RateLimitPool: RateLimitBudget] = [:]
   var notices: [Notice] = []
 

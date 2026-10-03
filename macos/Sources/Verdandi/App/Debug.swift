@@ -9,6 +9,10 @@ import VerdandiCore
 ///   Settings, without changing it
 /// - `VERDANDI_SELECT`: `all`, `repo:owner/name` or `view:<id>`
 /// - `VERDANDI_ISSUE`: `owner/name#12`, the issue whose page opens over the list
+/// - `VERDANDI_BODY`: an HTML file that issue pages show as the body, in
+///   place of the one GitHub rendered
+/// - `VERDANDI_LOAD_IMAGES=1`: loads each image from elsewhere than GitHub
+///   as its placeholder shows, as if it was clicked
 /// - `VERDANDI_SHEET`: `repository-picker`, `new-view` or `go-to-issue`
 /// - `VERDANDI_GO_TO`: what is typed in Go to Issue as it opens; with
 ///   `VERDANDI_GO_TO_SUBMIT=1`, as if Return was pressed
@@ -63,6 +67,13 @@ enum LaunchOptions {
     else { return nil }
     return (address, locator.number)
   }
+
+  /// The body HTML that `VERDANDI_BODY` names, if it can be read.
+  static let bodyHTML: String? = environment["VERDANDI_BODY"].flatMap {
+    try? String(contentsOfFile: $0, encoding: .utf8)
+  }
+
+  static var loadsImages: Bool { environment["VERDANDI_LOAD_IMAGES"] == "1" }
 
   static var sheet: AppSheet? {
     switch environment["VERDANDI_SHEET"] {

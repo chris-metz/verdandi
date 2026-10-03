@@ -119,13 +119,14 @@ struct IssueBodySection: View {
     VStack(alignment: .leading, spacing: 12) {
       IssuePageSectionTitle("Description", systemImage: "text.alignleft")
       if let details = page.details {
-        if details.bodyHTML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let bodyHTML = LaunchOptions.bodyHTML ?? details.bodyHTML
+        if bodyHTML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           Text("No description provided.")
             .italic()
             .foregroundStyle(.secondary)
         } else {
           GitHubHTMLView(
-            html: details.bodyHTML, knownHeight: page.bodyHeights[issue.id],
+            html: bodyHTML, knownHeight: page.bodyHeights[issue.id],
             onLink: { model.pages.follow($0) }, onHeight: { page.bodyHeights[issue.id] = $0 })
         }
       } else if page.detailsPhase.error != nil {
