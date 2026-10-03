@@ -162,6 +162,33 @@ const commands = {
     return `right-clicked ${selector}`;
   },
 
+  /**
+   * Drags the first element matching one CSS selector onto the first
+   * matching another, `->` between them, as the mouse would. It drops on the
+   * target's far half, so the element dragged lands past it.
+   */
+  async drag(args) {
+    const [from, to] = args.split(/\s+->\s+/);
+    if (!to) throw new Error("drag <css> -> <css>");
+    const source = await window().waitForSelector(from, { timeout });
+    const target = await window().waitForSelector(to, { timeout });
+    const start = await source.boundingBox();
+    const end = await target.boundingBox();
+    if (!start || !end) throw new Error("not shown");
+    /** How far into the target to drop along an axis, by where it lies. */
+    const far = (from, to) => (to > from ? 0.75 : to < from ? 0.25 : 0.5);
+    const mouse = window().mouse;
+    await mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+    await mouse.down();
+    await mouse.move(
+      end.x + end.width * far(start.x, end.x),
+      end.y + end.height * far(start.y, end.y),
+      { steps: 10 },
+    );
+    await mouse.up();
+    return `dragged ${from} to ${to}`;
+  },
+
   /** Clicks the first visible element showing this text. */
   async "click-text"(text) {
     await visibleText(text).click({ timeout });

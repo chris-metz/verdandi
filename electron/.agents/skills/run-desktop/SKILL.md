@@ -32,6 +32,7 @@ It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the a
 | `issue <number \| owner/name#number>` | Opens an issue from the list shown, and waits until its page has read the issue                          |
 | `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                               |
 | `rightclick <css>`                    | Right-clicks the first match, for its context menu                                                       |
+| `drag <css> -> <css>`                 | Drags the first match onto the second, dropping on its far half, e.g. to reorder tabs or sidebar entries |
 | `menu <label>`                        | Chooses an application menu item by its label, e.g. `Settings…` or `New Tab`; key presses never reach it |
 | `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                   |
 | `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                                |

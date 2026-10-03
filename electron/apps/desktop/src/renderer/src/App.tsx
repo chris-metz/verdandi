@@ -629,9 +629,14 @@ export function App() {
           tabIndex={-1}
           onFocus={(event) => {
             setFocused("main");
-            // A click beside the list still gives the list the keyboard.
+            // A click beside the list, e.g. on a tab, still gives the list
+            // the keyboard. Only after the press: moving the focus during it
+            // makes Chromium drop the press, and a tab could not be dragged.
             if (event.target === event.currentTarget) {
-              focusPane(event.currentTarget);
+              const main = event.currentTarget;
+              setTimeout(() => {
+                if (document.activeElement === main) focusPane(main);
+              });
             }
           }}
           className={cn(
