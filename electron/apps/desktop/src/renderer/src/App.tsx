@@ -103,6 +103,13 @@ export function App() {
   const sidebar = useSidebar();
   const items = useMemo(() => entryOrder(sidebar), [sidebar]);
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
+  const tracked = useMemo(
+    () =>
+      sidebar?.status === "read"
+        ? sidebar.repositories.map(({ repository }) => repository)
+        : [],
+    [sidebar],
+  );
   const [tabs, dispatch] = useReducer(reduceTabs, undefined);
   const tab = tabs && shownTab(tabs);
   /** The entry of the tab shown; none for a new tab. */
@@ -314,12 +321,7 @@ export function App() {
       });
       return;
     }
-    const entry = tabEntryOf(
-      issue.repository,
-      sidebar?.status === "read"
-        ? sidebar.repositories.map(({ repository }) => repository)
-        : [],
-    );
+    const entry = tabEntryOf(issue.repository, tracked);
     dispatch({ kind: "open-here", entry, issue: openedIssue(issue, entry) });
   }
 
@@ -681,6 +683,7 @@ export function App() {
                 />
               }
               tabs={tabs.tabs}
+              tracked={tracked}
               shown={tabs.shown}
               newTabShortcut={modifier.label("T")}
               onShow={(id) => {
@@ -777,11 +780,7 @@ export function App() {
       {viewDialog && (
         <ViewDialog
           purpose={viewDialog}
-          tracked={
-            sidebar?.status === "read"
-              ? sidebar.repositories.map(({ repository }) => repository)
-              : []
-          }
+          tracked={tracked}
           removable={
             sidebar?.status === "read" && sidebar.settings.status === "writable"
           }

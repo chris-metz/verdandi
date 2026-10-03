@@ -502,6 +502,12 @@ describe("following the sidebar's entries", () => {
 });
 
 describe("naming a tab", () => {
+  /** The tracked repositories: `acme/api`, `acme/web` and `acme/docs`. */
+  const tracked = ["api", "web", "docs"].map((name) => ({
+    owner: "acme",
+    name,
+  }));
+
   function tab(entry: Scope | undefined, ...issues: IssueDestination[]): Tab {
     return {
       id: 0,
@@ -515,46 +521,92 @@ describe("naming a tab", () => {
     };
   }
 
-  it("names an issue page by its number and title, and its repository in the tooltip", () => {
-    expect(tabTitle(tab(api, issue(1), issue(12)))).toEqual({
-      kind: "issue",
-      number: "#12",
-      title: "Issue 12",
-      tooltip: "acme/api#12 Issue 12",
-    });
-  });
-
-  it("names an issue page opened without its link by its reference", () => {
-    const parent = { id: "I_7", reference: "acme/web#7", title: "Parent" };
-    expect(tabTitle(tab(all, parent))).toMatchObject({
-      number: "#7",
-      tooltip: "acme/web#7 Parent",
-    });
-    const own = { id: "I_8", reference: "#8", title: "Own" };
-    expect(tabTitle(tab(api, own))).toMatchObject({
-      number: "#8",
-      tooltip: "acme/api#8 Own",
-    });
-    expect(tabTitle(tab(bugs, own))).toMatchObject({
-      number: "#8",
-      tooltip: "#8 Own",
-    });
-  });
-
-  it("names a list by its entry, and a new tab New Tab", () => {
-    expect(tabTitle(tab(api))).toEqual({
-      kind: "list",
-      title: "acme/api",
+  it("names a repository's tab by its name, and on an issue of its own the issue's number after it", () => {
+    expect(tabTitle(tab(api), tracked)).toEqual({
+      kind: "repository",
+      name: "api",
+      issue: undefined,
       tooltip: "acme/api",
     });
-    expect(tabTitle(tab(bugs))).toEqual({
-      kind: "list",
-      title: "Bugs",
+    expect(tabTitle(tab(api, issue(1), issue(12)), tracked)).toEqual({
+      kind: "repository",
+      name: "api",
+      issue: { repository: undefined, number: "#12" },
+      tooltip: "acme/api › #12 Issue 12",
+    });
+  });
+
+  it("keeps a repository's name on an issue of another repository, which it names as a chip does", () => {
+    const web5 = {
+      id: "I_5",
+      reference: "acme/web#5",
+      title: "Tracked",
+      url: "https://github.com/acme/web/issues/5",
+    };
+    expect(tabTitle(tab(api, web5), tracked)).toEqual({
+      kind: "repository",
+      name: "api",
+      issue: { repository: "web", number: "#5" },
+      tooltip: "acme/api › acme/web#5 Tracked",
+    });
+    const external = {
+      id: "I_6",
+      reference: "other/repo#6",
+      title: "External",
+      url: "https://github.com/other/repo/issues/6",
+    };
+    expect(tabTitle(tab(api, issue(12), external), tracked)).toEqual({
+      kind: "repository",
+      name: "api",
+      issue: { repository: "other/repo", number: "#6" },
+      tooltip: "acme/api › other/repo#6 External",
+    });
+  });
+
+  it("names All's and a view's tab by its name, and on an issue the issue with its repository after it", () => {
+    expect(tabTitle(tab(all), tracked)).toEqual({
+      kind: "all",
+      name: "All",
+      issue: undefined,
+      tooltip: "All",
+    });
+    expect(tabTitle(tab(bugs), tracked)).toEqual({
+      kind: "view",
+      name: "Bugs",
+      issue: undefined,
       tooltip: "Bugs",
     });
-    expect(tabTitle(tab(undefined))).toEqual({
+    const web7 = { id: "I_7", reference: "acme/web#7", title: "Parent" };
+    expect(tabTitle(tab(all, web7), tracked)).toEqual({
+      kind: "all",
+      name: "All",
+      issue: { repository: "web", number: "#7" },
+      tooltip: "All › acme/web#7 Parent",
+    });
+    const external = { id: "I_8", reference: "other/repo#8", title: "Bug" };
+    expect(tabTitle(tab(bugs, external), tracked)).toEqual({
+      kind: "view",
+      name: "Bugs",
+      issue: { repository: "other/repo", number: "#8" },
+      tooltip: "Bugs › other/repo#8 Bug",
+    });
+  });
+
+  it("names an issue by its number alone where its repository is not known", () => {
+    const bare = { id: "I_9", reference: "#9", title: "Bare" };
+    expect(tabTitle(tab(bugs, bare), tracked)).toEqual({
+      kind: "view",
+      name: "Bugs",
+      issue: { repository: undefined, number: "#9" },
+      tooltip: "Bugs › #9 Bare",
+    });
+  });
+
+  it("names a new tab New Tab", () => {
+    expect(tabTitle(tab(undefined), tracked)).toEqual({
       kind: "new",
-      title: "New Tab",
+      name: "New Tab",
+      issue: undefined,
       tooltip: "New Tab",
     });
   });

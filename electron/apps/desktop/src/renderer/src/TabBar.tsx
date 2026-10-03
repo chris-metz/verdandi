@@ -1,5 +1,6 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
-import { List, Plus, X } from "lucide-react";
+import type { RepositoryAddress } from "@verdandi/core/contract";
+import { ListFilter, Plus, X } from "lucide-react";
 import {
   useLayoutEffect,
   useRef,
@@ -8,7 +9,14 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/lib/utils";
-import { tabTitle, type Tab } from "./tabs";
+import { AllIcon } from "./AllIcon";
+import {
+  fitTabName,
+  shortened,
+  type ShorteningPart,
+  type TabNameFit,
+} from "./tab-name-fit";
+import { tabTitle, type Tab, type TabTitle } from "./tabs";
 
 const itemClass =
   "rounded px-2 py-1.5 outline-none data-highlighted:bg-accent data-disabled:opacity-50";
@@ -16,9 +24,11 @@ const itemClass =
 /**
  * The tabs over the main area, in one slim row, the tab shown marked by an
  * accent line under it, the sidebar's button at the left end, and + at the
- * right end with its shortcut. Tabs
- * shrink to a minimum width, then the row scrolls sideways, keeping the tab
- * shown in view. A click shows a tab, a middle click or its × closes it,
+ * right end with its shortcut. A tab is named after its sidebar entry,
+ * with its icon, and the issue it shows dimmed after it. Tabs shrink to a
+ * minimum width, their names shortening, the issue's repository first and
+ * its number never, then the row scrolls sideways, keeping the tab shown
+ * in view. A click shows a tab, a middle click or its × closes it,
  * and a right click offers to close it, the others, or those to its right.
  * Tabs are reordered by dragging. None takes the keyboard from the panes,
  * and the main area's mark of having it shows through the row.
@@ -26,6 +36,7 @@ const itemClass =
 export function TabBar({
   sidebarButton,
   tabs,
+  tracked,
   shown,
   newTabShortcut,
   onShow,
@@ -38,6 +49,8 @@ export function TabBar({
   /** The button that hides and shows the sidebar. */
   sidebarButton: ReactNode;
   tabs: readonly Tab[];
+  /** The tracked repositories, which a tab names by their name alone. */
+  tracked: readonly RepositoryAddress[];
   /** The ID of the tab shown. */
   shown: number;
   /** ⌘T, or Ctrl+T. */
@@ -77,12 +90,14 @@ export function TabBar({
         className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]"
       >
         {tabs.map((tab, index) => {
-          const title = tabTitle(tab);
+          const title = tabTitle(tab, tracked);
           const selected = tab.id === shown;
           const element = (
             <div
               role="tab"
               aria-selected={selected}
+              // The name in full, as what shows may be shortened.
+              aria-label={title.tooltip}
               title={title.tooltip}
               draggable
               onMouseDown={(event) => {
@@ -126,23 +141,17 @@ export function TabBar({
                     : "shadow-[inset_-2px_0_0_var(--ring)]"),
               )}
             >
-              {title.kind === "issue" ? (
-                <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
-                  {title.number}
-                </span>
-              ) : title.kind === "list" ? (
-                <List aria-hidden className="size-3.5 shrink-0 opacity-70" />
-              ) : (
+              {title.kind === "all" ? (
+                <AllIcon className="size-3.5 shrink-0 opacity-70" />
+              ) : title.kind === "view" ? (
+                <ListFilter
+                  aria-hidden
+                  className="size-3.5 shrink-0 opacity-70"
+                />
+              ) : title.kind === "new" ? (
                 <Plus aria-hidden className="size-3.5 shrink-0 opacity-70" />
-              )}
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate",
-                  selected && "font-medium",
-                )}
-              >
-                {title.title}
-              </span>
+              ) : null}
+              <TabName title={title} selected={selected} />
               <button
                 type="button"
                 aria-label="Close Tab"
@@ -218,4 +227,125 @@ export function TabBar({
       </button>
     </div>
   );
+}
+
+/**
+ * A tab's name in the room it has, shortened as `fitTabName` says. Should
+ * even the issue alone not fit, its start gives way, and its number stays
+ * whole. A hidden whole copy of the name measures what each part takes.
+ */
+function TabName({ title, selected }: { title: TabTitle; selected: boolean }) {
+  const room = useRef<HTMLSpanElement>(null);
+  const copy = useRef<HTMLSpanElement>(null);
+  const entry = useRef<HTMLSpanElement>(null);
+  const separator = useRef<HTMLSpanElement>(null);
+  const repository = useRef<HTMLSpanElement>(null);
+  const number = useRef<HTMLSpanElement>(null);
+  const [fit, setFit] = useState<TabNameFit>();
+  const { name, issue } = title;
+
+  // Measured again as the tab narrows or widens, and as its font changes,
+  // which changes the whole copy's width.
+  useLayoutEffect(() => {
+    const observed = [room.current, copy.current];
+    function measure() {
+      const next = fitTabName(
+        room.current?.getBoundingClientRect().width ?? 0,
+        measuredPart(entry.current),
+        separator.current && number.current
+          ? {
+              separator: separator.current.getBoundingClientRect().width,
+              repository: repository.current
+                ? measuredPart(repository.current)
+                : undefined,
+              number: number.current.getBoundingClientRect().width,
+            }
+          : undefined,
+      );
+      setFit((fit) =>
+        fit &&
+        fit.entry === next.entry &&
+        fit.repository === next.repository &&
+        fit.fits === next.fits
+          ? fit
+          : next,
+      );
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    for (const element of observed) if (element) observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [name, issue?.repository, issue?.number, selected]);
+
+  const entryShown = !fit
+    ? name
+    : fit.entry === undefined
+      ? undefined
+      : shortened(name, fit.entry);
+  return (
+    <span
+      ref={room}
+      className={cn(
+        "relative flex min-w-0 flex-1 overflow-hidden whitespace-pre",
+        fit?.fits === false && "justify-end",
+      )}
+    >
+      {entryShown !== undefined && (
+        <span className={cn(selected && "font-medium")}>{entryShown}</span>
+      )}
+      {issue && (
+        <span className="text-muted-foreground tabular-nums">
+          {entryShown !== undefined && " › "}
+          {issue.repository !== undefined &&
+            (fit?.repository === undefined
+              ? issue.repository
+              : shortened(issue.repository, fit.repository))}
+          {issue.number}
+        </span>
+      )}
+      <span
+        aria-hidden
+        className="invisible absolute top-0 left-0 size-0 overflow-hidden"
+      >
+        <span ref={copy} className="flex w-max">
+          <span ref={entry} className={cn(selected && "font-medium")}>
+            {`${name}…`}
+          </span>
+          {issue && (
+            <span className="flex tabular-nums">
+              <span ref={separator}>{" › "}</span>
+              {issue.repository !== undefined && (
+                <span ref={repository}>{`${issue.repository}…`}</span>
+              )}
+              <span ref={number}>{issue.number}</span>
+            </span>
+          )}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * What a part of the name takes, measured in its whole copy: the widths of
+ * its first characters, and of the `…` it ends in.
+ */
+function measuredPart(whole: HTMLElement | null): ShorteningPart {
+  const text = whole?.firstChild;
+  if (!(text instanceof Text)) return { widths: [0], ellipsis: 0 };
+  const range = document.createRange();
+  const widthTo = (start: number, end: number) => {
+    range.setStart(text, start);
+    range.setEnd(text, end);
+    return range.getBoundingClientRect().width;
+  };
+  const widths = [0];
+  let end = 0;
+  for (const character of text.data.slice(0, -1)) {
+    end += character.length;
+    widths.push(widthTo(0, end));
+  }
+  return { widths, ellipsis: widthTo(end, end + 1) };
 }

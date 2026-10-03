@@ -18,6 +18,7 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
+import { AllIcon } from "./AllIcon";
 import { ConfigProblems } from "./ConfigProblems";
 import { opensInNewTab } from "./open-in-new-tab";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
@@ -467,14 +468,7 @@ function Entry({
     >
       {entry.section === "pinned" ? (
         <>
-          <svg
-            viewBox="0 0 16 16"
-            aria-hidden
-            className="size-4 shrink-0 fill-none stroke-current stroke-[1.4] text-muted-foreground"
-          >
-            <path d="M8 1.8 14.2 5 8 8.2 1.8 5z" />
-            <path d="M1.8 8 8 11.2 14.2 8M1.8 11 8 14.2 14.2 11" />
-          </svg>
+          <AllIcon className="size-4 shrink-0 text-muted-foreground" />
           <span
             className={cn("min-w-0 flex-1 truncate", selected && "font-medium")}
           >

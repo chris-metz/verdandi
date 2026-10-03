@@ -10,8 +10,12 @@ import {
   type IssueNavigation,
   type IssueVisit,
 } from "./issue-navigation";
-import { qualifiedReference } from "@verdandi/core/repository-address";
+import {
+  nameWithOwner,
+  sameRepository,
+} from "@verdandi/core/repository-address";
 import { issueLocatorOf } from "./go-to-issue";
+import { repositoryChipCell } from "./row-cells";
 import { presentScope, type SidebarScope as Scope } from "./scope";
 
 /**
@@ -348,33 +352,76 @@ function followEntry(
 }
 
 /** How the tab bar names a tab, and its tooltip. */
-export type TabTitle =
-  | { kind: "issue"; number: string; title: string; tooltip: string }
-  | { kind: "list" | "new"; title: string; tooltip: string };
+export interface TabTitle {
+  /** Its sidebar entry's kind, which picks its icon, or a new tab's. */
+  kind: Scope["kind"] | "new";
+  /** Its sidebar entry's name, or New Tab. */
+  name: string;
+  /**
+   * The issue it shows, if any: its number, and in front of it the
+   * repository it lives in, unless that is the entry's own.
+   */
+  issue: { repository: string | undefined; number: string } | undefined;
+  /**
+   * The name in full, every repository as `owner/name`, and the issue's
+   * title after it.
+   */
+  tooltip: string;
+}
 
 /**
- * An issue page's tab shows its number and title, its tooltip its
- * repository too; a list's tab its entry's name, and a new tab New Tab.
+ * A tab is named after its sidebar entry, followed by the issue it shows,
+ * if any, as the entry's list names it: `#12` in the entry's own
+ * repository, and otherwise with its repository in front, as its chip
+ * names it.
  */
-export function tabTitle(tab: Tab): TabTitle {
-  const issue = tab.stack.at(-1)?.issue;
-  if (issue) {
-    const located = issueLocatorOf(issue, tab.entry);
-    const number = located ? `#${String(located.number)}` : issue.reference;
-    const qualified =
-      located?.repository === undefined
-        ? number
-        : qualifiedReference(located.repository, located.number);
+export function tabTitle(
+  tab: Tab,
+  tracked: readonly RepositoryAddress[],
+): TabTitle {
+  if (!tab.entry)
     return {
-      kind: "issue",
-      number,
-      title: issue.title,
-      tooltip: `${qualified} ${issue.title}`,
+      kind: "new",
+      name: "New Tab",
+      issue: undefined,
+      tooltip: "New Tab",
     };
-  }
-  if (tab.entry) {
-    const { label } = presentScope(tab.entry);
-    return { kind: "list", title: label, tooltip: label };
-  }
-  return { kind: "new", title: "New Tab", tooltip: "New Tab" };
+  const { label, entry } = presentScope(tab.entry);
+  const shown = tab.stack.at(-1)?.issue;
+  if (!shown)
+    return {
+      kind: tab.entry.kind,
+      name: entry.name,
+      issue: undefined,
+      tooltip: label,
+    };
+  const located = issueLocatorOf(shown, tab.entry);
+  const number = located ? `#${String(located.number)}` : shown.reference;
+  const elsewhere =
+    located?.repository &&
+    !(
+      tab.entry.kind === "repository" &&
+      sameRepository(located.repository, tab.entry.repository)
+    )
+      ? located.repository
+      : undefined;
+  return {
+    kind: tab.entry.kind,
+    name: entry.name,
+    issue: {
+      repository: elsewhere && chipName(elsewhere, tracked),
+      number,
+    },
+    tooltip: `${label} › ${elsewhere ? nameWithOwner(elsewhere) : ""}${number} ${shown.title}`,
+  };
+}
+
+/** A repository as its chip names it: tracked by its name, else `owner/name`. */
+function chipName(
+  repository: RepositoryAddress,
+  tracked: readonly RepositoryAddress[],
+): string {
+  const own = tracked.find((one) => sameRepository(one, repository));
+  return repositoryChipCell({ repository: own ?? repository, external: !own })
+    .text;
 }
