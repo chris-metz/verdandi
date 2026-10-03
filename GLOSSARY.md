@@ -50,6 +50,10 @@ _Avoid_: dependency tree, blocking order
 
 ### Browsing
 
+**Sidebar**:
+The column beside the main area that lists the sidebar entries, with the account below them. The user can hide it to give the main area the whole window, and show it again; the Electron app keeps it hidden or shown across launches on the same machine.
+_Avoid_: collapse (an issue's sub-issues collapse), drawer, navigation
+
 **Sidebar entry**:
 One of the places the user opens from the sidebar: All, a tracked repository, or a view. Each has its own list.
 _Avoid_: tab, folder, source
