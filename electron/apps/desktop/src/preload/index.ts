@@ -71,6 +71,21 @@ const desktop: DesktopApi = {
       ipcRenderer.removeListener(ipcChannels.tabCommand, forward);
     };
   },
+  getSidebarHidden() {
+    return ipcRenderer.invoke(ipcChannels.getSidebarHidden) as Promise<boolean>;
+  },
+  setSidebarHidden(hidden) {
+    ipcRenderer.send(ipcChannels.setSidebarHidden, hidden);
+  },
+  onSidebarHiddenChanged(listener) {
+    const forward = (_: IpcRendererEvent, hidden: boolean) => {
+      listener(hidden);
+    };
+    ipcRenderer.on(ipcChannels.sidebarHiddenChanged, forward);
+    return () => {
+      ipcRenderer.removeListener(ipcChannels.sidebarHiddenChanged, forward);
+    };
+  },
   openExternal(url) {
     ipcRenderer.send(ipcChannels.openExternal, url);
   },

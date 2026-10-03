@@ -448,6 +448,12 @@ export function createCore({
     saveWindowState(window) {
       return localState.update({ window });
     },
+    async getSidebarHidden() {
+      return (await localState.read()).sidebarHidden ?? false;
+    },
+    saveSidebarHidden(sidebarHidden) {
+      return localState.update({ sidebarHidden });
+    },
     dispose() {
       stopWatchingSettings();
       stopWatchingConfig();

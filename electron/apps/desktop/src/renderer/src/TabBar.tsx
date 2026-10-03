@@ -1,6 +1,12 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { List, Plus, X } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 import { tabTitle, type Tab } from "./tabs";
 
@@ -9,7 +15,8 @@ const itemClass =
 
 /**
  * The tabs over the main area, in one slim row, the tab shown marked by an
- * accent line under it, and + at the right end with its shortcut. Tabs
+ * accent line under it, the sidebar's button at the left end, and + at the
+ * right end with its shortcut. Tabs
  * shrink to a minimum width, then the row scrolls sideways, keeping the tab
  * shown in view. A click shows a tab, a middle click or its × closes it,
  * and a right click offers to close it, the others, or those to its right.
@@ -17,6 +24,7 @@ const itemClass =
  * and the main area's mark of having it shows through the row.
  */
 export function TabBar({
+  sidebarButton,
   tabs,
   shown,
   newTabShortcut,
@@ -27,6 +35,8 @@ export function TabBar({
   onMove,
   onNew,
 }: {
+  /** The button that hides and shows the sidebar. */
+  sidebarButton: ReactNode;
   tabs: readonly Tab[];
   /** The ID of the tab shown. */
   shown: number;
@@ -59,6 +69,7 @@ export function TabBar({
 
   return (
     <div className="flex h-line-9 shrink-0 items-stretch border-b text-xs">
+      {sidebarButton}
       <div
         ref={row}
         role="tablist"

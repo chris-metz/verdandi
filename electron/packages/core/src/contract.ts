@@ -1209,6 +1209,13 @@ export interface CoreRequests {
   /** Stores only window geometry; the desktop owns capturing and applying it. */
   saveWindowState: (state: WindowState) => Promise<void>;
   /**
+   * Whether the sidebar was hidden last on this machine; without a saved
+   * value, or one that cannot be read, it shows.
+   */
+  getSidebarHidden: () => Promise<boolean>;
+  /** Keeps whether the sidebar is hidden on this machine for the next launch. */
+  saveSidebarHidden: (hidden: boolean) => Promise<void>;
+  /**
    * The tabs as they were saved last on this machine, each tab's entry as
    * the sidebar lists it now: a repository is followed by its ID through
    * renames and transfers, a view by its ID, and an entry that is gone is
@@ -1562,6 +1569,8 @@ export interface Contract extends CoreRequests {
 const requests: Record<keyof CoreRequests, true> = {
   getWindowState: true,
   saveWindowState: true,
+  getSidebarHidden: true,
+  saveSidebarHidden: true,
   getTabs: true,
   saveTabs: true,
   getRecentIssues: true,

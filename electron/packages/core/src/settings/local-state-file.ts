@@ -30,13 +30,21 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
 
   /** The state the file holds, as far as it can be read. */
   async function readState(): Promise<LocalState> {
-    const { ghExecutable, window, selectedEntry, tabs, recentIssues } =
-      await readObject();
+    const {
+      ghExecutable,
+      window,
+      sidebarHidden,
+      selectedEntry,
+      tabs,
+      recentIssues,
+    } = await readObject();
     return {
       selectedEntry: readStoredEntry(selectedEntry),
       tabs: readTabs(tabs),
       recentIssues: readRecentIssues(recentIssues),
       window: readWindowState(window),
+      sidebarHidden:
+        typeof sidebarHidden === "boolean" ? sidebarHidden : undefined,
       ghExecutable:
         typeof ghExecutable === "string" && paths.isAbsolute(ghExecutable)
           ? ghExecutable

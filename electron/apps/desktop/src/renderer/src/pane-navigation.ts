@@ -49,6 +49,8 @@ export interface WindowState {
   selected: Scope | undefined;
   /** The modifier of the sidebar's shortcuts. */
   modifier: ShortcutModifier;
+  /** Whether the user hid the sidebar, leaving the window to the main area. */
+  sidebarHidden: boolean;
 }
 
 /** The modifier of the sidebar's shortcuts: ⌘ on macOS, Ctrl elsewhere. */
@@ -76,13 +78,21 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
  * `j`/`k` select the entry above or below at once, F2 edits the view it has
  * and ⌫ asks to remove its entry. Every other key is the
  * focused pane's, so a list's keys work only while the main area has the
- * keyboard.
+ * keyboard. While the sidebar is hidden, the main area keeps the keyboard,
+ * Tab too, and the sidebar's own keys do nothing.
  */
 export function commandForWindowKey(
   press: KeyPress,
-  { focused, entries, selected, modifier }: WindowState,
+  {
+    focused: focusedPane,
+    entries,
+    selected,
+    modifier,
+    sidebarHidden,
+  }: WindowState,
 ): WindowCommand | undefined {
   const { key, code, metaKey, ctrlKey, altKey, shiftKey } = press;
+  const focused = sidebarHidden ? "main" : focusedPane;
   const select = (scope: Scope | undefined): WindowCommand | undefined =>
     scope && { kind: "select", scope };
   const shortcut = /^Digit([1-9])$/.exec(code);
@@ -115,7 +125,10 @@ export function commandForWindowKey(
   }
   if (metaKey || ctrlKey || altKey) return undefined;
   if (key === "Tab") {
-    return { kind: "focus", pane: focused === "sidebar" ? "main" : "sidebar" };
+    return {
+      kind: "focus",
+      pane: focused === "sidebar" || sidebarHidden ? "main" : "sidebar",
+    };
   }
   if (key === "r") return { kind: "refresh" };
   if (key === "s" && selected !== undefined && selected.kind !== "view") {

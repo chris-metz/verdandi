@@ -25,6 +25,12 @@ export const ipcChannels = {
   openSettings: "desktop:open-settings",
   /** Main → renderer: `(command)` from the menu, for the tabs. */
   tabCommand: "desktop:tab-command",
+  /** Renderer → main: `()` whether the sidebar is hidden. */
+  getSidebarHidden: "desktop:get-sidebar-hidden",
+  /** Renderer → main: `(hidden)` to hide or show the sidebar. */
+  setSidebarHidden: "desktop:set-sidebar-hidden",
+  /** Main → renderer: `(hidden)` whenever the sidebar is hidden or shown. */
+  sidebarHiddenChanged: "desktop:sidebar-hidden-changed",
 } as const;
 
 /** What the File menu asks of the tabs, by its items' shortcuts too. */
@@ -34,12 +40,15 @@ export type TabCommand = "new-tab" | "close-tab" | "reopen-closed-tab";
  * The contract requests the renderer cannot make. It chooses gh through
  * `DesktopApi.chooseGhExecutable` instead, so that it never names a file for
  * main to run: only the user does, in main's file dialog. Window geometry is
- * also captured and applied only by main.
+ * also captured and applied only by main, and whether the sidebar is hidden
+ * kept by main, which shows it in the View menu.
  */
 const mainOnlyRequests = [
   "chooseGhExecutable",
   "getWindowState",
   "saveWindowState",
+  "getSidebarHidden",
+  "saveSidebarHidden",
 ] as const;
 
 /** The contract as the renderer reaches it. */
@@ -80,6 +89,18 @@ export interface DesktopApi {
    * called.
    */
   onTabCommand: (listener: (command: TabCommand) => void) => () => void;
+  /** Whether the sidebar is hidden, as the View menu says. */
+  getSidebarHidden: () => Promise<boolean>;
+  /**
+   * Hides or shows the sidebar, as the View menu's item does, and keeps it
+   * so on this machine.
+   */
+  setSidebarHidden: (hidden: boolean) => void;
+  /**
+   * Calls `listener` whenever the sidebar is hidden or shown, whichever way,
+   * until the returned function is called.
+   */
+  onSidebarHiddenChanged: (listener: (hidden: boolean) => void) => () => void;
   /** Opens a link in the browser, but only an `https://` one. */
   openExternal: (url: string) => void;
   /**

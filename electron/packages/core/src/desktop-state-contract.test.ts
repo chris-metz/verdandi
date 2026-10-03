@@ -242,6 +242,48 @@ it("restores normal window bounds and maximised state without creating portable 
   });
 });
 
+it("keeps the sidebar hidden or shown across a restart, shown at first", async () => {
+  expect(await core.getSidebarHidden()).toBe(false);
+  await core.saveSidebarHidden(true);
+  restart();
+  expect(await core.getSidebarHidden()).toBe(true);
+  await core.saveSidebarHidden(false);
+  restart();
+  expect(await core.getSidebarHidden()).toBe(false);
+  await expect(readFile(join(home, "settings.json"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.each([1, "true", null, { hidden: true }])(
+  "shows the sidebar when what is saved cannot be used (%j)",
+  async (sidebarHidden) => {
+    await writeLocalState({ sidebarHidden });
+    expect(await core.getSidebarHidden()).toBe(false);
+  },
+);
+
+it("keeps the other values, and those it does not know, as the sidebar is hidden", async () => {
+  const window = { x: 10, y: 20, width: 900, height: 600, maximized: false };
+  await writeLocalState({
+    window,
+    tabs: allTab,
+    ghExecutable: join(home, "gh"),
+    fromLaterVersion: { kept: true },
+  });
+  await core.saveSidebarHidden(true);
+  restart();
+  expect(await core.getSidebarHidden()).toBe(true);
+  expect(await core.getWindowState()).toEqual(window);
+  expect(await core.getTabs()).toEqual(allTab);
+  expect(
+    JSON.parse(await readFile(join(home, "desktop/state.json"), "utf8")),
+  ).toMatchObject({
+    ghExecutable: join(home, "gh"),
+    fromLaterVersion: { kept: true },
+  });
+});
+
 it("follows a known repository ID through a transfer even when its old name is taken over", async () => {
   await writeSettings({
     version: 1,

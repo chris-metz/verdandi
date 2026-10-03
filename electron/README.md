@@ -72,6 +72,8 @@ Until Verdandi can add repositories itself, list them by hand in `settings.json`
 
 The sidebar follows the file order. Drag an entry within its section, or press ⌥/Alt+↑/↓ on the selected entry, to reorder and save it. All stays first.
 
+**View → Hide Sidebar** (⌃⌘S on macOS, Ctrl+B elsewhere), or the button at the left end of the tab bar, gives the main area the whole window, and shows the sidebar again. ⌘1…9 (Ctrl+1…9 elsewhere) still choose its entries. While it is hidden, a dot on that button means the sidebar has a warning for the whole window, such as a settings file it cannot read or a rate limit running low; the button's tooltip says which. Whether it is hidden is kept on this machine only, in `state.json`, so hiding it on a laptop leaves it shown on another machine.
+
 **File → Show Settings File** opens the folder. Hand edits appear live. Settings use strict JSON: unknown fields and invalid values are reported with their location. While the file is broken or unreadable, Verdandi keeps its last valid sidebar and disables changes. **Reload** checks again; **Reset** preserves the original as `settings.json.broken-<timestamp>` and starts empty.
 
 Files from a newer version are read-only until Verdandi is updated. Older files are migrated on the next change, with a one-time `settings.json.backup-v<version>` backup.

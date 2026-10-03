@@ -47,6 +47,9 @@ import {
 import { SettingsDialog } from "./SettingsDialog";
 import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
+import { SidebarButton } from "./SidebarButton";
+import { useSidebarHidden } from "./sidebar-hidden";
+import { settingsProblem } from "./sidebar-warnings";
 import { entryOrder, followSelection } from "./sidebar-entries";
 import { TabBar } from "./TabBar";
 import {
@@ -62,6 +65,9 @@ import type { ViewDialogPurpose } from "./view-dialog";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
 const modifier = shortcutModifier(window.desktop.platform);
+
+/** The View menu's shortcut that hides and shows the sidebar. */
+const sidebarShortcut = window.desktop.platform === "darwin" ? "⌃⌘S" : "Ctrl+B";
 
 /** The mark on the pane that has the keyboard: an accent edge on top. */
 const focusedPaneMark = "shadow-[inset_0_2px_0_var(--selection-edge)]";
@@ -88,7 +94,8 @@ function reduceTabs(
  * removed shows All, its issue pages kept. Every issue opened, whichever
  * way, becomes the first recent issue. While the setup blocker is up,
  * everything behind it stays as it was but is inert; once it goes, the pane
- * that had the keyboard has it again.
+ * that had the keyboard has it again. The user can hide the sidebar, leaving
+ * the window to the main area, which then keeps the keyboard.
  */
 export function App() {
   const setup = useSetup();
@@ -112,7 +119,10 @@ export function App() {
     }
     return selected && { kind: "list", scope: selected };
   }, [selected, shownIssueId]);
-  const [focused, setFocused] = useState<Pane>("sidebar");
+  const [focusedPane, setFocusedPane] = useState<Pane>("sidebar");
+  const sidebarHidden = useSidebarHidden();
+  /** The pane that has the keyboard: the main area while the sidebar is hidden. */
+  const focused = sidebarHidden ? "main" : focusedPane;
   const shortcutsShown = useShortcutsShown();
   const [settingsError, setSettingsError] = useState<string>();
   const sidebarPane = useRef<HTMLElement>(null);
@@ -400,10 +410,19 @@ export function App() {
     if (sidebar.firstLaunch) setPicking(true);
   }
 
-  // The sidebar has the keyboard at launch.
+  // The sidebar has the keyboard at launch. Hidden, it cannot take it, and
+  // the main area's tab takes it as it shows.
   useEffect(() => {
     focusPane(sidebarPane.current);
   }, []);
+
+  // Hidden, the sidebar gives the keyboard to the main area; shown again, it
+  // leaves the keyboard where it is. This runs before the browser takes the
+  // keyboard from the hidden sidebar by itself.
+  useLayoutEffect(() => {
+    if (sidebarHidden && sidebarPane.current?.contains(document.activeElement))
+      focusPane(mainPane.current);
+  }, [sidebarHidden]);
 
   // Back from the setup blocker, the pane that had the keyboard has it again.
   const blockedBefore = useRef(blocked);
@@ -526,6 +545,7 @@ export function App() {
         entries,
         selected,
         modifier,
+        sidebarHidden,
       });
       if (!command) return;
       event.preventDefault();
@@ -590,10 +610,11 @@ export function App() {
           ref={sidebarPane}
           tabIndex={-1}
           onFocus={() => {
-            setFocused("sidebar");
+            setFocusedPane("sidebar");
           }}
           className={cn(
-            "flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground outline-none",
+            "w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground outline-none",
+            sidebarHidden ? "hidden" : "flex",
             focused === "sidebar" && focusedPaneMark,
           )}
         >
@@ -628,7 +649,7 @@ export function App() {
           ref={mainPane}
           tabIndex={-1}
           onFocus={(event) => {
-            setFocused("main");
+            setFocusedPane("main");
             // A click beside the list, e.g. on a tab, still gives the list
             // the keyboard. Only after the press: moving the focus during it
             // makes Chromium drop the press, and a tab could not be dragged.
@@ -646,6 +667,19 @@ export function App() {
         >
           {tabs && (
             <TabBar
+              sidebarButton={
+                <SidebarButton
+                  hidden={sidebarHidden}
+                  shortcut={sidebarShortcut}
+                  onToggle={() => {
+                    window.desktop.setSidebarHidden(!sidebarHidden);
+                  }}
+                  sidebar={sidebar}
+                  config={config}
+                  settingsError={settingsError}
+                  setup={setup}
+                />
+              }
               tabs={tabs.tabs}
               shown={tabs.shown}
               newTabShortcut={modifier.label("T")}
@@ -716,14 +750,7 @@ export function App() {
       {picking && (
         <RepositoryPicker
           firstLaunch={sidebar?.status === "read" && sidebar.firstLaunch}
-          settingsProblem={
-            sidebar?.status === "failed"
-              ? sidebar.message
-              : sidebar?.status === "read" &&
-                  sidebar.settings.status !== "writable"
-                ? sidebar.settings.message
-                : undefined
-          }
+          settingsProblem={settingsProblem(sidebar)}
           login={login}
           onClose={closePicker}
         />
@@ -731,7 +758,7 @@ export function App() {
       {removing && (
         <RemoveEntryDialog
           entry={removing}
-          returnFocus={sidebarPane}
+          returnFocus={sidebarHidden ? mainPane : sidebarPane}
           onRemove={() =>
             removing.kind === "repository"
               ? window.verdandi.removeRepository(removing.repository)

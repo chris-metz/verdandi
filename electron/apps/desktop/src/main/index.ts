@@ -127,11 +127,48 @@ function start() {
     loadImage(url),
   );
 
+  // Whether the sidebar is hidden, on this machine: the View menu, its
+  // shortcut and each window's button hide and show it, and the menu and
+  // every window follow.
+  let sidebarHidden = false;
+  function setSidebarHidden(hidden: boolean) {
+    if (hidden === sidebarHidden) return;
+    sidebarHidden = hidden;
+    showMenu();
+    for (const window of BrowserWindow.getAllWindows())
+      window.webContents.send(ipcChannels.sidebarHiddenChanged, hidden);
+    void core.saveSidebarHidden(hidden).catch(() => undefined);
+  }
+  ipcMain.handle(ipcChannels.getSidebarHidden, () => sidebarHidden);
+  ipcMain.on(ipcChannels.setSidebarHidden, (_event, hidden: unknown) => {
+    if (typeof hidden === "boolean") setSidebarHidden(hidden);
+  });
+
   void app.whenReady().then(async () => {
     // A packaged app shows its bundle's icon; `pnpm dev` runs Electron's own.
     if (process.platform === "darwin" && !app.isPackaged) {
       app.dock?.setIcon(icon);
     }
+    // The View menu names what its sidebar item does now.
+    sidebarHidden = await core.getSidebarHidden();
+    showMenu();
+    // The window opens in the look config.toml sets.
+    applyConfig(await core.getConfig());
+    void openWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) void openWindow();
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  /**
+   * Sets the application menu, as it is now: its sidebar item names what it
+   * does, hiding or showing the sidebar.
+   */
+  function showMenu() {
     const settings: MenuItemConstructorOptions = {
       label: "Settings…",
       accelerator: "CmdOrCtrl+,",
@@ -221,7 +258,30 @@ function start() {
           ],
         },
         { role: "editMenu" },
-        { role: "viewMenu" },
+        {
+          label: "View",
+          submenu: [
+            {
+              label: sidebarHidden ? "Show Sidebar" : "Hide Sidebar",
+              accelerator:
+                process.platform === "darwin" ? "Ctrl+Cmd+S" : "Ctrl+B",
+              click: () => {
+                setSidebarHidden(!sidebarHidden);
+              },
+            },
+            { type: "separator" },
+            // The items of Electron's own View menu.
+            { role: "reload" },
+            { role: "forceReload" },
+            { role: "toggleDevTools" },
+            { type: "separator" },
+            { role: "resetZoom" },
+            { role: "zoomIn" },
+            { role: "zoomOut" },
+            { type: "separator" },
+            { role: "togglefullscreen" },
+          ],
+        },
         // Elsewhere, the role's menu closes the window with Ctrl+W, which
         // closes a tab; Close Window is in the File menu.
         process.platform === "darwin"
@@ -232,17 +292,7 @@ function start() {
             },
       ]),
     );
-    // The window opens in the look config.toml sets.
-    applyConfig(await core.getConfig());
-    void openWindow();
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) void openWindow();
-    });
-  });
-
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
-  });
+  }
 
   /** Forwards contract requests from renderers and pushes events to them. */
   function wireContract(contract: Contract) {

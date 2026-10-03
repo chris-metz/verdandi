@@ -44,13 +44,20 @@ function press(
     focused = "sidebar",
     selected,
     modifier = macOS,
-  }: { focused?: Pane; selected?: string; modifier?: ShortcutModifier } = {},
+    sidebarHidden = false,
+  }: {
+    focused?: Pane;
+    selected?: string;
+    modifier?: ShortcutModifier;
+    sidebarHidden?: boolean;
+  } = {},
 ): WindowCommand | undefined {
   return commandForWindowKey(pressed, {
     focused,
     entries,
     selected: selected === undefined ? undefined : repository(selected),
     modifier,
+    sidebarHidden,
   });
 }
 
@@ -84,6 +91,66 @@ describe("Tab", () => {
   });
 });
 
+describe("with the sidebar hidden", () => {
+  const hidden = { sidebarHidden: true };
+  const toMain = { kind: "focus", pane: "main" };
+
+  it("keeps the keyboard in the main area with Tab, with or without ⇧", () => {
+    expect(press(key("Tab"), { ...hidden, focused: "main" })).toEqual(toMain);
+    expect(
+      press(key("Tab", { shiftKey: true }), { ...hidden, focused: "main" }),
+    ).toEqual(toMain);
+  });
+
+  it("gives the main area the keyboard with Tab, should the sidebar still have it", () => {
+    expect(press(key("Tab"), { ...hidden, focused: "sidebar" })).toEqual(
+      toMain,
+    );
+  });
+
+  it("still selects entries with ⌘1…9 on macOS and Ctrl+1…9 elsewhere", () => {
+    expect(
+      press(key("1", { metaKey: true }), { ...hidden, focused: "main" }),
+    ).toEqual(select("api"));
+    expect(
+      press(key("3", { ctrlKey: true }), {
+        ...hidden,
+        focused: "main",
+        modifier: linux,
+      }),
+    ).toEqual(select("infra"));
+  });
+
+  it("leaves the sidebar's own keys alone, even should it still have the keyboard", () => {
+    for (const pressed of [
+      key("j"),
+      key("k"),
+      key("ArrowDown"),
+      key("ArrowUp"),
+      key("Backspace"),
+      key("F2"),
+      key("ArrowUp", { altKey: true }),
+      key("ArrowDown", { altKey: true }),
+    ]) {
+      expect(
+        press(pressed, { ...hidden, focused: "sidebar", selected: "web" }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("still opens the repository picker, a new view and Go to Issue", () => {
+    expect(press(key("a"), { ...hidden, focused: "main" })).toEqual({
+      kind: "add-repository",
+    });
+    expect(press(key("v"), { ...hidden, focused: "main" })).toEqual({
+      kind: "new-view",
+    });
+    expect(
+      press(key("#"), { ...hidden, focused: "main", selected: "api" }),
+    ).toEqual({ kind: "go-to-issue" });
+  });
+});
+
 describe("r", () => {
   it("refreshes what is on screen, whichever pane has the keyboard", () => {
     expect(press(key("r"), { focused: "sidebar" })).toEqual({
@@ -113,6 +180,7 @@ describe("s", () => {
         entries,
         selected: { kind: "all" },
         modifier: macOS,
+        sidebarHidden: false,
       }),
     ).toEqual({ kind: "switch-state" });
   });
@@ -127,6 +195,7 @@ describe("s", () => {
           view: { id: "bugs", name: "Bugs", query: "label:bug" },
         },
         modifier: macOS,
+        sidebarHidden: false,
       }),
     ).toBeUndefined();
   });
@@ -199,6 +268,7 @@ describe("#", () => {
           entries: [all, ...entries, bugs],
           selected,
           modifier: macOS,
+          sidebarHidden: false,
         }),
       ).toEqual(goToIssue);
     }
@@ -324,6 +394,7 @@ describe("sidebar keys", () => {
         entries: [],
         selected: undefined,
         modifier: macOS,
+        sidebarHidden: false,
       }),
     ).toBeUndefined();
   });
@@ -401,6 +472,7 @@ describe("All, pinned on top", () => {
       entries: withAll,
       selected,
       modifier: macOS,
+      sidebarHidden: false,
     });
   }
 
@@ -459,6 +531,7 @@ it("moves the focused repository with Alt+arrows, keeping All fixed and stopping
       entries: [{ kind: "all" }, ...entries],
       selected: { kind: "all" },
       modifier: macOS,
+      sidebarHidden: false,
     }),
   ).toBeUndefined();
 });
@@ -477,6 +550,7 @@ it("moves a view only within Views, even when views have the same name", () => {
     entries: [...entries, first, second],
     selected: first,
     modifier: macOS,
+    sidebarHidden: false,
   };
   expect(
     commandForWindowKey(key("ArrowUp", { altKey: true }), state),
@@ -516,6 +590,7 @@ it("asks to remove a repository with unmodified Backspace in the sidebar", () =>
       selected: all,
       entries: [all],
       modifier: macOS,
+      sidebarHidden: false,
     }),
   ).toBeUndefined();
 });
@@ -535,6 +610,7 @@ describe("views", () => {
       selected,
       entries: [...entries, bugs],
       modifier: macOS,
+      sidebarHidden: false,
     });
   }
 

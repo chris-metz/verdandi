@@ -4,6 +4,7 @@ import { App } from "./App";
 import { followFonts } from "./fonts";
 import "./index.css";
 import { listFonts } from "./installed-fonts";
+import { followSidebarHidden } from "./sidebar-hidden";
 import { followTextSize } from "./text-size";
 import { followAppearance } from "./theme";
 
@@ -17,8 +18,8 @@ void listFonts().then(async ({ families, failure }) => {
     await window.verdandi.setInstalledFonts(families).catch(() => undefined);
 });
 
-// Rendered once the theme, fonts and text size are shown; until then, the
-// window's background.
+// Rendered once the theme, fonts and text size are shown, and whether the
+// sidebar is hidden is known; until then, the window's background.
 void Promise.all([
   followAppearance(
     document.documentElement,
@@ -27,6 +28,7 @@ void Promise.all([
   ).ready,
   followFonts(document.documentElement, window.verdandi).ready,
   followTextSize(document.documentElement, window.verdandi).ready,
+  followSidebarHidden(window.desktop).ready,
 ]).then(() => {
   createRoot(root).render(
     <StrictMode>

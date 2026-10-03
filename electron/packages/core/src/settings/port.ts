@@ -138,6 +138,8 @@ export interface LocalState {
   /** The issues opened last, newest first. */
   recentIssues?: RecentIssue[] | undefined;
   window?: WindowState | undefined;
+  /** Whether the user hid the sidebar; it shows unless they did. */
+  sidebarHidden?: boolean | undefined;
   /** The gh executable the user chose, if any. */
   ghExecutable: string | undefined;
 }

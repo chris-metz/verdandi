@@ -85,13 +85,14 @@ ss rate-limits-low
 
 - **Public test data only.** This repository is public: read only public repositories, and never name a private one or copy its content anywhere. `cli/cli` has about a thousand open issues in varied Markdown; issue 13840 has 148 comments, two pages.
 - **Wait for data, not time.** `issue` returns once the page has its issue; sub-issues and comments arrive after it. `loaded` waits for all of it, until the header's refresh button stops spinning. Text such as "Updated" is no signal, since issue titles can contain it too.
-- **Menu shortcuts need `menu`.** ⌘T, ⌘W and ⌘⇧T belong to the File menu, so `menu New Tab`, `menu Close Tab` and `menu Reopen Closed Tab` stand in for them; Ctrl+Tab reaches the page, as `press Control+Tab`.
+- **Menu shortcuts need `menu`.** ⌘T, ⌘W and ⌘⇧T belong to the File menu, so `menu New Tab`, `menu Close Tab` and `menu Reopen Closed Tab` stand in for them, and `menu Hide Sidebar` or `menu Show Sidebar` for ⌃⌘S; Ctrl+Tab reaches the page, as `press Control+Tab`. A hidden sidebar stays hidden across `relaunch`, and `entry` cannot click it.
 - **Keys go where the keyboard is.** `entry`, `issue` and `click` click like a mouse and move focus with it, so `press Escape` after `issue` goes back to the list; an `eval` that calls `.click()` moves no focus.
 - **The browser never opens.** `shell.openExternal` only records its links, for `opened` to list.
 - **Text matches visible elements only**, so text inside closed `<details>` is skipped.
 - **Selectors:**
   - sidebar entries: `[role="option"][title="owner/name"]`
   - tabs: `[role="tab"]`, the one shown `[role="tab"][aria-selected="true"]`, and + `[aria-label="New Tab"]`
+  - the sidebar's button: `[aria-label="Hide Sidebar"]`, or `[aria-label="Show Sidebar"]` while it is hidden; its `title` names any warning
   - the Go to Issue field, in a new tab or the `#` dialog: `[aria-label="Go to Issue"]`
   - list rows: `[role="treeitem"]`
   - issue page sections: `section[aria-label="Description"]`, `section[aria-label="Comments"]`

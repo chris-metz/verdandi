@@ -163,7 +163,7 @@ function GaugeIcon({ needle }: { needle: number }) {
 }
 
 /** Every pool's budget as the core last read or pushed it. */
-function useRateLimitBudgets(): RateLimitBudget[] {
+export function useRateLimitBudgets(): RateLimitBudget[] {
   const [budgets, setBudgets] = useState<RateLimitBudget[]>([]);
   useEffect(() => {
     let current = true;
