@@ -41,8 +41,9 @@ import {
  * All, pinned on top, then the sidebar's sections, Repositories and Views,
  * then the account. Entries are selected by click or by the keys the window
  * handles, into the tab shown; the sidebar pane itself holds the keyboard,
- * not its entries. A click with ⌘ held (Ctrl elsewhere) opens an entry in a
- * new tab instead, in the background.
+ * not its entries. A click with ⌘ held (Ctrl elsewhere), or Open in New Tab
+ * in its context menu, opens an entry in a new tab instead, in the
+ * background.
  */
 export function Sidebar({
   sidebar,
@@ -196,8 +197,20 @@ export function Sidebar({
       />
     );
   }
-  /** What an entry's context menu offers, if it has one. */
-  function menuOf(item: SidebarItem): MenuItem[] | undefined {
+  /** What an entry's context menu offers: Open in New Tab, then its actions. */
+  function menuOf(item: SidebarItem): MenuItem[] {
+    return [
+      {
+        label: "Open in New Tab",
+        onClick: () => {
+          onSelectInNewTab(item.scope);
+        },
+      },
+      ...actionsOf(item),
+    ];
+  }
+  /** What an entry's context menu offers besides Open in New Tab. */
+  function actionsOf(item: SidebarItem): MenuItem[] {
     const { scope } = item;
     if (scope.kind === "view") {
       return [
@@ -223,7 +236,7 @@ export function Sidebar({
         },
       ];
     }
-    if (scope.kind !== "repository") return undefined;
+    if (scope.kind !== "repository") return [];
     const { repository } = scope;
     const unavailable = "unavailable" in item ? item.unavailable : undefined;
     const retry: MenuItem = {
@@ -419,8 +432,8 @@ function Entry({
 }: {
   item: SidebarItem;
   login: string | undefined;
-  /** The entry's context menu, if it has one. */
-  menu: MenuItem[] | undefined;
+  /** The entry's context menu. */
+  menu: MenuItem[];
   /** Edits the entry on double-click, if it can be edited. */
   onEdit: (() => void) | undefined;
   selected: boolean;
@@ -547,7 +560,6 @@ function Entry({
       )}
     </li>
   );
-  if (!menu) return row;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={row} />
