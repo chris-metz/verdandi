@@ -5,7 +5,8 @@ import VerdandiCore
 /// its organizations', grouped by owner and loading page by page, filtered
 /// by what is typed. An address typed in full that is not suggested is
 /// looked up on GitHub. The search field keeps the keyboard: ↑ and ↓ move,
-/// Space checks, Return adds, Escape cancels.
+/// Space checks, Return adds, Escape cancels. On the first launch, Cancel
+/// is Skip, which keeps it from opening on its own again.
 struct RepositoryPickerView: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
@@ -142,9 +143,12 @@ struct RepositoryPickerView: View {
         .foregroundStyle(.secondary)
         .contentTransition(.numericText())
       Spacer(minLength: 12)
-      Button("Cancel", role: .cancel) { dismiss() }
-        .buttonStyle(.glass)
-        .keyboardShortcut(.cancelAction)
+      Button(model.isFirstLaunch ? "Skip" : "Cancel", role: .cancel) {
+        if model.isFirstLaunch { model.skipRepositoryPicker() }
+        dismiss()
+      }
+      .buttonStyle(.glass)
+      .keyboardShortcut(.cancelAction)
       Button {
         add(rows: rows)
       } label: {

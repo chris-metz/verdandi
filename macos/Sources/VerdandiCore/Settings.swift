@@ -81,14 +81,46 @@ public struct SettingsFile: Sendable {
 
   /// The settings, or empty ones while there is no file.
   public func read() throws -> Settings {
-    guard let data = try? Data(contentsOf: url) else { return Settings() }
+    try readIfPresent() ?? Settings()
+  }
+
+  /// The settings, or nil while there is no file.
+  public func readIfPresent() throws -> Settings? {
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch CocoaError.fileReadNoSuchFile {
+      return nil
+    }
     return try Self.parse(data)
   }
 
   public func write(_ settings: Settings) throws {
+    try write(Self.serialized(settings), options: [.atomic])
+  }
+
+  /// Writes empty settings, unless there is a file already, which stays as
+  /// it is.
+  public func createIfMissing() throws {
+    do {
+      try write(Self.serialized(Settings()), options: [.withoutOverwriting])
+    } catch CocoaError.fileWriteFileExists {
+      return
+    }
+  }
+
+  /// Writes the file, which only the user can read, in a folder only the
+  /// user can open.
+  private func write(_ data: Data, options: Data.WritingOptions) throws {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
+    try data.write(to: url, options: options)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+  }
+
+  /// The file's text for `settings`.
+  static func serialized(_ settings: Settings) -> Data {
     let document = JSON.object([
       "version": 1,
       "repositories": .array(
@@ -102,8 +134,7 @@ public struct SettingsFile: Sendable {
     ])
     var text = String(decoding: document.serialized(pretty: true), as: UTF8.self)
     text = Self.ordered(text)
-    try Data((text + "\n").utf8).write(to: url, options: [.atomic])
-    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    return Data((text + "\n").utf8)
   }
 
   static func parse(_ data: Data) throws -> Settings {

@@ -55,7 +55,11 @@ struct Notice: Identifiable, Equatable {
 final class AppModel {
   // MARK: Setup
 
-  private(set) var setup: SetupState = .checking
+  private(set) var setup: SetupState = .checking {
+    didSet {
+      if case .ready = setup { openPickerOnFirstLaunch() }
+    }
+  }
   private(set) var gh: GhExecutable?
   private(set) var client: GitHubClient?
 
@@ -64,7 +68,10 @@ final class AppModel {
   private(set) var settings = Settings()
   /// Why settings.json could not be read, while it cannot.
   private(set) var settingsProblem: String?
-  @ObservationIgnored let settingsFile = SettingsFile()
+  /// Whether there is no settings.json yet: the first launch, until the
+  /// user adds repositories or skips the repository picker.
+  private(set) var isFirstLaunch = false
+  @ObservationIgnored let settingsFile: SettingsFile
 
   // MARK: Navigation
 
@@ -89,6 +96,9 @@ final class AppModel {
   /// Whether the entry chosen last has been selected again, which waits
   /// until settings.json can be read. Until then nothing is kept.
   @ObservationIgnored private var hasRestoredLastEntry = false
+  /// Whether gh has worked since launch, when the first launch opens the
+  /// repository picker.
+  @ObservationIgnored private var hasBeenReady = false
 
   // MARK: Shared state
 
@@ -105,7 +115,8 @@ final class AppModel {
     issues: issues, client: { [unowned self] in client }, openIssue: { [unowned self] in openIssue($0) })
   @ObservationIgnored private(set) lazy var sidebar = SidebarStore(model: self)
 
-  init() {
+  init(settingsFile: SettingsFile = SettingsFile()) {
+    self.settingsFile = settingsFile
     loadSettings()
   }
 
@@ -158,14 +169,29 @@ final class AppModel {
     return nil
   }
 
+  /// Opens the repository picker the first time gh works, on the first
+  /// launch. A settings.json, even one tracking nothing or one that cannot
+  /// be read, keeps it from opening on its own.
+  private func openPickerOnFirstLaunch() {
+    guard !hasBeenReady else { return }
+    hasBeenReady = true
+    // One may have been made while the setup screen showed.
+    if isFirstLaunch { loadSettings() }
+    if isFirstLaunch { sheet = .repositoryPicker }
+  }
+
   // MARK: Settings
 
+  /// Reads settings.json again.
   func loadSettings() {
     do {
-      settings = try settingsFile.read()
+      let read = try settingsFile.readIfPresent()
+      settings = read ?? Settings()
+      isFirstLaunch = read == nil
       settingsProblem = nil
       restoreLastEntry()
     } catch {
+      isFirstLaunch = false
       settingsProblem = error.localizedDescription
     }
   }
@@ -181,6 +207,19 @@ final class AppModel {
     settings = changed
     do {
       try settingsFile.write(changed)
+      isFirstLaunch = false
+    } catch {
+      report("Could not save settings", error.localizedDescription)
+    }
+  }
+
+  /// Skip in the repository picker on the first launch: writes settings.json
+  /// empty, so that the picker does not open on its own again. A file made
+  /// since stays as it is.
+  func skipRepositoryPicker() {
+    do {
+      try settingsFile.createIfMissing()
+      loadSettings()
     } catch {
       report("Could not save settings", error.localizedDescription)
     }
@@ -262,7 +301,7 @@ final class AppModel {
   // MARK: Launch options
 
   /// Shows a setup state without asking gh, as `VERDANDI_SETUP` asks for
-  /// screenshots of the setup screen.
+  /// screenshots of the setup screen, and as tests do.
   func pretendSetup(_ state: SetupState) {
     setup = state
   }

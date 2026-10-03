@@ -380,7 +380,11 @@ final class SidebarStore {
   /// as after the app's own writes. An entry no longer listed is no longer
   /// selected.
   func reloadSettings() {
-    if let read = try? model.settingsFile.read(), read == model.settings, model.settingsProblem == nil { return }
+    if let read = try? model.settingsFile.read(), read == model.settings, model.settingsProblem == nil,
+      !model.isFirstLaunch
+    {
+      return
+    }
     // A selected repository stays selected under a new address, by its ID.
     var selectedId: Int?
     if case .repository(let address) = model.selection {

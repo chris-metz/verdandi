@@ -27,6 +27,11 @@ Until gh works, the window shows the setup screen, which says what is
 missing and the commands that fix it in Terminal. Verdandi never installs gh
 or signs in itself; it checks again as it becomes active again.
 
+On the first launch, while there is no settings.json, the repository
+picker opens on its own once gh works. Its Skip writes settings.json
+empty, so that it does not open on its own again. A settings.json, even
+one tracking nothing or one that cannot be read, keeps it closed.
+
 ## Keys
 
 | Keys       | Does                                              |
@@ -69,6 +74,7 @@ VERDANDI_ABOUT=1 scripts/snap.sh /tmp/about.png 3               # the About wind
 VERDANDI_POPOVER=rate-limits VERDANDI_RATE_LIMITS=low scripts/snap.sh /tmp/limits.png 4
 VERDANDI_SHEET=go-to-issue VERDANDI_GO_TO='#12' scripts/snap.sh /tmp/go.png 4
 VERDANDI_NOTICES=sample scripts/snap.sh /tmp/notices.png 4
+VERDANDI_HOME="$(mktemp -d)" scripts/snap.sh /tmp/first-launch.png 6   # no settings.json: the picker opens
 VERDANDI_SELECT=repo:chris-metz/verdandi VERDANDI_ISSUE='chris-metz/verdandi#8' \
   VERDANDI_BODY=/tmp/body.html VERDANDI_LOAD_IMAGES=1 scripts/snap.sh /tmp/images.png 10
 ```
