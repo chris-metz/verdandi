@@ -89,7 +89,7 @@ _Avoid_: tree view, feed, board
 ### Tabs
 
 **Tab**:
-One of the places open side by side in the main area, shown one at a time: a sidebar entry's list with the issues opened from it one after another, or a new tab. Choosing a sidebar entry shows it in the tab shown.
+One of the places open side by side in the main area, shown one at a time: a sidebar entry's list with the issues opened from it one after another, or a new tab. Choosing a sidebar entry shows it in the tab shown. A tab is named after its sidebar entry, followed by the issue it shows, if any.
 _Avoid_: window, page
 
 **New tab**:
