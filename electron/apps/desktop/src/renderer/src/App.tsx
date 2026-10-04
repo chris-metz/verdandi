@@ -49,6 +49,7 @@ import { SetupDialog, useSetup } from "./SetupDialog";
 import { Sidebar, useSidebar } from "./Sidebar";
 import { SidebarButton } from "./SidebarButton";
 import { useSidebarHidden } from "./sidebar-hidden";
+import { SidebarPane } from "./SidebarPane";
 import { settingsProblem } from "./sidebar-warnings";
 import { entryOrder, followSelection } from "./sidebar-entries";
 import { TabBar } from "./TabBar";
@@ -608,17 +609,13 @@ export function App() {
   return (
     <OpenInNewTab.Provider value={openInNewTab}>
       <div className="flex h-screen text-sm" inert={blocked}>
-        <aside
+        <SidebarPane
           ref={sidebarPane}
-          tabIndex={-1}
+          hidden={sidebarHidden}
           onFocus={() => {
             setFocusedPane("sidebar");
           }}
-          className={cn(
-            "w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground outline-none",
-            sidebarHidden ? "hidden" : "flex",
-            focused === "sidebar" && focusedPaneMark,
-          )}
+          className={cn(focused === "sidebar" && focusedPaneMark)}
         >
           <Sidebar
             sidebar={sidebar}
@@ -646,7 +643,7 @@ export function App() {
             shortcutsShown={shortcutsShown}
             modifier={modifier}
           />
-        </aside>
+        </SidebarPane>
         <main
           ref={mainPane}
           tabIndex={-1}

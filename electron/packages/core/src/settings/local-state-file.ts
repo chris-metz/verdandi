@@ -34,6 +34,7 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
       ghExecutable,
       window,
       sidebarHidden,
+      sidebarWidth,
       selectedEntry,
       tabs,
       recentIssues,
@@ -45,6 +46,9 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
       window: readWindowState(window),
       sidebarHidden:
         typeof sidebarHidden === "boolean" ? sidebarHidden : undefined,
+      sidebarWidth: Number.isSafeInteger(sidebarWidth)
+        ? (sidebarWidth as number)
+        : undefined,
       ghExecutable:
         typeof ghExecutable === "string" && paths.isAbsolute(ghExecutable)
           ? ghExecutable

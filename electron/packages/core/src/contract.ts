@@ -1193,6 +1193,13 @@ export type RepositoryAddition = {
   | { status: "failed"; problem: Problem }
 );
 
+/** The sidebar's widths in pixels: the narrowest, the widest and the default. */
+export const sidebarWidths = {
+  narrowest: 180,
+  widest: 480,
+  default: 256,
+} as const;
+
 /** Normal window bounds, even while maximised; interpreted by the desktop. */
 export interface WindowState {
   x: number;
@@ -1215,6 +1222,14 @@ export interface CoreRequests {
   getSidebarHidden: () => Promise<boolean>;
   /** Keeps whether the sidebar is hidden on this machine for the next launch. */
   saveSidebarHidden: (hidden: boolean) => Promise<void>;
+  /**
+   * The sidebar's width as it was kept last on this machine, in pixels,
+   * within `sidebarWidths`; without a kept width, or one that cannot be
+   * read, the default.
+   */
+  getSidebarWidth: () => Promise<number>;
+  /** Keeps the sidebar's width on this machine for the next launch. */
+  saveSidebarWidth: (width: number) => Promise<void>;
   /**
    * The tabs as they were saved last on this machine, each tab's entry as
    * the sidebar lists it now: a repository is followed by its ID through
@@ -1571,6 +1586,8 @@ const requests: Record<keyof CoreRequests, true> = {
   saveWindowState: true,
   getSidebarHidden: true,
   saveSidebarHidden: true,
+  getSidebarWidth: true,
+  saveSidebarWidth: true,
   getTabs: true,
   saveTabs: true,
   getRecentIssues: true,

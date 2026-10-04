@@ -51,7 +51,7 @@ _Avoid_: dependency tree, blocking order
 ### Browsing
 
 **Sidebar**:
-The column beside the main area that lists the sidebar entries, with the account below them. The user can hide it to give the main area the whole window, and show it again; the Electron app keeps it hidden or shown across launches on the same machine.
+The column beside the main area that lists the sidebar entries, with the account below them. The user can hide it to give the main area the whole window, and show it again. In the Electron app they can also drag its edge to make it wider or narrower, and dragging it narrower than it may be hides it. The Electron app keeps it hidden or shown, and its width, across launches on the same machine.
 _Avoid_: collapse (an issue's sub-issues collapse), drawer, navigation
 
 **Sidebar entry**:

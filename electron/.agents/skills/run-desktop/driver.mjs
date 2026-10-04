@@ -189,6 +189,36 @@ const commands = {
     return `dragged ${from} to ${to}`;
   },
 
+  /** Double-clicks the first element matching a CSS selector. */
+  async dblclick(selector) {
+    await window().dblclick(selector, { timeout });
+    return `double-clicked ${selector}`;
+  },
+
+  /** Moves the mouse onto the middle of the first match, for its hover look. */
+  async hover(selector) {
+    await window().hover(selector, { timeout });
+    return `hovering ${selector}`;
+  },
+
+  /**
+   * Presses or releases the left mouse button where the mouse is, or moves
+   * the mouse to a point in the window, `x,y`, in steps, as a hand would,
+   * e.g. to drag something and look at it before releasing.
+   */
+  async mouse(args) {
+    const mouse = window().mouse;
+    if (args === "down") await mouse.down();
+    else if (args === "up") await mouse.up();
+    else {
+      const [x, y] = args.split(",").map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(y))
+        throw new Error("mouse <down | up | x,y>");
+      await mouse.move(x, y, { steps: 10 });
+    }
+    return `mouse ${args}`;
+  },
+
   /** Clicks the first visible element showing this text. */
   async "click-text"(text) {
     await visibleText(text).click({ timeout });
@@ -236,6 +266,15 @@ const commands = {
     return existsSync(file)
       ? readFileSync(file, "utf8").trim()
       : "no settings.json";
+  },
+
+  /** Prints the scratch home's machine-local state.json, or says there is none. */
+  state() {
+    if (!home) throw new Error("launch first");
+    const file = join(home, "desktop/state.json");
+    return existsSync(file)
+      ? readFileSync(file, "utf8").trim()
+      : "no state.json";
   },
 
   /**

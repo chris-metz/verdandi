@@ -140,6 +140,8 @@ export interface LocalState {
   window?: WindowState | undefined;
   /** Whether the user hid the sidebar; it shows unless they did. */
   sidebarHidden?: boolean | undefined;
+  /** The sidebar's width in pixels, as the user dragged its edge to. */
+  sidebarWidth?: number | undefined;
   /** The gh executable the user chose, if any. */
   ghExecutable: string | undefined;
 }

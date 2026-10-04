@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type {
-  Contract,
-  CoreEventName,
-  CoreEvents,
-  ExpandableList,
-  Label,
-  RepositoryAddress,
-  SavedView,
-  Screen,
+import {
+  sidebarWidths,
+  type Contract,
+  type CoreEventName,
+  type CoreEvents,
+  type ExpandableList,
+  type Label,
+  type RepositoryAddress,
+  type SavedView,
+  type Screen,
 } from "./contract.ts";
 import type { HostEnvironment } from "./directories.ts";
 import { createEmitter } from "./emitter.ts";
@@ -453,6 +454,16 @@ export function createCore({
     },
     saveSidebarHidden(sidebarHidden) {
       return localState.update({ sidebarHidden });
+    },
+    async getSidebarWidth() {
+      const { sidebarWidth } = await localState.read();
+      const { narrowest, widest } = sidebarWidths;
+      return sidebarWidth === undefined
+        ? sidebarWidths.default
+        : Math.min(Math.max(sidebarWidth, narrowest), widest);
+    },
+    saveSidebarWidth(sidebarWidth) {
+      return localState.update({ sidebarWidth });
     },
     dispose() {
       stopWatchingSettings();

@@ -284,6 +284,48 @@ it("keeps the other values, and those it does not know, as the sidebar is hidden
   });
 });
 
+it("keeps the sidebar's width across a restart, 256 px at first", async () => {
+  expect(await core.getSidebarWidth()).toBe(256);
+  await core.saveSidebarWidth(320);
+  restart();
+  expect(await core.getSidebarWidth()).toBe(320);
+  await expect(readFile(join(home, "settings.json"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.each([
+  ["missing", {}],
+  ["not a number", { sidebarWidth: "320" }],
+  ["not whole pixels", { sidebarWidth: 320.5 }],
+  ["null", { sidebarWidth: null }],
+  ["not JSON", "{ sidebarWidth: 320"],
+])("opens the sidebar at 256 px when its width is %s", async (_, state) => {
+  await writeLocalState(state);
+  expect(await core.getSidebarWidth()).toBe(256);
+});
+
+it.each([
+  [100, 180],
+  [179, 180],
+  [481, 480],
+  [5000, 480],
+])(
+  "brings a kept width of %i px within 180 to 480 px, to %i px",
+  async (sidebarWidth, opened) => {
+    await writeLocalState({ sidebarWidth });
+    expect(await core.getSidebarWidth()).toBe(opened);
+  },
+);
+
+it("keeps the sidebar's width apart from whether it is hidden", async () => {
+  await core.saveSidebarWidth(300);
+  await core.saveSidebarHidden(true);
+  restart();
+  expect(await core.getSidebarWidth()).toBe(300);
+  expect(await core.getSidebarHidden()).toBe(true);
+});
+
 it("follows a known repository ID through a transfer even when its old name is taken over", async () => {
   await writeSettings({
     version: 1,

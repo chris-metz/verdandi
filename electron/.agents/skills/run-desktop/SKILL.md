@@ -33,6 +33,9 @@ It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the a
 | `click <css>` / `click-text <text>`   | Clicks the first match, as the mouse would                                                               |
 | `rightclick <css>`                    | Right-clicks the first match, for its context menu                                                       |
 | `drag <css> -> <css>`                 | Drags the first match onto the second, dropping on its far half, e.g. to reorder tabs or sidebar entries |
+| `dblclick <css>`                      | Double-clicks the first match                                                                            |
+| `hover <css>`                         | Moves the mouse onto the middle of the first match, for its hover look                                   |
+| `mouse <down \| up \| x,y>`           | Presses or releases the left button where the mouse is, or moves it to a point in the window, in steps   |
 | `menu <label>`                        | Chooses an application menu item by its label, e.g. `Settings…` or `New Tab`; key presses never reach it |
 | `press <key>`                         | Presses a key, e.g. `Escape`, `r`, `j`                                                                   |
 | `type <text>`                         | Types text where the keyboard is, e.g. into the repository picker's input                                |
@@ -47,6 +50,7 @@ It needs `pnpm install` in `electron/` and a `gh` signed in to github.com: the a
 | `ss [name]`                           | Screenshot to `$SCREENSHOT_DIR` (default `$TMPDIR/verdandi-shots`)                                       |
 | `opened`                              | The links the app opened in the browser                                                                  |
 | `settings`                            | Prints the scratch home's `settings.json`, or says there is none                                         |
+| `state`                               | Prints the scratch home's machine-local `state.json`, or says there is none                              |
 | `config [<toml> \| --remove]`         | Writes `config.toml`, `\n` between lines, or deletes it; with nothing, prints it. See below              |
 | `relaunch`                            | Quits the app and launches it again with the same scratch home, to see what it restores                  |
 | `quit`                                | Closes the app and deletes its scratch home                                                              |
@@ -81,6 +85,18 @@ click [aria-label="Rate Limits"]
 ss rate-limits-low
 ```
 
+## Dragging by hand
+
+`drag` drops at once. To look at something mid-drag, or to drag it along a path, take hold of it with `hover` and `mouse down`, move it with `mouse x,y`, and let go with `mouse up`. E.g. the sidebar's edge, to 320 px, with a screenshot before releasing:
+
+```bash
+hover aside > [role="separator"]
+mouse down
+mouse 320,400
+ss dragging
+mouse up
+```
+
 ## Gotchas
 
 - **Public test data only.** This repository is public: read only public repositories, and never name a private one or copy its content anywhere. `cli/cli` has about a thousand open issues in varied Markdown; issue 13840 has 148 comments, two pages.
@@ -93,6 +109,7 @@ ss rate-limits-low
   - sidebar entries: `[role="option"][title="owner/name"]`
   - tabs: `[role="tab"]`, the one shown `[role="tab"][aria-selected="true"]`, and + `[aria-label="New Tab"]`
   - the sidebar's button: `[aria-label="Hide Sidebar"]`, or `[aria-label="Show Sidebar"]` while it is hidden; its `title` names any warning
+  - the sidebar's edge: `aside > [role="separator"]`
   - the Go to Issue field, in a new tab or the `#` dialog: `[aria-label="Go to Issue"]`
   - list rows: `[role="treeitem"]`
   - issue page sections: `section[aria-label="Description"]`, `section[aria-label="Comments"]`
