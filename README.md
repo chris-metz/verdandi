@@ -9,9 +9,23 @@ A keyboard-first desktop client for GitHub issues across many repositories, focu
   <img src="docs/screenshots/issue-dark.png" width="49%" alt="The same issue page, dark">
 </p>
 
-Verdandi is a personal project, shared in the open. There are no releases, support or roadmap to rely on.
+Verdandi is a personal project, shared in the open. There is no support or roadmap to rely on.
 
 It runs on macOS, Windows and Linux, in TypeScript and Electron. It reads GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`).
+
+## Install
+
+On a Mac with Apple Silicon and macOS 13 or later:
+
+```sh
+brew install --cask chris-metz/tap/verdandi
+```
+
+Homebrew installs `gh` with it. Or download the DMG from the [latest release](https://github.com/chris-metz/verdandi/releases/latest) and drag Verdandi to Applications.
+
+On Windows 10 or later, on x64, download `Verdandi-Setup-<version>.exe` from the [latest release](https://github.com/chris-metz/verdandi/releases/latest) and run it. It installs Verdandi for you alone and starts it. The installer is unsigned, so Windows warns before it runs: at "Windows protected your PC", choose **More info**, then **Run anyway**. Where Smart App Control is on, it blocks the installer without that choice; it runs once Smart App Control is turned off under Windows Security → App & browser control. Signing it is [#83](https://github.com/chris-metz/verdandi/issues/83).
+
+On Linux and on Intel Macs, run Verdandi from source, as below.
 
 ## Prerequisites
 
@@ -45,7 +59,7 @@ It builds an unsigned app for the operating system you run it on, in `apps/deskt
 - Windows: `win-unpacked/Verdandi.exe`.
 - Linux: `linux-unpacked/verdandi`.
 
-There are no installers, signing or updates yet. The first build downloads Electron. On macOS, packaging needs [Xcode](https://developer.apple.com/xcode/) 26 or later, which compiles the app icon; `pnpm dev` does not.
+It makes no installer and signs nothing: [releases](#release) do. The first build downloads Electron. On macOS, packaging needs [Xcode](https://developer.apple.com/xcode/) 26 or later, which compiles the app icon; `pnpm dev` does not.
 
 ## Install into Applications
 
@@ -53,7 +67,7 @@ There are no installers, signing or updates yet. The first build downloads Elect
 ./install-app.sh
 ```
 
-It builds the app and installs it as `/Applications/Verdandi.app`. It quits a running Verdandi first, and starts the new one.
+It builds the app and installs it as `/Applications/Verdandi.app`. It quits a running Verdandi first, and starts the new one. Homebrew's Verdandi installs to the same place, and `brew upgrade` would bring the release back over this build, so use one or the other: the script warns while Homebrew lists the cask.
 
 ## App icon
 
@@ -122,6 +136,16 @@ text_size = 15                      # pixels for body text, a whole number from 
 - Text size: all text grows or shrinks with it in proportion, while spacing, icons and the sidebar's width stay as they are. The smallest text, such as labels and column headers, stops at 9 pixels. Zoom (**View → Zoom In**) works on top of it.
 
 **Settings…** (⌘, on macOS, Ctrl+, elsewhere) picks the appearance, the themes, the fonts and the text size, writing each change to the file at once: only that key changes, and your comments and formatting stay. Choosing a font's **Default**, or the default text size, removes its key. Without a file, the first change creates it. **File → Show Config File** reveals it, or its folder while there is none. Changes by hand apply at once too. A value Verdandi cannot use falls back to its default, an unknown key is ignored, and a file that is not valid TOML means every default; the sidebar says what and where until the file is fixed.
+
+## Release
+
+A release puts a signed, notarized DMG for Macs with Apple Silicon and an unsigned Windows installer on GitHub Releases, and the cask in [`chris-metz/homebrew-tap`](https://github.com/chris-metz/homebrew-tap) ([ADR 0009](docs/adr/0009-releases-on-github-and-homebrew.md)). It is made on the maintainer's Mac, by an agent's `release` skill (`/release` in Claude Code), which agrees the release notes with you and then runs
+
+```sh
+./release.sh --notes-file dist/release-notes.md 0.2.0
+```
+
+It builds the Mac app on this Mac and the Windows installer on GitHub Actions, and publishes once both are built and verified. `--dry-run` stops before publishing. Without `--notes-file`, it opens the commits since the last release in your editor. It needs the Developer ID in the keychain and the notarytool profile `pacemark-notary`, both as [Pacemark's release setup](https://github.com/chris-metz/pacemark/blob/main/scripts/setup-release.sh) leaves them, and `gh` with push access to the tap.
 
 ## Check before pushing
 

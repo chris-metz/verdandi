@@ -43,3 +43,11 @@ mv "$staging" "$target"
 
 open "$target"
 echo "$target"
+
+# Homebrew still counts a release it installed as its own and would bring it
+# back over this build.
+if command -v brew >/dev/null && brew list --cask verdandi >/dev/null 2>&1; then
+  echo "Warning: Homebrew lists the cask verdandi, so the next brew upgrade replaces" >&2
+  echo "this local build with the release. To end that, run brew uninstall --cask" >&2
+  echo "verdandi, which also removes this build, then ./install-app.sh again." >&2
+fi

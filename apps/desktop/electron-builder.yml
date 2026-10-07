@@ -1,6 +1,7 @@
 # `pnpm package` builds an unpacked, unsigned app for this computer's OS in
-# `dist/`. Release delivery (installers, signing, notarization, updates) is
-# out of scope for now.
+# `dist/`. `release.sh` and the Windows build on GitHub Actions build the
+# release's DMG and installer from this configuration, adding the version and,
+# for the Mac, the Developer ID (docs/adr/0009-releases-on-github-and-homebrew.md).
 appId: io.github.chris-metz.verdandi
 productName: Verdandi
 directories:
@@ -11,11 +12,22 @@ files:
   - out/**
   - package.json
 mac:
-  # Unsigned: runs on the computer that built it.
+  # Unsigned: runs on the computer that built it. A release passes the
+  # Developer ID, and the app is signed with the hardened runtime and
+  # notarized, as the default `hardenedRuntime` and `notarize` have it.
   identity: null
   # Icon Composer's format, so macOS renders its depth and its dark, tinted
   # and clear appearances. Compiling it needs Xcode 26 or later. Linux and
   # Windows take `build/icon.png`.
   icon: build/icon.icon
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # No `.blockmap`: it serves an updater, and Verdandi has none.
+  writeUpdateInfo: false
+win:
+  icon: build/icon.png
+nsis:
+  artifactName: ${productName}-Setup-${version}.${ext}
+  differentialPackage: false
 linux:
   executableName: verdandi
