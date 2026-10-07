@@ -255,24 +255,29 @@ it("never overwrites an unreadable file and can preserve it with Reset", async (
   });
 });
 
-it("replaces the file atomically in its folder, leaving existing readers an intact original", async () => {
-  const original = {
-    version: 1,
-    repositories: [{ name: "acme/api" }, { name: "acme/web" }],
-  };
-  await write(original);
-  const reader = await open(file(), "r");
-  try {
-    await core.reorderSidebar(repository("web"), { direction: "up" });
-    expect(await reader.readFile("utf8")).toBe(JSON.stringify(original));
-    expect(JSON.parse(await readFile(file(), "utf8"))).toMatchObject({
-      repositories: [{ name: "acme/web" }, { name: "acme/api" }],
-    });
-    expect(await readdir(home)).toEqual(["settings.json"]);
-  } finally {
-    await reader.close();
-  }
-});
+// Windows can't rename over a file that is held open: there the save fails
+// and leaves the original, which settings/settings-file.test.ts covers.
+it.skipIf(process.platform === "win32")(
+  "replaces the file atomically in its folder, leaving existing readers an intact original",
+  async () => {
+    const original = {
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    };
+    await write(original);
+    const reader = await open(file(), "r");
+    try {
+      await core.reorderSidebar(repository("web"), { direction: "up" });
+      expect(await reader.readFile("utf8")).toBe(JSON.stringify(original));
+      expect(JSON.parse(await readFile(file(), "utf8"))).toMatchObject({
+        repositories: [{ name: "acme/web" }, { name: "acme/api" }],
+      });
+      expect(await readdir(home)).toEqual(["settings.json"]);
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it.each([
   [
