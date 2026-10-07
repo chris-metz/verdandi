@@ -250,8 +250,8 @@ cask "verdandi" do
   end
 
   depends_on arch: :arm64
-  depends_on macos: :ventura
   depends_on formula: "gh"
+  depends_on macos: :ventura
 
   app "Verdandi.app"
 
