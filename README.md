@@ -9,19 +9,14 @@ A keyboard-first desktop client for GitHub issues across many repositories, focu
   <img src="docs/screenshots/issue-dark.png" width="49%" alt="The same issue page, dark">
 </p>
 
-## Two apps, for now
+Verdandi is a personal project, shared in the open. There are no releases, support or roadmap to rely on.
 
-Verdandi is a personal project, shared in the open. For now it comes as two apps while we find out which one to go on with; either may stand still or be dropped. There are no releases, support or roadmap to rely on.
-
-- [`electron/`](electron/): for macOS, Windows and Linux, in TypeScript and Electron. See [`electron/README.md`](electron/README.md).
-- [`macos/`](macos/): a native macOS app in SwiftUI, with Liquid Glass and without Node. See [`macos/README.md`](macos/README.md).
-
-Both read GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`). Both read and write the same `settings.json`, so they show the same tracked repositories and views; run one of them at a time.
+It runs on macOS, Windows and Linux, in TypeScript and Electron: see [`electron/README.md`](electron/README.md). It reads GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`).
 
 ## Install into Applications
 
 ```sh
-./install-app.sh macos       # or: ./install-app.sh electron
+./install-app.sh
 ```
 
-It builds that app and installs it as `/Applications/Verdandi.app`, in place of whichever of the two is there, since both are called Verdandi. It quits a running Verdandi first, and starts the new one.
+It builds the app and installs it as `/Applications/Verdandi.app`. It quits a running Verdandi first, and starts the new one.

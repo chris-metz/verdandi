@@ -1,5 +1,7 @@
 # Try a native macOS app beside the Electron app
 
+Superseded by [ADR 0008](0008-go-on-with-the-electron-app-only.md): the macOS app is dropped.
+
 Verdandi is built twice for now: the Electron app in `electron/` ([ADR 0001](0001-typescript-electron-stack.md)), and a native macOS app in SwiftUI in `macos/`, with Liquid Glass and without Node, which reads GitHub through `gh` as the Electron app does. It began as an experiment in how far a native app gets, and it looked and felt better on macOS than expected. Which of the two Verdandi goes on with is not decided; until it is, both are kept, each complete in its own folder, so that the choice can be made by comparing them rather than in advance.
 
 The two apps are independent. Each has its own core: the TypeScript core in `electron/packages/core`, and a Swift port of it in `macos/Sources/VerdandiCore`. A change to one app is not made in the other unless asked for, and an issue says which app it is for with an `electron` or `macos` label. They share only the format of `settings.json`, which both read and write, and what lies at the top of the repository: the glossary, these decisions and the research.

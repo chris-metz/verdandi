@@ -71,7 +71,7 @@ Whether an issue is open or closed. A tracked repository and All show one state 
 _Avoid_: status
 
 **Label filter**:
-The labels the user has picked from a list to narrow it to issues that carry all of them. Each sidebar entry has its own, which lasts until the user removes it or quits, though the macOS app keeps the one of the entry chosen last for its next launch.
+The labels the user has picked from a list to narrow it to issues that carry all of them. Each sidebar entry has its own, which lasts until the user removes it or quits.
 _Avoid_: tag, label search
 
 **Match**:
@@ -97,7 +97,7 @@ A tab with nothing chosen in it yet, offering the recent issues and a field to g
 _Avoid_: blank tab, start page, home
 
 **Recent issue**:
-One of the issues the user opened last, whichever way they opened it, newest first. In the macOS app, only an issue gone to by its number or link is one.
+One of the issues the user opened last, whichever way they opened it, newest first.
 _Avoid_: history, recently viewed
 
 ### Look

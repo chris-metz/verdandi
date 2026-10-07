@@ -1,7 +1,5 @@
 # Build Verdandi on TypeScript and Electron
 
-Under review while a native macOS app is tried beside the Electron app: see [ADR 0006](0006-try-a-native-macos-app-beside-electron.md).
-
 Verdandi is built in TypeScript on Electron, with its bundled Chromium, rather than on a system-webview wrapper (Go/Wails, Rust/Tauri) or Electrobun. One language then covers the UI-independent core, the React UI, and a later TUI, which can run the same core on Node (e.g. with Ink). All three operating systems render with one browser engine, so what is tested on one is what the others get; WebKitGTK on Linux was the weakest link of the system webviews. The team's existing work is TypeScript and React.
 
 ## Considered Options
