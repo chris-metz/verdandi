@@ -1,10 +1,10 @@
 ## The app
 
-`electron/` holds the app and its TypeScript core, a pnpm workspace whose commands run in `electron/`.
+The repository is a pnpm workspace: the Electron app in `apps/desktop`, its TypeScript core in `packages/core`.
 
 ## Git workflow
 
-For now, commit and push directly to `main`. Before every push to `main`, run `pnpm check` in `electron/` (typecheck, lint, format check and tests), and push only when it passes.
+For now, commit and push directly to `main`. Before every push to `main`, run `pnpm check` (typecheck, lint, format check and tests), and push only when it passes.
 
 ## Agent skills
 
@@ -22,4 +22,4 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### Running the app
 
-After changing the renderer, drive the app with the `run-desktop` skill (`electron/.agents/skills/run-desktop/SKILL.md`) before committing, and look at its screenshots.
+After changing the renderer, drive the app with the `run-desktop` skill (`.agents/skills/run-desktop/SKILL.md`) before committing, and look at its screenshots.

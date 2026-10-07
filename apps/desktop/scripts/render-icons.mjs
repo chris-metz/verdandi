@@ -9,8 +9,8 @@ import { pathToFileURL } from "node:url";
 import { app, BrowserWindow } from "electron";
 
 const desktop = resolve(import.meta.dirname, "..");
-// The repository, above electron/, whose docs/ holds the social preview.
-const repo = resolve(desktop, "../../..");
+// The repository, whose docs/ holds the social preview.
+const repo = resolve(desktop, "../..");
 const iconSvg = join(desktop, "build/icon.svg");
 const geist = join(
   desktop,

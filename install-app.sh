@@ -7,11 +7,12 @@
 set -eu
 cd "$(dirname "$0")"
 
-(cd electron && pnpm install --frozen-lockfile && pnpm package)
+pnpm install --frozen-lockfile
+pnpm package
 if [ "$(uname -m)" = arm64 ]; then
-  built=electron/apps/desktop/dist/mac-arm64/Verdandi.app
+  built=apps/desktop/dist/mac-arm64/Verdandi.app
 else
-  built=electron/apps/desktop/dist/mac/Verdandi.app
+  built=apps/desktop/dist/mac/Verdandi.app
 fi
 
 running() { [ -n "$(lsappinfo find bundleid="$1")" ]; }

@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+out/
+dist/
+# Throwaway prototypes stay as they were written.
+docs/prototypes/
