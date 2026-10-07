@@ -10,11 +10,11 @@ Go/Wails, Rust/Tauri, and TypeScript/Electron all fit the broad application shap
 
 The following fit assessments are **inferences from the documented capabilities below**, not comparative benchmarks:
 
-| Candidate | Core and renderer | Conditional fit | Main trade-off to accept |
-| --- | --- | --- | --- |
-| **Wails v2** | Go; system webviews | Go core and future Bubble Tea TUI; embedded application assets | Browser differences and Linux dependencies; updater/release work beyond the surveyed stable tooling |
-| **Tauri v2** | Rust; system webviews | Rust core and future ratatui TUI; integrated bundling and signed updater | Rust/frontend boundary and build tooling; browser differences and Linux dependencies |
-| **Electron** | TypeScript/JavaScript on embedded Node; bundled Chromium | Node ecosystem, common rendering engine, established desktop APIs and packaging | Ship and maintain the Node/Chromium runtime; choose a Linux update strategy |
+| Candidate         | Core and renderer                                                                 | Conditional fit                                                                           | Main trade-off to accept                                                                                                 |
+| ----------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Wails v2**      | Go; system webviews                                                               | Go core and future Bubble Tea TUI; embedded application assets                            | Browser differences and Linux dependencies; updater/release work beyond the surveyed stable tooling                      |
+| **Tauri v2**      | Rust; system webviews                                                             | Rust core and future ratatui TUI; integrated bundling and signed updater                  | Rust/frontend boundary and build tooling; browser differences and Linux dependencies                                     |
+| **Electron**      | TypeScript/JavaScript on embedded Node; bundled Chromium                          | Node ecosystem, common rendering engine, established desktop APIs and packaging           | Ship and maintain the Node/Chromium runtime; choose a Linux update strategy                                              |
 | **Electrobun v2** | TypeScript on default Cottontail or optional Bun; system webviews or optional CEF | TypeScript with selectable runtime/renderer and willingness to validate newer integration | Published macOS targets exclude Intel; Windows signing needs a separate procedure; runtime compatibility must be checked |
 
 There is no like-for-like Verdandi measurement of package size, memory, startup, input latency, or development-loop speed. A small executable and a complete installer containing its browser/runtime are different measurements.
@@ -67,12 +67,12 @@ Distinguish **internal sidebar reordering**, dragging the application window, an
 
 ## Distribution, size, signing, and updates
 
-| Candidate | Packaging and runtime implications | Signing and update story |
-| --- | --- | --- |
-| **Wails v2** | Embeds assets in an executable; macOS application packaging and Windows NSIS are documented. System browser/libraries and installed `gh` remain prerequisites. | Windows signing and macOS signing/notarization guides exist. The surveyed v2 docs did not establish a comparable integrated updater; choose/validate external tooling or manual/package-manager updates. |
-| **Tauri v2** | `.app`/DMG, MSI/NSIS, Debian/RPM/AppImage and other channels; system runtime handling varies by format. | Integrated signing/bundling docs and updater plugin. Updater signatures are mandatory and separate from OS signing; documented update artifacts cover AppImage, macOS app archive, MSI/NSIS, not every package format. |
-| **Electron** | Ships Node/Chromium and application resources; Forge makes platform distributables. A single installer file is not a single installed executable. | Forge documents macOS signing/notarization and Windows signing. Built-in `autoUpdater` covers macOS/Windows, not Linux; macOS updates require signing and Windows support depends on packaging. |
-| **Electrobun v2** | Runnable bundle packaged through self-extracting distribution; docs describe DMG, Windows Setup ZIP, and Linux setup archive. Optional CEF increases payload. | Documents cross-platform archive/patch updates with a post-exit helper and rollback. macOS signing/notarization is integrated; Windows signing is absent from Hutch's packaging pipeline at the stable tag. |
+| Candidate         | Packaging and runtime implications                                                                                                                             | Signing and update story                                                                                                                                                                                               |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Wails v2**      | Embeds assets in an executable; macOS application packaging and Windows NSIS are documented. System browser/libraries and installed `gh` remain prerequisites. | Windows signing and macOS signing/notarization guides exist. The surveyed v2 docs did not establish a comparable integrated updater; choose/validate external tooling or manual/package-manager updates.               |
+| **Tauri v2**      | `.app`/DMG, MSI/NSIS, Debian/RPM/AppImage and other channels; system runtime handling varies by format.                                                        | Integrated signing/bundling docs and updater plugin. Updater signatures are mandatory and separate from OS signing; documented update artifacts cover AppImage, macOS app archive, MSI/NSIS, not every package format. |
+| **Electron**      | Ships Node/Chromium and application resources; Forge makes platform distributables. A single installer file is not a single installed executable.              | Forge documents macOS signing/notarization and Windows signing. Built-in `autoUpdater` covers macOS/Windows, not Linux; macOS updates require signing and Windows support depends on packaging.                        |
+| **Electrobun v2** | Runnable bundle packaged through self-extracting distribution; docs describe DMG, Windows Setup ZIP, and Linux setup archive. Optional CEF increases payload.  | Documents cross-platform archive/patch updates with a post-exit helper and rollback. macOS signing/notarization is integrated; Windows signing is absent from Hutch's packaging pipeline at the stable tag.            |
 
 Sources: [Wails assets](https://wails.io/docs/introduction/), [NSIS](https://wails.io/docs/guides/windows-installer/), [signing](https://wails.io/docs/guides/signing/); [Tauri distribution](https://v2.tauri.app/distribute/), [updater](https://v2.tauri.app/plugin/updater/); [Forge makers](https://www.electronforge.io/config/makers), [macOS signing](https://www.electronforge.io/guides/code-signing/code-signing-macos), [Windows signing](https://www.electronforge.io/guides/code-signing/code-signing-windows), [Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater); [Electrobun distribution](https://framework.blackboard.sh/electrobun/guides/architecture/overview/), [updates](https://framework.blackboard.sh/electrobun/guides/updates/), [tagged signing guide](https://github.com/blackboardsh/electrobun/blob/v2.0.1/docs/src/content/docs/electrobun/guides/code-signing.mdx).
 
@@ -88,11 +88,11 @@ If footprint drives the choice, compare the same synthetic application, same arc
 
 The following are feasible separation patterns, **not the decided architecture**:
 
-| Core language | GUI adapter | Later TUI reuse |
-| --- | --- | --- |
-| Go | Wails-bound methods delegate to ordinary Go packages | Bubble Tea imports the same packages |
-| Rust | Tauri commands delegate to a library crate | ratatui application depends on that crate |
-| TypeScript | Electron IPC or Electrobun RPC delegates to an ordinary package | Ink/OpenTUI imports it with an appropriate runtime adapter |
+| Core language | GUI adapter                                                     | Later TUI reuse                                            |
+| ------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| Go            | Wails-bound methods delegate to ordinary Go packages            | Bubble Tea imports the same packages                       |
+| Rust          | Tauri commands delegate to a library crate                      | ratatui application depends on that crate                  |
+| TypeScript    | Electron IPC or Electrobun RPC delegates to an ordinary package | Ink/OpenTUI imports it with an appropriate runtime adapter |
 
 [Wails bindings](https://wails.io/docs/introduction/), [Tauri commands](https://v2.tauri.app/develop/calling-rust/), [Electron process model](https://www.electronjs.org/docs/latest/tutorial/process-model), [Bubble Tea](https://github.com/charmbracelet/bubbletea), [ratatui concepts](https://ratatui.rs/concepts/), [Ink](https://github.com/vadimdemedes/ink).
 
@@ -104,12 +104,12 @@ For TypeScript, distinguish language reuse from runtime compatibility. Ink's obs
 
 `gh api` supports REST/GraphQL and structured request bodies on stdin. Every candidate can delegate requests to it; the language comparison does not reopen the installed/authenticated-`gh` prerequisite. [gh api](https://cli.github.com/manual/gh_api).
 
-| Language/runtime | Process integration | Optional native HTTP client |
-| --- | --- | --- |
-| Go | `os/exec`, `CommandContext`; `go-gh` also wraps CLI execution | `go-gh/v2` has gh-aware REST/GraphQL clients |
-| Rust | `std::process::Command` or an async process adapter; call behind narrow core commands | Octocrab offers REST helpers, generic methods, and GraphQL |
-| Electron / Node | Asynchronous `child_process.spawn` / `execFile` | Octokit provides REST/GraphQL, pagination, and related plugins |
-| Actual Bun | `Bun.spawn` | Check the chosen client under Bun; do not infer Cottontail compatibility from Node/Bun support |
+| Language/runtime | Process integration                                                                   | Optional native HTTP client                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Go               | `os/exec`, `CommandContext`; `go-gh` also wraps CLI execution                         | `go-gh/v2` has gh-aware REST/GraphQL clients                                                   |
+| Rust             | `std::process::Command` or an async process adapter; call behind narrow core commands | Octocrab offers REST helpers, generic methods, and GraphQL                                     |
+| Electron / Node  | Asynchronous `child_process.spawn` / `execFile`                                       | Octokit provides REST/GraphQL, pagination, and related plugins                                 |
+| Actual Bun       | `Bun.spawn`                                                                           | Check the chosen client under Bun; do not infer Cottontail compatibility from Node/Bun support |
 
 [Go subprocesses](https://pkg.go.dev/os/exec), [go-gh](https://github.com/cli/go-gh), [Rust Command](https://doc.rust-lang.org/std/process/struct.Command.html), [Octocrab](https://docs.rs/octocrab/latest/octocrab/struct.Octocrab.html), [Node subprocesses](https://nodejs.org/api/child_process.html), [Bun subprocesses](https://bun.sh/reference/bun/spawn), [Octokit](https://github.com/octokit/octokit.js).
 
@@ -123,12 +123,12 @@ SDKs are unnecessary for transport if requests all pass through `gh api`. If the
 
 These are browser/frontend choices available with all four wrappers, subject to their webview features. This is an inference from the libraries' supported environments, not a tested four-wrapper integration. A Go or Rust core can supply serializable issue/relationship records while the frontend handles layout and interaction.
 
-| Library | What it supplies | Verdandi assessment |
-| --- | --- | --- |
-| **ELK / elkjs** | Layout, including layered directed graphs, ports, and optional Web Workers; no rendering | Useful candidate for branching/converging blocking chains and edge routing. Still needs a renderer, keyboard behavior, and correctly packaged worker assets. [elkjs](https://github.com/kieler/elkjs) |
-| **Dagre** | Renderer-independent directed layout from node sizes | Simpler layout candidate for modest diagrams; no accessible UI. React Flow documents a limitation for sub-flows linked to outside nodes. [Dagre](https://github.com/dagrejs/dagre/wiki), [layout comparison](https://reactflow.dev/learn/layouting/layouting) |
-| **Cytoscape.js** | Graph data/algorithms, canvas rendering, layouts, interaction, compound nodes | Useful for graph exploration. Keyboard/screen-reader equivalence was not established here; verify an integration or provide semantic navigation alongside the canvas. [Documentation](https://js.cytoscape.org/) |
-| **React Flow** | React node/edge UI, custom nodes, pan/zoom; external layout | Useful for rich issue cards. Offers focusable nodes/edges, keyboard selection, ARIA labels/live messages; configure editing-like defaults for read-only navigation. [Accessibility](https://reactflow.dev/learn/advanced-use/accessibility), [layout integration](https://reactflow.dev/learn/layouting/layouting) |
+| Library          | What it supplies                                                                         | Verdandi assessment                                                                                                                                                                                                                                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **ELK / elkjs**  | Layout, including layered directed graphs, ports, and optional Web Workers; no rendering | Useful candidate for branching/converging blocking chains and edge routing. Still needs a renderer, keyboard behavior, and correctly packaged worker assets. [elkjs](https://github.com/kieler/elkjs)                                                                                                              |
+| **Dagre**        | Renderer-independent directed layout from node sizes                                     | Simpler layout candidate for modest diagrams; no accessible UI. React Flow documents a limitation for sub-flows linked to outside nodes. [Dagre](https://github.com/dagrejs/dagre/wiki), [layout comparison](https://reactflow.dev/learn/layouting/layouting)                                                      |
+| **Cytoscape.js** | Graph data/algorithms, canvas rendering, layouts, interaction, compound nodes            | Useful for graph exploration. Keyboard/screen-reader equivalence was not established here; verify an integration or provide semantic navigation alongside the canvas. [Documentation](https://js.cytoscape.org/)                                                                                                   |
+| **React Flow**   | React node/edge UI, custom nodes, pan/zoom; external layout                              | Useful for rich issue cards. Offers focusable nodes/edges, keyboard selection, ARIA labels/live messages; configure editing-like defaults for read-only navigation. [Accessibility](https://reactflow.dev/learn/advanced-use/accessibility), [layout integration](https://reactflow.dev/learn/layouting/layouting) |
 
 React Flow recommends memoization, narrow state subscriptions, collapsed trees, and simpler styles for large diagrams. Cytoscape documents the effects of graph size, edges, styles, and pixel ratio. Neither establishes a universal safe node count. Layout time and rendering/input latency should be measured separately using representative synthetic trees and chains. [React Flow performance](https://reactflow.dev/learn/advanced-use/performance), [Cytoscape performance](https://js.cytoscape.org/#performance).
 
@@ -136,12 +136,12 @@ React Flow recommends memoization, narrow state subscriptions, collapsed trees, 
 
 ## Development loop
 
-| Candidate | Documented loop | Qualification |
-| --- | --- | --- |
-| Wails | `wails dev` runs the app, generates bindings, supports frontend development, and rebuilds/restarts Go changes | Browser frontend development helps UI iteration; packaged behavior still needs separate validation. [Development guide](https://wails.io/docs/gettingstarted/development/) |
-| Tauri | `tauri dev` uses a frontend dev server and watches/rebuilds Rust | Initial dependency compilation can take minutes; later builds use the cache. [Development guide](https://v2.tauri.app/develop/) |
-| Electron | Frontend HMR with suitable tooling; main/preload have separate restart/reload boundaries | Forge's Vite plugin is still marked experimental. This qualifies that plugin, not Electron's platform maturity. [Vite plugin](https://www.electronforge.io/config/plugins/vite) |
-| Electrobun | Whole-app watch rebuild/relaunch, or template-provided Vite frontend HMR | Current docs say frontend HMR does not continuously rebuild main code, and Windows watch asks the developer to close the app for rebuilding. [Hot reloading](https://framework.blackboard.sh/electrobun/guides/hot-reloading/) |
+| Candidate  | Documented loop                                                                                               | Qualification                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Wails      | `wails dev` runs the app, generates bindings, supports frontend development, and rebuilds/restarts Go changes | Browser frontend development helps UI iteration; packaged behavior still needs separate validation. [Development guide](https://wails.io/docs/gettingstarted/development/)                                                     |
+| Tauri      | `tauri dev` uses a frontend dev server and watches/rebuilds Rust                                              | Initial dependency compilation can take minutes; later builds use the cache. [Development guide](https://v2.tauri.app/develop/)                                                                                                |
+| Electron   | Frontend HMR with suitable tooling; main/preload have separate restart/reload boundaries                      | Forge's Vite plugin is still marked experimental. This qualifies that plugin, not Electron's platform maturity. [Vite plugin](https://www.electronforge.io/config/plugins/vite)                                                |
+| Electrobun | Whole-app watch rebuild/relaunch, or template-provided Vite frontend HMR                                      | Current docs say frontend HMR does not continuously rebuild main code, and Windows watch asks the developer to close the app for rebuilding. [Hot reloading](https://framework.blackboard.sh/electrobun/guides/hot-reloading/) |
 
 No timing experiment was performed. Familiarity with Go, Rust, TypeScript, and the selected frontend is a decision input; generic claims that one language makes Verdandi faster to develop would exceed the evidence.
 

@@ -10,14 +10,14 @@ GitHub exposes native sub-issue and blocking relationships through both APIs. Gr
 
 Paths below are relative to `https://api.github.com/repos/{owner}/{repo}/issues/{number}`.
 
-| Data | REST GET | GraphQL `Issue` field |
-| --- | --- | --- |
-| Immediate sub-issues | `/sub_issues` | `subIssues(first:, after:)` |
-| Parent issue | `/parent` | `parent` (nullable `Issue`) |
-| Progress | Issue payload: `sub_issues_summary` | `subIssuesSummary` |
-| Issues blocking this issue | `/dependencies/blocked_by` | `blockedBy(first:, after:, orderBy:)` |
-| Issues this issue blocks | `/dependencies/blocking` | `blocking(first:, after:, orderBy:)` |
-| Blocking counts | Issue payload: `issue_dependencies_summary` | `issueDependenciesSummary` |
+| Data                       | REST GET                                    | GraphQL `Issue` field                 |
+| -------------------------- | ------------------------------------------- | ------------------------------------- |
+| Immediate sub-issues       | `/sub_issues`                               | `subIssues(first:, after:)`           |
+| Parent issue               | `/parent`                                   | `parent` (nullable `Issue`)           |
+| Progress                   | Issue payload: `sub_issues_summary`         | `subIssuesSummary`                    |
+| Issues blocking this issue | `/dependencies/blocked_by`                  | `blockedBy(first:, after:, orderBy:)` |
+| Issues this issue blocks   | `/dependencies/blocking`                    | `blocking(first:, after:, orderBy:)`  |
+| Blocking counts            | Issue payload: `issue_dependencies_summary` | `issueDependenciesSummary`            |
 
 REST relationship lists default to 30 items and permit `per_page=100`. Parent and sub-issue reads require fine-grained **Issues: read** for private resources. Dependency reads have the same requirement. Public reads can be unauthenticated. These are supported endpoints; the current examples use `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2026-03-10`. [REST sub-issues](https://docs.github.com/en/rest/issues/sub-issues), [REST issue dependencies](https://docs.github.com/en/rest/issues/issue-dependencies).
 
@@ -40,20 +40,20 @@ An issue's own repository identity must travel with it. A repository-scoped root
 
 The issue UI supports uppercase `AND`, `OR`, implicit AND, and parentheses nested up to five levels. Exclude a qualifier with `-`, for example `-label:bug`; use `is:issue` to exclude pull requests. [Advanced issue filters](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/filtering-and-searching-issues-and-pull-requests), [Issue search syntax](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests).
 
-| Surface | Explicit advanced-search selection |
-| --- | --- |
-| REST | `GET /search/issues?q=...&advanced_search=true` |
+| Surface | Explicit advanced-search selection                     |
+| ------- | ------------------------------------------------------ |
+| REST    | `GET /search/issues?q=...&advanced_search=true`        |
 | GraphQL | `search(query: ..., type: ISSUE_ADVANCED, first: ...)` |
 
 Advanced search interprets adjacent `repo:`, `org:`, and `user:` qualifiers as **AND**; legacy search interprets them as **OR**. For multiple tracked repositories, use an explicit union, for example `is:issue is:open (repo:owner/one OR repo:owner/two)`. Sending the same text to legacy and advanced modes can therefore produce different results. [GitHub's advanced-search API announcement](https://github.blog/changelog/2025-07-17-duplicate-issues-create-from-anywhere-and-more/).
 
-| Relationship filter | Meaning/evidence |
-| --- | --- |
-| `has:sub-issue`, `no:parent-issue` | Official examples for presence of sub-issues and absence of a parent. [Filtering announcement](https://github.blog/changelog/2024-12-12-github-issues-projects-close-issue-as-a-duplicate-rest-api-for-sub-issues-and-more/) |
-| `has:parent-issue` | Official engineering article discusses this filter; live GraphQL probe also succeeded. [Sub-issue implementation](https://github.blog/engineering/architecture-optimization/introducing-sub-issues-enhancing-issue-management-on-github/) |
-| `parent-issue:owner/repo#123` | Matches sub-issues of a particular parent; documented for Projects and verified here through issue search. [Parent field syntax](https://docs.github.com/en/issues/planning-and-tracking-with-projects/understanding-fields/about-parent-issue-and-sub-issue-progress-fields) |
-| `is:blocked`, `is:blocking` | Issues blocked by others / blocking others. [Dependency announcement](https://github.blog/changelog/2025-08-21-dependencies-on-issues/) |
-| `blocked-by:owner/repo#123`, `blocking:owner/repo#123` | Issues blocked by the specified issue / issues that block it; these reference forms were verified through REST. [Dependency announcement](https://github.blog/changelog/2025-08-21-dependencies-on-issues/) |
+| Relationship filter                                    | Meaning/evidence                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `has:sub-issue`, `no:parent-issue`                     | Official examples for presence of sub-issues and absence of a parent. [Filtering announcement](https://github.blog/changelog/2024-12-12-github-issues-projects-close-issue-as-a-duplicate-rest-api-for-sub-issues-and-more/)                                                  |
+| `has:parent-issue`                                     | Official engineering article discusses this filter; live GraphQL probe also succeeded. [Sub-issue implementation](https://github.blog/engineering/architecture-optimization/introducing-sub-issues-enhancing-issue-management-on-github/)                                     |
+| `parent-issue:owner/repo#123`                          | Matches sub-issues of a particular parent; documented for Projects and verified here through issue search. [Parent field syntax](https://docs.github.com/en/issues/planning-and-tracking-with-projects/understanding-fields/about-parent-issue-and-sub-issue-progress-fields) |
+| `is:blocked`, `is:blocking`                            | Issues blocked by others / blocking others. [Dependency announcement](https://github.blog/changelog/2025-08-21-dependencies-on-issues/)                                                                                                                                       |
+| `blocked-by:owner/repo#123`, `blocking:owner/repo#123` | Issues blocked by the specified issue / issues that block it; these reference forms were verified through REST. [Dependency announcement](https://github.blog/changelog/2025-08-21-dependencies-on-issues/)                                                                   |
 
 These are capability findings, not a decision to include relationship filters in Verdandi; the map currently excludes them. No generic `is:sub-issue` or `is:parent` spelling was established. Search relationships should not substitute for enumerating tree/chain edges.
 
@@ -93,11 +93,11 @@ REST conditional requests returning authenticated `304` responses do not consume
 
 `gh` supports macOS Keychain, Linux Secret Service, and Windows Wincred. Modern `gh auth login` stores credentials in the system credential store, falling back to a plaintext file if storage fails. The same CLI interface hides these OS differences. [CLI keyring release notes](https://github.com/cli/cli/discussions/7109), [Current login manual](https://cli.github.com/manual/gh_auth_login).
 
-| Option | Capability | Engineering trade-off (assessment) |
-| --- | --- | --- |
-| Run `gh api` | Authenticated REST/GraphQL; headers, JSON, REST pagination, GraphQL cursor pagination. | Language independent and keeps bearer-token handling in `gh`; process startup, cancellation, exit/error handling, and CLI discovery remain application concerns. |
-| Capture `gh auth token --hostname github.com` | Outputs the active account's token; `--user` selects a stored account. | Then any HTTP client can reuse connections and manage requests directly; Verdandi now holds a bearer token and must keep it out of logs, command arguments, disk, and UI. |
-| Use `github.com/cli/go-gh/v2` | Native Go REST/GraphQL clients following gh authentication conventions. | Convenient if Go is chosen; not a reason to choose the stack by itself, and does not remove the installed-gh prerequisite for normal keyring credentials. |
+| Option                                        | Capability                                                                             | Engineering trade-off (assessment)                                                                                                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run `gh api`                                  | Authenticated REST/GraphQL; headers, JSON, REST pagination, GraphQL cursor pagination. | Language independent and keeps bearer-token handling in `gh`; process startup, cancellation, exit/error handling, and CLI discovery remain application concerns.          |
+| Capture `gh auth token --hostname github.com` | Outputs the active account's token; `--user` selects a stored account.                 | Then any HTTP client can reuse connections and manage requests directly; Verdandi now holds a bearer token and must keep it out of logs, command arguments, disk, and UI. |
+| Use `github.com/cli/go-gh/v2`                 | Native Go REST/GraphQL clients following gh authentication conventions.                | Convenient if Go is chosen; not a reason to choose the stack by itself, and does not remove the installed-gh prerequisite for normal keyring credentials.                 |
 
 [gh api manual](https://cli.github.com/manual/gh_api), [gh auth token manual](https://cli.github.com/manual/gh_auth_token), [go-gh source/readme](https://github.com/cli/go-gh).
 

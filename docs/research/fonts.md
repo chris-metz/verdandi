@@ -34,13 +34,13 @@ The Electron app uses Electron 44.4.5, which bundles Chromium 152.0.7977.130 and
 
 **Observed** with Electron 44.4.5 on macOS 27.0.1, in a scratch app with Verdandi's `webPreferences` and CSP, loading a `file://` page (as the packaged app does):
 
-| Setup | Result |
-| --- | --- |
-| No handlers, no user gesture | 522 faces, 182 families; `navigator.permissions.query({name: "local-fonts"})` is `granted`; `window.origin` is `file://`, `isSecureContext` is `true` |
-| Check handler returning `true` | Same; the handler saw `local-fonts` with origin `file:///`; the request handler was not called |
-| Check handler returning `false` for `local-fonts` | Resolved with `[]`, with or without a simulated user gesture |
-| Window hidden with `win.hide()` after a successful call | Rejected: `SecurityError: Page needs to be visible.` |
-| Called before the `show: false` window was shown | Worked; `document.visibilityState` was `visible` |
+| Setup                                                   | Result                                                                                                                                                |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No handlers, no user gesture                            | 522 faces, 182 families; `navigator.permissions.query({name: "local-fonts"})` is `granted`; `window.origin` is `file://`, `isSecureContext` is `true` |
+| Check handler returning `true`                          | Same; the handler saw `local-fonts` with origin `file:///`; the request handler was not called                                                        |
+| Check handler returning `false` for `local-fonts`       | Resolved with `[]`, with or without a simulated user gesture                                                                                          |
+| Window hidden with `win.hide()` after a successful call | Rejected: `SecurityError: Page needs to be visible.`                                                                                                  |
+| Called before the `show: false` window was shown        | Worked; `document.visibilityState` was `visible`                                                                                                      |
 
 The last two rows match Electron's docs: on macOS the visibility state is also `hidden` while the window is fully covered by another, and a window created with `show: false` starts `visible` ([Page visibility](https://www.electronjs.org/docs/latest/api/browser-window#page-visibility)). Chromium checks visibility before anything else, including its cache.
 
@@ -60,13 +60,13 @@ Electron's API docs list no font enumeration of their own. Their only mention of
 
 All of these run in the main process, not in the sandboxed renderer. Verdandi's packaging takes only `out/**`, which electron-vite bundles, and `package.json`; no `node_modules` are packaged (`electron/apps/desktop/electron-builder.yml`). A package that ships a binary or a `.node` file next to its source needs extra packaging work.
 
-| Package | Last publish, license | How it works | Monospace |
-| --- | --- | --- | --- |
-| [`font-list`](https://github.com/oldj/node-font-list) 2.1.0 | 2026-05-21, MIT | macOS: runs a bundled universal binary built from `NSFontManager availableFontFamilies`, then falls back to `system_profiler`. Linux: `fc-list`. Windows: PowerShell with WPF's `SystemFontFamilies`, preferring a zh-CN family name where one exists. | macOS: `NSFontMonoSpaceTrait` of the family's first member. Linux: `spacing` text containing "mono", else words such as "mono" or "courier" in the name. Windows: only words in the name ("mono", "courier", "console", "terminal", "fixed", "typewriter"); a width check exists only in a comment. |
-| [`font-scanner`](https://github.com/axosoft/font-scanner) 0.2.1 | 2022-09-13, MIT | Native addon: CoreText, DirectWrite, fontconfig. Built with node-gyp on install; Linux needs `libfontconfig-dev`. | `kCTFontMonoSpaceTrait`, `IDWriteFontFace1::IsMonospacedFont`, `FC_SPACING == FC_MONO` |
-| [`fontmanager-redux`](https://github.com/Eugeny/fontmanager-redux) 1.1.0 | 2021-06-24, MIT | Same design as `font-scanner` (both descend from `font-manager`). node-gyp on install. | Same |
-| [`get-system-fonts`](https://github.com/princjef/get-system-fonts) 2.0.2 | 2020-06-12, MIT | Scans font folders and returns file paths, not family names. | No |
-| [`system-font-families`](https://github.com/rBurgett/system-font-families) 0.6.0 | 2021-10-20, Apache-2.0 | Pure JavaScript; parses TTF and OTF files. | No |
+| Package                                                                          | Last publish, license  | How it works                                                                                                                                                                                                                                           | Monospace                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`font-list`](https://github.com/oldj/node-font-list) 2.1.0                      | 2026-05-21, MIT        | macOS: runs a bundled universal binary built from `NSFontManager availableFontFamilies`, then falls back to `system_profiler`. Linux: `fc-list`. Windows: PowerShell with WPF's `SystemFontFamilies`, preferring a zh-CN family name where one exists. | macOS: `NSFontMonoSpaceTrait` of the family's first member. Linux: `spacing` text containing "mono", else words such as "mono" or "courier" in the name. Windows: only words in the name ("mono", "courier", "console", "terminal", "fixed", "typewriter"); a width check exists only in a comment. |
+| [`font-scanner`](https://github.com/axosoft/font-scanner) 0.2.1                  | 2022-09-13, MIT        | Native addon: CoreText, DirectWrite, fontconfig. Built with node-gyp on install; Linux needs `libfontconfig-dev`.                                                                                                                                      | `kCTFontMonoSpaceTrait`, `IDWriteFontFace1::IsMonospacedFont`, `FC_SPACING == FC_MONO`                                                                                                                                                                                                              |
+| [`fontmanager-redux`](https://github.com/Eugeny/fontmanager-redux) 1.1.0         | 2021-06-24, MIT        | Same design as `font-scanner` (both descend from `font-manager`). node-gyp on install.                                                                                                                                                                 | Same                                                                                                                                                                                                                                                                                                |
+| [`get-system-fonts`](https://github.com/princjef/get-system-fonts) 2.0.2         | 2020-06-12, MIT        | Scans font folders and returns file paths, not family names.                                                                                                                                                                                           | No                                                                                                                                                                                                                                                                                                  |
+| [`system-font-families`](https://github.com/rBurgett/system-font-families) 0.6.0 | 2021-10-20, Apache-2.0 | Pure JavaScript; parses TTF and OTF files.                                                                                                                                                                                                             | No                                                                                                                                                                                                                                                                                                  |
 
 The `font-list` README's platform table says macOS uses `system_profiler`; its code tries the bundled binary first ([darwin/index.js](https://github.com/oldj/node-font-list/blob/e3d83ac9a500bf644ae82d3ca46f271b7f5be83d/libs/darwin/index.js), [win32 detailed script](https://github.com/oldj/node-font-list/blob/e3d83ac9a500bf644ae82d3ca46f271b7f5be83d/libs/win32/getDetailedFontsByPowerShell.js), [linux/index.js](https://github.com/oldj/node-font-list/blob/e3d83ac9a500bf644ae82d3ca46f271b7f5be83d/libs/linux/index.js)). Its macOS binary is found through `__dirname`, which a Vite bundle changes. The native modules' monospace checks are in their `src/FontManager*.{mm,cc}` files. Publish dates are from the npm registry.
 
@@ -94,14 +94,14 @@ Both were tried on one Mac only.
 
 ### Comparison
 
-| Source | Families (this Mac) | Speed (this Mac) | Monospace | Sandboxed renderer with `contextIsolation` | Maintenance | License |
-| --- | --- | --- | --- | --- | --- | --- |
-| `queryLocalFonts()` | 182 | 127–174 ms first call, ~1 ms after | Not exposed; parse `blob()` (1.8 s) or measure (50 ms) | Yes, observed | Part of Chromium; spec still a WICG draft | Part of Electron |
-| `font-list` | 182 | 40 / 85 ms | Native trait on macOS; name words on Windows and partly Linux | No: main process, child processes, bundled binary | Published 2026-05 | MIT |
-| `font-scanner`, `fontmanager-redux` | Not tested | Not tested | Platform APIs on all three | No: main process, native addon | Last published 2022 / 2021 | MIT |
-| `system_profiler` | 277, including 95 hidden | 8.8 s | No | No: macOS only, child process | Apple | Part of macOS |
-| `fc-list` | Not tested | Not tested | `:spacing=mono` | No: Linux only, child process | fontconfig | Part of the OS |
-| DirectWrite | Not tested | Not tested | `IsMonospacedFont` | No: native code | Microsoft | Part of Windows |
+| Source                              | Families (this Mac)      | Speed (this Mac)                   | Monospace                                                     | Sandboxed renderer with `contextIsolation`        | Maintenance                               | License          |
+| ----------------------------------- | ------------------------ | ---------------------------------- | ------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------- | ---------------- |
+| `queryLocalFonts()`                 | 182                      | 127–174 ms first call, ~1 ms after | Not exposed; parse `blob()` (1.8 s) or measure (50 ms)        | Yes, observed                                     | Part of Chromium; spec still a WICG draft | Part of Electron |
+| `font-list`                         | 182                      | 40 / 85 ms                         | Native trait on macOS; name words on Windows and partly Linux | No: main process, child processes, bundled binary | Published 2026-05                         | MIT              |
+| `font-scanner`, `fontmanager-redux` | Not tested               | Not tested                         | Platform APIs on all three                                    | No: main process, native addon                    | Last published 2022 / 2021                | MIT              |
+| `system_profiler`                   | 277, including 95 hidden | 8.8 s                              | No                                                            | No: macOS only, child process                     | Apple                                     | Part of macOS    |
+| `fc-list`                           | Not tested               | Not tested                         | `:spacing=mono`                                               | No: Linux only, child process                     | fontconfig                                | Part of the OS   |
+| DirectWrite                         | Not tested               | Not tested                         | `IsMonospacedFont`                                            | No: native code                                   | Microsoft                                 | Part of Windows  |
 
 ## Checking that a font is installed
 
@@ -145,19 +145,19 @@ Geist comes from `@fontsource-variable/geist` (`electron/apps/desktop/package.js
 
 Counted over every string in the renderer's `.ts` and `.tsx` files, tests excluded, with variants stripped:
 
-| Kind | Uses | Notes |
-| --- | --- | --- |
-| Text, Tailwind scale (rem) | 85 in 24 files | `text-xs` 69, `text-sm` 12, `text-base` 2, `text-xl` 1, `text-2xl` 1 |
-| Text, arbitrary px | 24 in 11 files | `text-[11px]` 18, `text-[10px]` 5, `text-[13px]` 1 |
-| Text, arbitrary rem | 1 | `text-[0.8rem]` (`components/ui/button.tsx:25`) |
-| Line height, spacing-based | 6 | `leading-4`: `BlockingMapBand.tsx:316`, `IssueRow.tsx:244,265,308,497`, `RateLimitsButton.tsx:107` |
-| Line height, arbitrary px | 4 | `leading-[18px]`: `IssueRow.tsx:444,463`, `LabelFilter.tsx:76,111` |
-| Line height, unitless | 6 | `leading-none` 3, `leading-snug` 2, `leading-tight` 1 |
-| Spacing and sizing, Tailwind scale (rem) | 465 in 27 files | `min-w-0` 27, `gap-2` 21, `gap-1` 20, `px-2` 19, `px-4` 18 …; icons are `size-3`, `size-3.5`, `size-4` |
-| Sizing, arbitrary px | 4 | `size-[18px]`, the chevron box (`IssueRow.tsx:217,334,525,533`) |
-| Sizing, arbitrary with rem | 8 | `max-h-[calc(100%-3rem)]` and similar in dialogs; `h-[min(40rem,calc(100%-3rem))]` (`RepositoryPicker.tsx:212`) |
-| Sizing, containers (rem) | 7 | `max-w-sm`, `-lg`, `-xl`, `-2xl`, `-3xl` |
-| Other arbitrary px | 10 | `border-l-[3px]` (`BlockingMapBand.tsx:277`), `rounded-[min(var(--radius-md),10px\|12px)]` ×4 (`button.tsx`), 2 px `shadow-[inset_…_var(--selection-edge)]` selection edges ×5 (`App.tsx:44`, `IssueRow.tsx:194`, `RepositoryPicker.tsx:265,469`, `Sidebar.tsx:447`) |
+| Kind                                     | Uses            | Notes                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Text, Tailwind scale (rem)               | 85 in 24 files  | `text-xs` 69, `text-sm` 12, `text-base` 2, `text-xl` 1, `text-2xl` 1                                                                                                                                                                                                 |
+| Text, arbitrary px                       | 24 in 11 files  | `text-[11px]` 18, `text-[10px]` 5, `text-[13px]` 1                                                                                                                                                                                                                   |
+| Text, arbitrary rem                      | 1               | `text-[0.8rem]` (`components/ui/button.tsx:25`)                                                                                                                                                                                                                      |
+| Line height, spacing-based               | 6               | `leading-4`: `BlockingMapBand.tsx:316`, `IssueRow.tsx:244,265,308,497`, `RateLimitsButton.tsx:107`                                                                                                                                                                   |
+| Line height, arbitrary px                | 4               | `leading-[18px]`: `IssueRow.tsx:444,463`, `LabelFilter.tsx:76,111`                                                                                                                                                                                                   |
+| Line height, unitless                    | 6               | `leading-none` 3, `leading-snug` 2, `leading-tight` 1                                                                                                                                                                                                                |
+| Spacing and sizing, Tailwind scale (rem) | 465 in 27 files | `min-w-0` 27, `gap-2` 21, `gap-1` 20, `px-2` 19, `px-4` 18 …; icons are `size-3`, `size-3.5`, `size-4`                                                                                                                                                               |
+| Sizing, arbitrary px                     | 4               | `size-[18px]`, the chevron box (`IssueRow.tsx:217,334,525,533`)                                                                                                                                                                                                      |
+| Sizing, arbitrary with rem               | 8               | `max-h-[calc(100%-3rem)]` and similar in dialogs; `h-[min(40rem,calc(100%-3rem))]` (`RepositoryPicker.tsx:212`)                                                                                                                                                      |
+| Sizing, containers (rem)                 | 7               | `max-w-sm`, `-lg`, `-xl`, `-2xl`, `-3xl`                                                                                                                                                                                                                             |
+| Other arbitrary px                       | 10              | `border-l-[3px]` (`BlockingMapBand.tsx:277`), `rounded-[min(var(--radius-md),10px\|12px)]` ×4 (`button.tsx`), 2 px `shadow-[inset_…_var(--selection-edge)]` selection edges ×5 (`App.tsx:44`, `IssueRow.tsx:194`, `RepositoryPicker.tsx:265,469`, `Sidebar.tsx:447`) |
 
 There are no `h-[..px]`, `w-[..px]`, `gap-[..px]` or `p-[..px]` classes. The arbitrary pixel text sizes are:
 
@@ -181,6 +181,7 @@ These are spacing classes, rem today, that set a box's size around text. They do
   - the shadcn button sizes `h-6`, `h-7`, `h-8`, `h-9` (`components/ui/button.tsx:23-26`), used 23 times in 8 files
 
   Rows that use `min-h-*` already grow (`Sidebar.tsx:444`, `IssueListPane.tsx:120`, `ViewPane.tsx:114`, `RepositoryPicker.tsx:467`).
+
 - **List column widths**: `w-7`, `w-16`, `w-24`, `w-20`, `w-16` for By, Created, Sub-issues, Blocked by and Blocks, shared by header and cells (`IssueRow.tsx:57,64,71,78,85`).
 - **Fixed line heights**: the 6 `leading-4` and 4 `leading-[18px]` sites above. They stay 16 or 18 px whatever the font size.
 
