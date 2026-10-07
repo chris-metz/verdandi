@@ -16,6 +16,11 @@ mac:
   # Developer ID, and the app is signed with the hardened runtime and
   # notarized, as the default `hardenedRuntime` and `notarize` have it.
   identity: null
+  # Signs only the code, whose bundles seal every other file. Otherwise each
+  # file that looks binary is signed on its own, Electron's 223 language files
+  # among them, and each signature asks for the keychain.
+  signIgnore:
+    - '\.(pak|dat|bin|asar|icns|car|nib|plist)$'
   # Icon Composer's format, so macOS renders its depth and its dark, tinted
   # and clear appearances. Compiling it needs Xcode 26 or later. Linux and
   # Windows take `build/icon.png`.

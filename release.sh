@@ -98,6 +98,7 @@ hide_identity() {
         while ((i = index($0, name)) > 0)
             $0 = substr($0, 1, i - 1) "<hidden>" substr($0, i + length(name))
         print
+        fflush()
     }'
 }
 
@@ -190,6 +191,8 @@ pnpm check
 # 5. Build the Mac app: electron-builder signs it with the Developer ID and the
 #    hardened runtime, notarizes and staples it, then puts it in the DMG.
 step "Building the Mac app"
+echo "macOS may ask for your login password, to let codesign use the Developer ID:"
+echo "choose Always Allow, or it asks again for each of the app's parts."
 rm -rf "$BUILT"
 pnpm --filter @verdandi/desktop build
 APPLE_KEYCHAIN_PROFILE="$NOTARY_PROFILE" pnpm --filter @verdandi/desktop exec electron-builder \
