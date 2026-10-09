@@ -14,6 +14,15 @@ import VerdandiKit
 /// - `VERDANDI_APPEARANCE`: `light` or `dark`, whatever `config.toml` says.
 /// - `VERDANDI_TRACK`: `owner/name,owner/name`, tracked unless they are.
 /// - `VERDANDI_VIEW`: `Name|search`, saved as a view unless one has the name.
+/// - `VERDANDI_BODY`: an HTML file that issue pages show as the issue's body,
+///   in place of the one GitHub rendered.
+/// - `VERDANDI_LOAD_IMAGES=1`: loads every image from elsewhere than
+///   GitHub in bodies at once, as if its placeholder was tapped.
+/// - `VERDANDI_BODY_SCROLL`: what the issue page scrolls to once the issue's
+///   body shows: a CSS selector of something in it, a number of points, or
+///   `sweep`, down a screen a second to the end and back.
+/// - `VERDANDI_BODY_TAP`: CSS selectors of what in the issue's body is
+///   tapped then, a second apart, separated by `|`, e.g. `img.media-image`.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
@@ -22,6 +31,10 @@ struct LaunchOptions {
     var appearance: Appearance?
     var track: [RepositoryAddress] = []
     var view: (name: String, query: String)?
+    var bodyHTML: String?
+    var loadsImages = false
+    var bodyScroll: String?
+    var bodyTap: String?
 
     /// Whether the launch chooses where the app opens.
     var selects: Bool { select != nil || issue != nil }
@@ -55,6 +68,12 @@ struct LaunchOptions {
         if let view = environment["VERDANDI_VIEW"], let bar = view.firstIndex(of: "|") {
             options.view = (String(view[..<bar]), String(view[view.index(after: bar)...]))
         }
+        if let body = environment["VERDANDI_BODY"], !body.isEmpty {
+            options.bodyHTML = try? String(contentsOfFile: body, encoding: .utf8)
+        }
+        options.loadsImages = environment["VERDANDI_LOAD_IMAGES"] == "1"
+        options.bodyScroll = environment["VERDANDI_BODY_SCROLL"].flatMap { $0.isEmpty ? nil : $0 }
+        options.bodyTap = environment["VERDANDI_BODY_TAP"].flatMap { $0.isEmpty ? nil : $0 }
         return options
     }
 
