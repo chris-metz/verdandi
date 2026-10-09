@@ -172,6 +172,8 @@ private struct BlockingMapCanvas: View {
     /// Where the issue's middle stands, from the leading edge of what
     /// shows, as the user last left it; in the middle until they scroll.
     @State private var anchor: CGFloat?
+    /// Where a scroll this view asked for is going, while it animates.
+    @State private var requested: CGFloat?
     @State private var activations = 0
 
     /// What of the content shows, and how wide it is.
@@ -198,9 +200,16 @@ private struct BlockingMapCanvas: View {
             scrolled = new
             keepRoot(animated: false)
         }
-        .onScrollPhaseChange { _, new in
+        .onScrollPhaseChange { old, new in
             phase = new
-            if new == .idle, let rootCentre, visible.width > 0 { anchor = rootCentre - visible.minX }
+            guard new == .idle else { return }
+            // Only where the user leaves it: a scroll of this view's own may
+            // have ended short of an issue that moved meanwhile.
+            if [.tracking, .interacting, .decelerating].contains(old), let rootCentre, visible.width > 0 {
+                anchor = rootCentre - visible.minX
+            }
+            requested = nil
+            keepRoot(animated: false)
         }
         .frame(height: layout.size.height)
         .onChange(of: rootCentre) { keepRoot(animated: true) }
@@ -346,12 +355,16 @@ private struct BlockingMapCanvas: View {
     /// as steps come in before it, unless the user is scrolling. The content
     /// may not have grown yet: then it waits for it.
     private func keepRoot(animated: Bool) {
-        guard phase == .idle, visible.width > 0, let rootCentre else { return }
-        let target = rootCentre - (anchor ?? visible.width / 2)
+        guard phase == .idle || phase == .animating, visible.width > 0, let rootCentre,
+            scrolled.contentWidth >= contentWidth - 0.5
+        else { return }
         let lowest = -margin
         let highest = max(lowest, scrolled.contentWidth + margin - visible.width)
-        guard scrolled.contentWidth >= contentWidth - 0.5, abs(min(max(target, lowest), highest) - visible.minX) > 0.5
-        else { return }
+        let target = min(max(rootCentre - (anchor ?? visible.width / 2), lowest), highest)
+        // While a scroll of its own animates, only a new target counts.
+        let heading = phase == .animating ? requested ?? visible.minX : visible.minX
+        guard abs(target - heading) > 0.5 else { return }
+        requested = target
         // Once the content has its new size: a scroll asked for in the same
         // update as it grows ends where the old size allowed.
         Task { @MainActor in

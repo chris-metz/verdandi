@@ -45,6 +45,8 @@ struct BlockingMapCard: View {
         .padding(.horizontal, BlockingMapMetrics.Card.horizontalPadding)
         .padding(.vertical, BlockingMapMetrics.Card.verticalPadding)
         .frame(width: size.width, height: size.height, alignment: .topLeading)
+        // A closed issue fades, but stays solid over the arrows behind it.
+        .opacity(issue.state == .closed && !isRoot ? 0.55 : 1)
         .background {
             shape.fill(palette.card)
             if isRoot { shape.fill(palette.accent.opacity(0.09)) }
@@ -54,7 +56,6 @@ struct BlockingMapCard: View {
         }
         .clipShape(shape)
         .overlay { border(shape) }
-        .opacity(issue.state == .closed && !isRoot ? 0.6 : 1)
         .overlay {
             shape.fill(flashColor).opacity(flashOpacity).allowsHitTesting(false)
         }
