@@ -157,7 +157,10 @@ export function createHost(): Host {
       const started = core;
       void Promise.resolve()
         .then(() => {
-          const args = JSON.parse(argsJSON) as unknown[];
+          // Swift has no undefined: an argument it leaves out is null.
+          const args = (JSON.parse(argsJSON) as unknown[]).map((arg) =>
+            arg === null ? undefined : arg,
+          );
           const request = started[name as keyof CoreRequests] as (
             ...args: unknown[]
           ) => Promise<unknown>;
