@@ -36,7 +36,8 @@ struct QuerySnippet: Identifiable, Hashable {
         ]
         let repositories = tracked.prefix(2)
         for repository in repositories {
-            snippets.append(QuerySnippet(text: "repo:\(repository.nameWithOwner)", help: "In \(repository.nameWithOwner) only"))
+            let name = repository.nameWithOwner
+            snippets.append(QuerySnippet(text: "repo:\(name)", help: "In \(name) only"))
         }
         if repositories.isEmpty {
             snippets.append(QuerySnippet(text: "repo:", help: "In one repository only: type its owner/name"))

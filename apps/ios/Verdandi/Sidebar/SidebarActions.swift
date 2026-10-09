@@ -110,7 +110,9 @@ struct SidebarActions {
         // Dropped where it was.
         if destination == from || destination == from + 1 { return }
         let target: SidebarDestination =
-            destination < keys.count ? .relative(to: keys[destination], before: true) : .relative(to: last, before: false)
+            destination < keys.count
+            ? .relative(to: keys[destination], before: true)
+            : .relative(to: last, before: false)
         if case .read(var entries) = model.sidebar {
             switch keys[from] {
             case .repository: entries.repositories.move(fromOffsets: source, toOffset: destination)

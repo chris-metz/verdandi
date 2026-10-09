@@ -55,11 +55,17 @@ struct RepositoryEntryRow: View {
         .help(help)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(entry.repository.address.nameWithOwner)
-        .accessibilityValue([entry.archived == true ? "Archived" : nil, reason, OpenIssueBadge.spoken(entry.openIssues)].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityValue(spoken)
     }
 
     private var owner: String {
         entry.archived == true ? "\(entry.repository.owner) · Archived" : entry.repository.owner
+    }
+
+    /// What VoiceOver says of it besides its name.
+    private var spoken: String {
+        let archived = entry.archived == true ? "Archived" : nil
+        return [archived, reason, OpenIssueBadge.spoken(entry.openIssues)].compactMap { $0 }.joined(separator: ", ")
     }
 
     private var symbol: String {
@@ -105,7 +111,7 @@ struct ViewEntryRow: View {
                     }
                 }
             } icon: {
-                Image(systemName: rejected == nil ? "line.3.horizontal.decrease.circle" : "exclamationmark.triangle.fill")
+                Image(systemName: symbol)
                     .meaning(rejected == nil ? nil : palette.warning, selected: .primary)
                     .contentTransition(.symbolEffect(.replace))
             }
@@ -120,6 +126,10 @@ struct ViewEntryRow: View {
     private var rejected: String? {
         if case .rejected(let message) = entry.matches { return message }
         return nil
+    }
+
+    private var symbol: String {
+        rejected == nil ? "line.3.horizontal.decrease.circle" : "exclamationmark.triangle.fill"
     }
 
     private var spoken: String {

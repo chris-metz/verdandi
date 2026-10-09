@@ -381,7 +381,8 @@ private struct OwnerFilter: View {
                 HStack(spacing: 8) {
                     chip(nil, title: "All")
                     ForEach(owners, id: \.login) { candidate in
-                        chip(candidate.login, title: candidate.kind == .account ? "@\(candidate.login)" : candidate.login)
+                        let title = candidate.kind == .account ? "@\(candidate.login)" : candidate.login
+                        chip(candidate.login, title: title)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -440,12 +441,19 @@ private struct PickerRowView: View {
         }
     }
 
+    /// `owner/` quietly, then the name, so that the name stands out.
+    private var name: Text {
+        let owner = Text("\(row.repository.owner)/").foregroundStyle(palette.muted)
+        let name = Text(row.repository.name).fontWeight(.semibold)
+        return Text("\(owner)\(name)")
+    }
+
     private var content: some View {
         HStack(spacing: 12) {
             indicator
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(Text("\(row.repository.owner)/").foregroundStyle(palette.muted))\(Text(row.repository.name).fontWeight(.semibold))")
+                name
                     .foregroundStyle(row.disabled && !row.tracked ? palette.muted : palette.foreground)
                     .lineLimit(1)
                     .truncationMode(.middle)

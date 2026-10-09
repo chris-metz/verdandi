@@ -95,7 +95,8 @@ struct RateLimitsPopover: View {
                         .foregroundStyle(palette.muted)
                     }
                     ForEach(RateLimitWords.holding(model.shownHolds, now: context.date), id: \.self) { hold in
-                        Label(hold.text, systemImage: hold.paused ? "pause.circle.fill" : "exclamationmark.triangle.fill")
+                        let symbol = hold.paused ? "pause.circle.fill" : "exclamationmark.triangle.fill"
+                        Label(hold.text, systemImage: symbol)
                             .font(.footnote.weight(.medium))
                             .foregroundStyle(palette.warning)
                     }
