@@ -137,9 +137,8 @@ struct IssueListScreen: View {
         } set: { state in
             guard state != (requestedState ?? list?.state) else { return }
             requestedState = state
-            guard let core = model.core else { return }
             let scope = scope
-            Task { await model.attempt { try await core.switchState(scope, to: state) } }
+            Task { await model.switchState(scope, to: state) }
         }
     }
 

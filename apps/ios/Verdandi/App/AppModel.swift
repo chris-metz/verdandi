@@ -300,24 +300,50 @@ final class AppModel {
     /// leave the screen shown last unread.
     private var showing: Task<Void, Never>?
 
-    /// Has the core show a screen: it reads what it lacks or what is old.
-    private func show(_ screen: Screen?) async {
+    /// Runs a request that has the core show a screen, after those sent
+    /// before it: sent from separate tasks, two could reach the core in the
+    /// wrong order, and the core would read the wrong screen.
+    private func send(_ screen: Screen?, _ request: @escaping (Core) async throws -> Void) async {
         guard let core else { return }
         coreScreen = screen
         let previous = showing
         let next = Task {
             await previous?.value
-            await attempt {
-                switch screen {
-                case .list(let scope): try await core.openList(scope)
-                case .view(let id): try await core.openView(id)
-                case .issue(let id): try await core.openIssuePage(id)
-                case nil: break
-                }
-            }
+            await attempt { try await request(core) }
         }
         showing = next
         await next.value
+    }
+
+    /// Has the core show a screen: it reads what it lacks or what is old.
+    private func show(_ screen: Screen?) async {
+        await send(screen) { core in
+            switch screen {
+            case .list(let scope): try await core.openList(scope)
+            case .view(let id): try await core.openView(id)
+            case .issue(let id): try await core.openIssuePage(id)
+            case nil: break
+            }
+        }
+    }
+
+    /// Before the user changes a list, such as expanding an issue whose
+    /// sub-issues are not read yet, it is the screen the core shows: on an
+    /// iPad the issue page beside it may be, and the core drops what a
+    /// screen not shown asks for.
+    func showList(_ list: ExpandableList) async {
+        let screen: Screen =
+            switch list {
+            case .scope(let scope): .list(scope)
+            case .view(let id): .view(id: id)
+            }
+        if coreScreen != screen { await show(screen) }
+    }
+
+    /// Switches a scope's list to its open or closed issues, which the core
+    /// then shows.
+    func switchState(_ scope: Scope, to state: IssueState) async {
+        await send(.list(scope)) { try await $0.switchState(scope, to: state) }
     }
 
     /// Whether the list stays in sight beside the issue page, as in an
@@ -383,26 +409,22 @@ final class AppModel {
     /// Reads a screen again now: the one the user looks at, or another in
     /// sight, such as the list beside an iPad's issue page.
     func refresh(_ screen: Screen? = nil) async {
-        guard let core else { return }
         let screen = screen ?? shownScreen
-        coreScreen = screen
-        await attempt { try await core.refresh(screen) }
+        await send(screen) { try await $0.refresh(screen) }
     }
 
     /// Reads again what failed on a screen, by default the one on top.
     func retry(_ screen: Screen? = nil) async {
-        guard let core else { return }
         let screen = screen ?? shownScreen
-        coreScreen = screen
-        await attempt { try await core.retry(screen) }
+        await send(screen) { try await $0.retry(screen) }
     }
 
     /// As the app comes back to the front: what is old or failed is read
     /// again, and the token's account checked.
     func revalidate() async {
-        guard let core, phase == .running else { return }
-        coreScreen = shownScreen
-        await attempt { try await core.revalidate(shownScreen) }
+        guard phase == .running else { return }
+        let screen = shownScreen
+        await send(screen) { try await $0.revalidate(screen) }
     }
 
     /// Keeps the issue page in the recent issues.

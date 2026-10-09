@@ -22,13 +22,13 @@ enum ListLaunchOptions {
             $0.trimmingCharacters(in: .whitespaces).lowercased()
         }
         let expand = environment["VERDANDI_EXPAND"]
-        guard !applied, state != nil || !labels.isEmpty || expand != nil, let core = model.core else { return }
+        guard !applied, state != nil || !labels.isEmpty || expand != nil, model.core != nil else { return }
         // All may show for a moment before the launch selects its entry.
         if let selected = model.launch.select, selected.expandableList != controller.list { return }
         applied = true
 
         if let state, case .scope(let scope) = controller.list {
-            await model.attempt { try await core.switchState(scope, to: state) }
+            await model.switchState(scope, to: state)
         }
         guard !labels.isEmpty || expand != nil else { return }
         // Until the list has loaded in its state, its issues lack their labels.

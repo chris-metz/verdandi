@@ -114,8 +114,11 @@ final class ListController {
     /// again if it fails.
     private func ask(_ request: @escaping (Core) async throws -> Void) {
         guard let model, let core = model.core else { return }
+        let list = list
         Task {
             do {
+                // The core reads what a list asks for only while it shows it.
+                await model.showList(list)
                 try await request(core)
             } catch {
                 AppModel.log.error("A list request failed: \(error.localizedDescription, privacy: .public)")
