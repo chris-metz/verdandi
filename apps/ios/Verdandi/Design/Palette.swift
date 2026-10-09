@@ -35,6 +35,10 @@ struct Palette: Equatable {
     /// What could not be read, or is shown from before.
     var warning: Color { color("warning", .yellow) }
     var destructive: Color { color("destructive", .red) }
+    /// The blocking map's flash over a card that has just come in.
+    var mapNew: Color { color("map-new", .green.opacity(0.4)) }
+    /// The blocking map's flash over a card that has moved to another step.
+    var mapMoved: Color { color("map-moved", .yellow.opacity(0.4)) }
 
     /// An issue's state colour.
     func state(_ state: IssueState) -> Color { state == .open ? open : closed }

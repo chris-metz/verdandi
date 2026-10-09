@@ -33,6 +33,8 @@ import VerdandiKit
 ///   then goes to it, as Return would.
 /// - `VERDANDI_NOTICE`: shown as a notice once the app has started.
 /// - `VERDANDI_SETTINGS=about`: Settings opens on About.
+/// - `VERDANDI_MAP_END`: `blockedBy` or `blocking`, that side's end of the
+///   issue's blocking map pressed once it shows, to read further.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
@@ -52,6 +54,7 @@ struct LaunchOptions {
     var goToSubmits = false
     var notice: String?
     var settingsPage: String?
+    var mapEnd: BlockingSide?
 
     enum DeviceFlowLaunch: String { case start, demo }
 
@@ -101,6 +104,7 @@ struct LaunchOptions {
         options.goToSubmits = environment["VERDANDI_GO_TO_SUBMIT"] == "1"
         options.notice = environment["VERDANDI_NOTICE"].flatMap { $0.isEmpty ? nil : $0 }
         options.settingsPage = environment["VERDANDI_SETTINGS"]
+        options.mapEnd = environment["VERDANDI_MAP_END"].flatMap(BlockingSide.init(rawValue:))
         return options
     }
 
