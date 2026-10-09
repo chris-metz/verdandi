@@ -350,7 +350,7 @@ private struct SaveProblem: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(palette.destructive)
                 Text(message)
-                    .font(.footnote.monospaced())
+                    .font(.footnote)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }

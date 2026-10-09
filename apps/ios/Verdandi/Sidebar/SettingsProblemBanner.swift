@@ -33,6 +33,7 @@ struct SettingsProblemBanner: View {
                 }
                 if invalid {
                     Button("Reset…", systemImage: "arrow.counterclockwise", role: .destructive) { resetAsked = true }
+                        .tint(palette.destructive)
                 }
             }
             .buttonStyle(.glass)

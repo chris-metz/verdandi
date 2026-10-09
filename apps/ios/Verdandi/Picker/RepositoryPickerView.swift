@@ -17,6 +17,9 @@ struct RepositoryPickerView: View {
     /// adding creates the settings file.
     @State private var firstLaunch: Bool?
     @State private var added = 0
+    /// Those the last Add added, while others could not be.
+    @State private var addedLast: [PickerRepository] = []
+    @State private var addedAtLaunch = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +73,10 @@ struct RepositoryPickerView: View {
         .sensoryFeedback(.success, trigger: added)
         .onChange(of: suggestions.repositories.count) {
             picker.check(SidebarLaunchOptions.pickerSelection, in: suggestions.repositories)
+            if SidebarLaunchOptions.pickerAddsAtOnce, !addedAtLaunch, !picker.selected.isEmpty {
+                addedAtLaunch = true
+                add()
+            }
         }
         .task(id: TypedKey(text: picker.text, suggested: typedIsSuggested)) {
             guard let core = model.core else { return }
@@ -203,6 +210,16 @@ struct RepositoryPickerView: View {
     private var footer: some View {
         let count = picker.selected.count
         return VStack(spacing: 8) {
+            if !addedLast.isEmpty, !picker.selected.isEmpty, picker.failure == nil {
+                Label(
+                    "\(Self.addedText(addedLast)) The others could not be added; each says why.",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .font(.footnote)
+                .foregroundStyle(palette.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.blurReplace)
+            }
             if let failure = picker.failure {
                 Label(failure, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
@@ -241,6 +258,7 @@ struct RepositoryPickerView: View {
         guard let core = model.core, canChange, !picker.selected.isEmpty else { return }
         Task {
             let addedNow = await picker.add(with: core, login: login)
+            addedLast = addedNow
             guard !addedNow.isEmpty else { return }
             added += 1
             if picker.selected.isEmpty {

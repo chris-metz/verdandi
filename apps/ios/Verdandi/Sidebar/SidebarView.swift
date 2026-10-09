@@ -12,6 +12,7 @@ struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.palette) private var palette
     @Environment(\.openURL) private var openURL
+    @Environment(\.horizontalSizeClass) private var sizeClass
     /// The entry whose removal waits to be confirmed.
     @State private var removal: ManagedEntry?
     /// Whether the first launch's picker was offered, so that closing it
@@ -41,6 +42,9 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Verdandi")
+        // An iPad's sidebar names the app in its bar, where its toolbar
+        // leaves the title room; an iPhone's opens with it large.
+        .navigationBarTitleDisplayMode(sizeClass == .compact ? .automatic : .inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) { addMenu }
         }
@@ -58,8 +62,10 @@ struct SidebarView: View {
     @ViewBuilder
     private func entryList(_ entries: SidebarEntries.Read) -> some View {
         let canChange = entries.settings.isWritable
-        AllEntryRow(count: entries.all.openIssues)
-            .tag(SidebarItem.all)
+        Section {
+            AllEntryRow(count: entries.all.openIssues)
+                .tag(SidebarItem.all)
+        }
         if !canChange {
             Section {
                 SettingsProblemBanner(status: entries.settings)
@@ -310,19 +316,21 @@ private struct SectionHeader: View {
     }
 }
 
-/// A row in an empty section that offers to add to it.
+/// A row in an empty section that offers to add to it, while it can be
+/// added to.
 private struct AddEntryRow: View {
     var title: String
     var disabled: Bool
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: "plus.circle")
-                .foregroundStyle(.secondary)
+        if !disabled {
+            Button(action: action) {
+                Label(title, systemImage: "plus.circle.fill")
+                    .foregroundStyle(.tint)
+            }
+            .selectionDisabled()
         }
-        .disabled(disabled)
-        .selectionDisabled()
     }
 }
 

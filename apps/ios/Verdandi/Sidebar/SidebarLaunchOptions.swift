@@ -16,6 +16,7 @@ import VerdandiKit
 /// - `VERDANDI_PICKER_SEARCH=<text>`: the repository picker's search.
 /// - `VERDANDI_PICKER_SELECT=owner/name,owner/name`: the picker checks
 ///   these once it suggests them.
+/// - `VERDANDI_PICKER_ADD=1`: and then adds them, to show what becomes of it.
 /// - `VERDANDI_SIDEBAR=shown`: the sidebar shows, also on an iPad in
 ///   portrait and on an iPhone that would show a list.
 enum SidebarLaunchOptions {
@@ -26,6 +27,7 @@ enum SidebarLaunchOptions {
     static var duplicatedViewName: String? { environment["VERDANDI_DUPLICATE_VIEW"] }
     static var savesAtOnce: Bool { environment["VERDANDI_SAVE"] == "1" }
     static var pickerSearch: String { environment["VERDANDI_PICKER_SEARCH"] ?? "" }
+    static var pickerAddsAtOnce: Bool { environment["VERDANDI_PICKER_ADD"] == "1" }
     static var pickerSelection: [RepositoryAddress] {
         (environment["VERDANDI_PICKER_SELECT"] ?? "").split(separator: ",").compactMap {
             RepositoryAddress(parsing: String($0))

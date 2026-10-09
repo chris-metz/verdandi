@@ -202,10 +202,11 @@ struct BudgetReading {
         return "\(remaining.formatted()) of \(budget.limit.formatted())"
     }
 
-    /// "Refills in 38 minutes, at 14:40", or "Full again since 14:40".
+    /// "Refills in 38 minutes, at 14:40", or "Full again since 14:40". The
+    /// wait says which day a refill is on; a past one names its day.
     var refill: String {
-        let at = RateLimitWords.time(resetAt, now: now)
-        if hasReset { return "Full again since \(at)" }
+        if hasReset { return "Full again since \(RateLimitWords.time(resetAt, now: now))" }
+        let at = resetAt.formatted(date: .omitted, time: .shortened)
         return "Refills in \(RateLimitWords.wait(resetAt.timeIntervalSince(now))), at \(at)"
     }
 }
