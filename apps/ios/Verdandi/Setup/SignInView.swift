@@ -9,6 +9,7 @@ import VerdandiKit
 struct SignInView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
     let problem: SetupProblem
 
     var body: some View {
@@ -20,8 +21,9 @@ struct SignInView: View {
                     .padding(.vertical, regular ? 44 : 32)
                     .background {
                         if regular {
+                            // In the dark, more of the navy shows through.
                             RoundedRectangle(cornerRadius: 44, style: .continuous)
-                                .fill(Color(uiColor: .systemBackground).opacity(0.82))
+                                .fill(Color(uiColor: .systemBackground).opacity(colorScheme == .dark ? 0.55 : 0.82))
                                 .shadow(color: .black.opacity(0.12), radius: 40, y: 18)
                         }
                     }
@@ -44,14 +46,17 @@ struct SignInView: View {
             }
             if problem.signingInHelps {
                 SignInOptions(rejected: problem.isRejection)
-            } else {
-                CheckAgainButton()
-            }
-            Label("Your token stays in this \(UIDevice.current.model)’s Keychain, and goes only to GitHub.", systemImage: "lock.fill")
+                Label(
+                    "Your token stays in this \(UIDevice.current.model)’s Keychain, and goes only to GitHub.",
+                    systemImage: "lock.fill"
+                )
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .labelStyle(CenteredLabelStyle())
+            } else {
+                CheckAgainButton()
+            }
         }
         .animation(.smooth(duration: 0.35), value: problem)
     }

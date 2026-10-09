@@ -154,18 +154,19 @@ struct GoToIssueView: View {
                     }
                 }
             case .recent(let issue):
+                // The button's tint is for the issue typed, above: a recent
+                // issue reads as a row.
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        // The button's tint is for the issue typed, above.
                         Text(issue.title)
                             .foregroundStyle(Color.primary)
                             .lineLimit(2)
                         Text(verbatim: "\(issue.repository.nameWithOwner) #\(issue.number)")
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
