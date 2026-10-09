@@ -20,7 +20,7 @@ struct BodyActions {
     /// An image the body shows, by its address, at its full size.
     var fullImage: (String) async -> UIImage?
     /// Where the body is on github.com.
-    var pageURL: URL?
+    var pageURL: () -> URL?
 }
 
 /// A body in a web view, which SwiftUI sizes: as wide as it is offered, as
@@ -154,7 +154,7 @@ struct BodyWebView: UIViewRepresentable {
             case "scrollTo":
                 if let top = message["top"] as? Double { scroll(to: CGFloat(top)) }
             case "openOnGitHub":
-                if let url = parent.actions.pageURL { openInBrowser(url) }
+                if let url = parent.actions.pageURL() { openInBrowser(url) }
             case "renew":
                 switch await parent.actions.renewMedia() {
                 case .renewed(let html): return ["status": "renewed", "html": html]

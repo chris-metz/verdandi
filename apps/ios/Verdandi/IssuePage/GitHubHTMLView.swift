@@ -221,11 +221,12 @@ struct BodyHTMLView: View {
                 return await ThirdPartyImages.shared.load(url)
             },
             fullImage: { src in await Self.fullImage(src, renew: { await renewMedia() }) },
-            pageURL: pageURL)
+            pageURL: { pageURL })
     }
 
     /// Where the body is on github.com: the issue's page, or the comment
-    /// on it.
+    /// on it. Read only when asked, so that the body does not show anew
+    /// whenever the core pushes the page.
     private var pageURL: URL? {
         let page = model.pages[issueId]
         let url =
