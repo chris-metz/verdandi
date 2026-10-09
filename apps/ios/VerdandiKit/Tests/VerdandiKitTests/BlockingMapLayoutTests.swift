@@ -166,6 +166,18 @@ private func arrows(_ layout: BlockingMapLayout) -> Set<String> {
         #expect(map.arrows.first { $0.to == "e" }?.closed == true)
     }
 
+    @Test func keepsEveryColumnWithAnEndOnOneSideOnly() {
+        var builder = MapBuilder()
+        builder.card("root", 0)
+        builder.card("a", -1)
+        builder.block("a", "root")
+        builder.ends = .init(blockedBy: .expanded, blocking: .none)
+        let map = layout(builder)
+
+        #expect(map.nodes.map(\.id) == ["edge:blockedBy", "a", "root"])
+        #expect(map.steps.map(\.title) == ["Blocked by", "This issue"])
+    }
+
     @Test func leavesOutEndsWithNothingToShow() {
         var builder = MapBuilder()
         builder.card("root", 0, badges: .init(blockedBy: .loading, blocking: .loading))

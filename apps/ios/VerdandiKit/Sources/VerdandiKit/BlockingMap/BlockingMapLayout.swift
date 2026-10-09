@@ -163,7 +163,7 @@ public struct BlockingMapLayout: Hashable, Sendable {
         for side in BlockingSide.allCases where map.ends[side] != .none {
             endSteps[side == .blockedBy ? firstCardStep - 1 : lastCardStep + 1] = side
         }
-        let allSteps = Array((endSteps.keys.min() ?? firstCardStep)...(endSteps.keys.max() ?? lastCardStep))
+        let allSteps = Array(min(firstCardStep, endSteps.keys.min() ?? 0)...max(lastCardStep, endSteps.keys.max() ?? 0))
 
         // The arrows in the core's terms, with one from each branch that
         // goes on to its side's end, even before anything has been folded
