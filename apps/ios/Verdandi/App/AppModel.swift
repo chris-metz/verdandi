@@ -372,7 +372,11 @@ final class AppModel {
     func renewMediaLinks(_ issueId: String, bodyId: String) async -> RenewedMediaLinks? {
         guard let core else { return nil }
         await showPage(issueId)
-        return try? await core.renewMediaLinks(issueId, bodyId: bodyId)
+        do {
+            return try await core.renewMediaLinks(issueId, bodyId: bodyId)
+        } catch {
+            return .failed(.error(message: error.localizedDescription))
+        }
     }
 
     /// Reads a screen again now: the one the user looks at, or another in

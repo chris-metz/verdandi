@@ -10,6 +10,7 @@ export default defineConfig(
     "**/dist/",
     "**/.build/",
     "apps/ios/Verdandi/Resources/core.js",
+    "apps/ios/build/",
   ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,

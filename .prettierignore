@@ -5,4 +5,5 @@ dist/
 docs/prototypes/
 # Bundled from the core when the iOS app builds.
 apps/ios/Verdandi/Resources/core.js
+apps/ios/build/
 **/.build/

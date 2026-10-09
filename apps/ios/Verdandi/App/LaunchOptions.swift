@@ -35,6 +35,15 @@ import VerdandiKit
 /// - `VERDANDI_SETTINGS=about`: Settings opens on About.
 /// - `VERDANDI_MAP_END`: `blockedBy` or `blocking`, that side's end of the
 ///   issue's blocking map pressed once it shows, to read further.
+/// - `VERDANDI_BODY`: an HTML file that issue pages show as the issue's body,
+///   in place of the one GitHub rendered.
+/// - `VERDANDI_LOAD_IMAGES=1`: loads every image from elsewhere than
+///   GitHub in bodies at once, as if its placeholder was tapped.
+/// - `VERDANDI_BODY_SCROLL`: what the issue page scrolls to once the issue's
+///   body shows: a CSS selector of something in it, a number of points, or
+///   `sweep`, down a screen a second to the end and back.
+/// - `VERDANDI_BODY_TAP`: CSS selectors of what in the issue's body is
+///   tapped then, a second apart, separated by `|`, e.g. `img.media-image`.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
@@ -57,6 +66,10 @@ struct LaunchOptions {
     var mapEnd: BlockingSide?
 
     enum DeviceFlowLaunch: String { case start, demo }
+    var bodyHTML: String?
+    var loadsImages = false
+    var bodyScroll: String?
+    var bodyTap: String?
 
     /// Whether the launch chooses where the app opens.
     var selects: Bool { select != nil || issue != nil || issueId != nil }
@@ -105,6 +118,12 @@ struct LaunchOptions {
         options.notice = environment["VERDANDI_NOTICE"].flatMap { $0.isEmpty ? nil : $0 }
         options.settingsPage = environment["VERDANDI_SETTINGS"]
         options.mapEnd = environment["VERDANDI_MAP_END"].flatMap(BlockingSide.init(rawValue:))
+        if let body = environment["VERDANDI_BODY"], !body.isEmpty {
+            options.bodyHTML = try? String(contentsOfFile: body, encoding: .utf8)
+        }
+        options.loadsImages = environment["VERDANDI_LOAD_IMAGES"] == "1"
+        options.bodyScroll = environment["VERDANDI_BODY_SCROLL"].flatMap { $0.isEmpty ? nil : $0 }
+        options.bodyTap = environment["VERDANDI_BODY_TAP"].flatMap { $0.isEmpty ? nil : $0 }
         return options
     }
 
