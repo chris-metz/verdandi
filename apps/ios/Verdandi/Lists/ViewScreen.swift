@@ -283,19 +283,30 @@ private struct SearchFailure: View {
                 .font(.system(size: 44))
                 .foregroundStyle(palette.warning)
                 .symbolRenderingMode(.hierarchical)
-            Text(title)
-                .font(.title3.weight(.semibold))
-                .multilineTextAlignment(.center)
-            switch problem {
-            case .invalid(let message):
-                GitHubMessage(message: message)
-                Text("It is not run again until the search changes.")
-            case .unsearchable(let message):
-                GitHubMessage(message: message)
-                Text("Check the repo:, org: and user: qualifiers.")
-            case .tooLarge:
-                Text("HTTP 500 with an empty body. GitHub answers very long searches this way, so the search may be too large.")
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(palette.foreground)
+                Text(query)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(palette.muted)
             }
+            Group {
+                switch problem {
+                case .invalid(let message):
+                    GitHubMessage(message: message)
+                    Text("It is not run again until the search changes.")
+                case .unsearchable(let message):
+                    GitHubMessage(message: message)
+                    Text("Check the repo:, org: and user: qualifiers.")
+                case .tooLarge:
+                    Text(
+                        "HTTP 500 with an empty body. GitHub answers very long searches this way, so the search may be too large."
+                    )
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(palette.muted)
             HStack(spacing: 12) {
                 if case .tooLarge = problem {
                     Button("Retry", action: retry)
@@ -306,8 +317,6 @@ private struct SearchFailure: View {
             }
             .padding(.top, 4)
         }
-        .font(.callout)
-        .foregroundStyle(palette.muted)
         .multilineTextAlignment(.center)
         .frame(maxWidth: 480)
         .padding(24)
@@ -344,7 +353,7 @@ private struct GitHubMessage: View {
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(palette.card, in: .rect(cornerRadius: 12, style: .continuous))
+            .background(palette.muted.opacity(0.12), in: .rect(cornerRadius: 12, style: .continuous))
             .textSelection(.enabled)
     }
 }

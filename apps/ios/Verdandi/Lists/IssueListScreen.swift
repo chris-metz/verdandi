@@ -323,25 +323,23 @@ struct IssueListScreen: View {
     }
 }
 
-/// How far a closed list's first read has come, above the issues it has
-/// read so far.
+/// How far a closed list's first read has come, as a bar above the issues
+/// it has read so far; the title's counts say it in words.
 private struct ClosedProgress: View {
-    @Environment(\.palette) private var palette
     var progress: ListLoading.ListProgress?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        Group {
             if let progress, let total = progress.total, total > 0 {
-                Text("Loading closed issues… \(progress.read.formatted()) of \(total.formatted())")
                 ProgressView(value: Double(min(progress.read, total)), total: Double(total))
+                    .accessibilityLabel("Loading closed issues")
+                    .accessibilityValue("\(progress.read) of \(total)")
             } else {
-                Text("Loading closed issues…")
                 ProgressView().progressViewStyle(.linear)
+                    .accessibilityLabel("Loading closed issues")
             }
         }
-        .font(.footnote.monospacedDigit())
-        .foregroundStyle(palette.muted)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .selectionDisabled()
