@@ -14,6 +14,11 @@ import VerdandiKit
 /// - `VERDANDI_APPEARANCE`: `light` or `dark`, whatever `config.toml` says.
 /// - `VERDANDI_TRACK`: `owner/name,owner/name`, tracked unless they are.
 /// - `VERDANDI_VIEW`: `Name|search`, saved as a view unless one has the name.
+/// - `VERDANDI_ISSUE_ID`: an issue's node ID, its page opened without
+///   looking it up, e.g. one GitHub does not show.
+/// - `VERDANDI_SCROLL`: `map`, `comments` or `end`, where an issue page
+///   scrolls once it has loaded.
+/// - `VERDANDI_EXPAND`: `1`, every sub-issue on an issue page expanded.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
@@ -22,9 +27,12 @@ struct LaunchOptions {
     var appearance: Appearance?
     var track: [RepositoryAddress] = []
     var view: (name: String, query: String)?
+    var issueId: String?
+    var scroll: String?
+    var expandsSubIssues = false
 
     /// Whether the launch chooses where the app opens.
-    var selects: Bool { select != nil || issue != nil }
+    var selects: Bool { select != nil || issue != nil || issueId != nil }
 
     static var current: LaunchOptions {
         let environment = ProcessInfo.processInfo.environment
@@ -55,6 +63,9 @@ struct LaunchOptions {
         if let view = environment["VERDANDI_VIEW"], let bar = view.firstIndex(of: "|") {
             options.view = (String(view[..<bar]), String(view[view.index(after: bar)...]))
         }
+        options.issueId = environment["VERDANDI_ISSUE_ID"].flatMap { $0.isEmpty ? nil : $0 }
+        options.scroll = environment["VERDANDI_SCROLL"]
+        options.expandsSubIssues = environment["VERDANDI_EXPAND"] == "1"
         return options
     }
 
@@ -79,6 +90,10 @@ struct LaunchOptions {
             if case .found(let found) = try? await core.lookUpIssue(issue.repository, number: issue.number) {
                 model.openIssue(IssueRoute(id: found.id, reference: found.reference, title: found.title, url: found.url))
             }
+        }
+        if let issueId {
+            if model.selection == nil { model.select(.all) }
+            model.openIssue(IssueRoute(id: issueId, reference: "Issue", title: "An issue opened by its ID"))
         }
         if let sheet { model.sheet = sheet }
     }
