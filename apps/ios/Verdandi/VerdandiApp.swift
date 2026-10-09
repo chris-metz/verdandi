@@ -10,7 +10,10 @@ struct VerdandiApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .task { await model.start() }
+                .task {
+                    await model.start()
+                    if let notice = model.launch.notice { model.post(notice) }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             // Back in front, what is old or failed is read again.

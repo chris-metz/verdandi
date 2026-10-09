@@ -155,25 +155,3 @@ struct IssueDetailColumn: View {
         }
     }
 }
-
-/// Notices, briefly, over the top of the window.
-struct NoticesOverlay: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            VStack(spacing: 8) {
-                ForEach(model.notices) { notice in
-                    Label(notice.text, systemImage: notice.systemImage)
-                        .font(.callout)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .glassEffect(.regular, in: .capsule)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-        }
-        .padding(.top, 8)
-        .padding(.horizontal)
-    }
-}
