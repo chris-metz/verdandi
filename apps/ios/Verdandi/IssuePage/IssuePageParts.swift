@@ -46,7 +46,6 @@ private struct IssuePageCard: ViewModifier {
 /// A section of the page: its title, what it counts, an accessory at the
 /// end, and its content below.
 struct IssuePageSection<Content: View, Accessory: View>: View {
-    @Environment(\.palette) private var palette
     var title: String
     var systemImage: String
     /// What the section counts, e.g. "3/5" or "12".
@@ -68,27 +67,50 @@ struct IssuePageSection<Content: View, Accessory: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Label(title, systemImage: systemImage)
-                        .font(.headline)
-                        .foregroundStyle(palette.foreground)
-                        .labelStyle(SectionLabelStyle())
-                    if let count {
-                        Text(count)
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(palette.muted)
-                            .contentTransition(.numericText())
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: 8)
-                accessory
-            }
-            .padding(.horizontal, 4)
+            IssuePageSectionHeader(title, systemImage: systemImage, count: count) { accessory }
             content
         }
+    }
+}
+
+/// A section's title, what it counts, and an accessory at the end.
+struct IssuePageSectionHeader<Accessory: View>: View {
+    @Environment(\.palette) private var palette
+    var title: String
+    var systemImage: String
+    var count: String?
+    @ViewBuilder var accessory: Accessory
+
+    init(
+        _ title: String, systemImage: String, count: String? = nil,
+        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.count = count
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+                    .foregroundStyle(palette.foreground)
+                    .labelStyle(SectionLabelStyle())
+                if let count {
+                    Text(count)
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(palette.muted)
+                        .contentTransition(.numericText())
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 8)
+            accessory
+        }
+        .padding(.horizontal, 4)
     }
 }
 

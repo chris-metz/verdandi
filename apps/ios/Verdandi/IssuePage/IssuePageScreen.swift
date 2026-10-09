@@ -110,10 +110,7 @@ struct IssuePageScreen: View {
 
             if let page, let issue {
                 if showsMap(issue: issue, map: page.blockingMap) {
-                    BlockingMapSection(issueId: route.id, map: page.blockingMap)
-                        .frame(maxWidth: 1200, alignment: .leading)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, margin)
+                    BlockingMapSection(issueId: route.id, map: page.blockingMap, margin: margin)
                         .id(IssuePageAnchor.map)
                 }
                 if (issue.subIssueProgress?.total ?? 0) > 0 || !page.subIssues.isEmpty {
@@ -233,29 +230,37 @@ struct IssuePageScreen: View {
 }
 
 /// The blocking map, once the page has it, and grey cards where it will be
-/// until then.
+/// until then. Its title lines up with the text; the map itself may run
+/// wider on a wide iPad, as a wide figure does in an article.
 private struct BlockingMapSection: View {
-    @Environment(\.palette) private var palette
     let issueId: String
     let map: BlockingMap?
+    let margin: CGFloat
 
     var body: some View {
-        IssuePageSection("Blocking map", systemImage: "point.3.connected.trianglepath.dotted") {
-            if let map {
-                BlockingMapView(map: map, issueId: issueId)
-            } else {
-                HStack(spacing: 12) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        PlaceholderLines(lines: 2, font: .subheadline)
-                            .padding(12)
-                            .frame(maxWidth: 220)
-                            .issuePageCard()
+        VStack(alignment: .leading, spacing: 10) {
+            IssuePageSectionHeader("Blocking map", systemImage: "point.3.connected.trianglepath.dotted")
+                .issuePageColumn(margin: margin)
+            Group {
+                if let map {
+                    BlockingMapView(map: map, issueId: issueId)
+                } else {
+                    HStack(spacing: 12) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            PlaceholderLines(lines: 2, font: .subheadline)
+                                .padding(12)
+                                .frame(maxWidth: 220)
+                                .issuePageCard()
+                        }
                     }
+                    .modifier(LoadingPulse())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading the blocking map")
                 }
-                .modifier(LoadingPulse())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Loading the blocking map")
             }
+            .frame(maxWidth: 1200, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, margin)
         }
     }
 }
