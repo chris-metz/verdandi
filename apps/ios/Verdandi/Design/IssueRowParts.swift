@@ -151,8 +151,10 @@ enum OwnerColor {
 }
 
 /// A label in a row, which adds itself to the list's label filter when the
-/// list has one to add to.
+/// list has one to add to. A faint edge keeps a white label visible on a
+/// light background, and a black one on a dark background.
 struct RowLabel: View {
+    @Environment(\.palette) private var palette
     var label: IssueLabel
     var onFilter: ((IssueLabel) -> Void)?
 
@@ -161,14 +163,19 @@ struct RowLabel: View {
             Button {
                 onFilter(label)
             } label: {
-                LabelChip(label: label, compact: true)
+                chip
             }
             .buttonStyle(.borderless)
             .hoverEffect(.highlight)
             .accessibilityLabel("Filter by \(label.name)")
         } else {
-            LabelChip(label: label, compact: true)
+            chip
         }
+    }
+
+    private var chip: some View {
+        LabelChip(label: label, compact: true)
+            .overlay(Capsule().strokeBorder(palette.foreground.opacity(0.14), lineWidth: 0.5))
     }
 }
 
@@ -254,6 +261,24 @@ struct UnreadNote: View {
             .foregroundStyle(unavailable ? palette.muted : palette.warning)
             .accessibilityHint(ProblemText(problem).sentence)
         }
+    }
+}
+
+extension Palette {
+    /// The palette on the accent colour of a row the system selects
+    /// prominently: text, icons and counts in white, so that they read on
+    /// it as the system's own colours do. Labels and repository chips keep
+    /// their colours, which carry their own backgrounds.
+    var onAccent: Palette {
+        let empty = Data(#"{"id":"on-accent","name":"On accent","kind":"dark","colors":{}}"#.utf8)
+        guard var theme = theme ?? (try? JSONDecoder().decode(Theme.self, from: empty)) else { return self }
+        for token in ["foreground", "issue-open", "issue-closed", "blocked", "blocking", "warning"] {
+            theme.colors[token] = "#ffffff"
+        }
+        theme.colors["muted-foreground"] = "#ffffffcc"
+        theme.colors["border"] = "#ffffff66"
+        theme.colors["blocked-surface"] = "#ffffff33"
+        return Palette(theme: theme)
     }
 }
 

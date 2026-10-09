@@ -28,7 +28,11 @@ struct ForestList<Notices: View, Footer: View>: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 16))
                     .listRowSeparatorTint(palette.border)
                     .listRowSeparator(.hidden, edges: .top)
-                    .listRowBackground(RowBackground(selected: row.id == selected))
+                    // The theme's background, as around the list; the
+                    // system's on the selected row, so that it draws the
+                    // selection as an iPad does, filled when the list has
+                    // the keyboard.
+                    .listRowBackground(row.id == selected ? nil : palette.background)
                     .tag(row.id)
                     .selectionDisabled(row.kind != .issue)
             }
@@ -70,26 +74,6 @@ struct ForestList<Notices: View, Footer: View>: View {
             }
             guard let row = controller.forest.row(id), row.kind == .issue else { return }
             model.openIssue(IssueRoute(row.issue))
-        }
-    }
-}
-
-/// Behind a row: the theme's background, as around the list, and the
-/// selection, in the theme's tint, which a row's own background would
-/// otherwise hide.
-private struct RowBackground: View {
-    @Environment(\.palette) private var palette
-    var selected: Bool
-
-    var body: some View {
-        ZStack {
-            palette.background
-            if selected {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(palette.accent.opacity(0.16))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-            }
         }
     }
 }

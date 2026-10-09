@@ -47,6 +47,7 @@ struct LabelFilterBar: View {
             HStack(spacing: 6) {
                 Circle()
                     .fill(label.swatch)
+                    .overlay(Circle().strokeBorder(palette.foreground.opacity(0.2), lineWidth: 0.5))
                     .frame(width: 9, height: 9)
                 Text(label.name)
                     .font(.subheadline.weight(.medium))

@@ -26,7 +26,8 @@ struct RowStyle: Equatable {
 /// their blocking counts kept clear, since what blocks still counts. An
 /// issue that has not been read is dimmed too, with why.
 struct IssueListRow: View, Equatable {
-    @Environment(\.palette) private var palette
+    @Environment(\.palette) private var theme
+    @Environment(\.backgroundProminence) private var prominence
     let row: ListRow
     let style: RowStyle
     let controller: ListController
@@ -38,10 +39,19 @@ struct IssueListRow: View, Equatable {
     }
 
     var body: some View {
-        switch row.kind {
-        case .issue: issue
-        case .missingParent(let problem): missingParent(problem)
+        Group {
+            switch row.kind {
+            case .issue: issue
+            case .missingParent(let problem): missingParent(problem)
+            }
         }
+        .environment(\.palette, palette)
+    }
+
+    /// The theme's colours, or on the accent colour of a selected row in a
+    /// list that has the keyboard, white where they would be.
+    private var palette: Palette {
+        prominence == .increased ? theme.onAccent : theme
     }
 
     private var issue: some View {
