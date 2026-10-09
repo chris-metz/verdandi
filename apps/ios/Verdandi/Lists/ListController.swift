@@ -76,16 +76,15 @@ final class ListController {
     /// for whatever `AppModel.shownScreen` names: on an iPad the list shows
     /// beside an issue page, and is what the user pulled.
     func refresh(busy: () -> Bool) async {
-        guard let core = model?.core else { return }
-        let screen = screen
-        await model?.attempt { try await core.refresh(screen) }
+        await model?.refresh(screen)
         await settle(busy: busy)
     }
 
-    /// Reads again what failed in the list.
+    /// Reads again what failed in the list. Through the model, which keeps
+    /// track of the screen the core shows.
     func retry() {
         let screen = screen
-        ask { core in try await core.retry(screen) }
+        Task { await model?.retry(screen) }
     }
 
     /// Waits until the list is no longer read, at most half a minute, and

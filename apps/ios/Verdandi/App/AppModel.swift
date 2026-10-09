@@ -145,7 +145,8 @@ final class AppModel {
             core = try Core(
                 script: script,
                 options: .init(
-                    home: home.path(), interfaceFont: "SF Pro", codeFont: "SF Mono",
+                    // Unencoded: "Application Support" has a space.
+                    home: home.path(percentEncoded: false), interfaceFont: "SF Pro", codeFont: "SF Mono",
                     installedFonts: ["SF Pro", "SF Mono"]),
                 github: GitHubAPI(credentials: credentials))
         } catch {
