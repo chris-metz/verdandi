@@ -29,7 +29,8 @@ struct BlockingMapMetrics {
             stepGap: stepGap, cardGap: 14,
             titleHeight: (measured.titleHeight + 10).rounded(.up),
             lane: 26, turn: 22, padding: 14, head: 7, portSpacing: 8,
-            cardsPerStep: 6)
+            // On a narrow screen, a folded column stays within its height.
+            cardsPerStep: compact ? 4 : 6)
     }
 
     /// The heights of the map's text as SwiftUI sets it, which a hidden
