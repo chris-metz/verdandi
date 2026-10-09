@@ -131,19 +131,18 @@ struct BlockingMapView: View {
 
     /// Cards that came in flash in the theme's `map-new`, those that moved
     /// to another step in `map-moved`, as on the desktop; not when the map
-    /// first shows.
+    /// first shows. Only the last change flashes, so that a card shown
+    /// again later does not flash for an old one.
     private func noteChanges(in map: BlockingMap) {
         let steps = Dictionary(map.cards.map { ($0.id, $0.step) }, uniquingKeysWith: { first, _ in first })
         defer { shownSteps = steps }
         guard let before = shownSteps, before != steps else { return }
         changes += 1
-        for (id, step) in steps where id != issueId {
-            if let old = before[id] {
-                if old != step { flashes[id] = BlockingMapFlash(moved: true, token: changes) }
-            } else {
-                flashes[id] = BlockingMapFlash(moved: false, token: changes)
-            }
+        var next: [String: BlockingMapFlash] = [:]
+        for (id, step) in steps where id != issueId && before[id] != step {
+            next[id] = BlockingMapFlash(moved: before[id] != nil, token: changes)
         }
+        flashes = next
     }
 }
 
