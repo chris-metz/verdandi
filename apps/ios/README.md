@@ -38,13 +38,15 @@ VERDANDI_LIVE=1 GH_TOKEN="$(gh auth token)" apps/ios/scripts/test-kit.sh --filte
 pnpm vitest run --project ios-host              # the host's tests
 ```
 
-The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` passes `GH_TOKEN` from `gh auth token` into the app's environment only, and any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>` (see `Verdandi/App/LaunchOptions.swift`).
+The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` passes `GH_TOKEN` from `gh auth token` into the app's environment only, and any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>`, `VERDANDI_GO_TO=owner/name#12`, `VERDANDI_NOTICE=<text>` (see `Verdandi/App/LaunchOptions.swift`).
 
 To run it on an iPhone or iPad, open the project, choose the device and Run. It is signed for the team in `project.yml`.
 
 ## Signing in
 
-iOS has no `gh`, so the app signs in itself: with a personal access token, kept in the Keychain. A classic token needs the `repo` and `read:org` scopes; a fine-grained one needs read access to Issues and Metadata of the repositories to track. With a GitHub OAuth App's client ID in `VerdandiGitHubClientID` (`project.yml`), it also offers **Sign in with GitHub**, GitHub's device flow.
+iOS has no `gh`, so the app signs in itself: with a personal access token, kept in the Keychain. A classic token needs the `repo` and `read:org` scopes; a fine-grained one needs read access to Issues and Metadata of the repositories to track. With a GitHub OAuth App's client ID in `VerdandiGitHubClientID` (`project.yml`), it also offers **Sign in with GitHub**, GitHub's device flow (`VerdandiKit/…/GitHub/DeviceFlow.swift`): the OAuth App needs **Enable Device Flow** ticked, and no secret, as the app keeps none.
+
+To see signing in on a Simulator, launch with `VERDANDI_SIGNED_OUT=1`, which ignores `GH_TOKEN` and forgets the Keychain's token. `VERDANDI_SIGN_IN=<token>` signs in with a token at launch, as if typed: a made-up one shows GitHub's rejection. `VERDANDI_CLIENT_ID=<id>` tries another OAuth App, and `VERDANDI_DEVICE_FLOW=demo` shows the device flow's code without one.
 
 ## Design
 

@@ -3,7 +3,7 @@ import VerdandiKit
 
 @main
 struct VerdandiApp: App {
-    @State private var model = AppModel()
+    @State private var model = AppModel(credentials: LaunchOptions.current.makeCredentials())
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {

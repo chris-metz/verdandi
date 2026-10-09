@@ -8,6 +8,9 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
     @State private var columns = NavigationSplitViewVisibility.all
+    /// Why signing in is needed, kept while GitHub checks a token, so that
+    /// signing in holds still until GitHub has answered.
+    @State private var signInProblem: SetupProblem?
 
     var body: some View {
         @Bindable var model = model
@@ -34,21 +37,34 @@ struct RootView: View {
     @ViewBuilder private var content: some View {
         switch model.phase {
         case .starting:
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            StartingView(message: "Starting…")
         case .failed(let message):
-            ContentUnavailableView("Verdandi could not start", systemImage: "exclamationmark.triangle", description: Text(message))
+            StartFailedView(message: message)
         case .running:
-            switch model.setup {
-            case .checking:
-                ProgressView("Checking your GitHub sign-in…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .blocked(let problem):
-                SignInView(problem: problem)
-            case .ready:
-                split
+            Group {
+                if case .ready = model.setup {
+                    split
+                } else if let problem = shownSignInProblem {
+                    SignInView(problem: problem)
+                } else {
+                    StartingView(message: "Checking your GitHub sign-in…")
+                }
+            }
+            .onChange(of: model.setup, initial: true) { _, setup in
+                switch setup {
+                case .blocked(let problem): signInProblem = problem
+                case .ready: signInProblem = nil
+                case .checking: break
+                }
             }
         }
+    }
+
+    /// The problem signing in shows: the setup's, or, while it is checked
+    /// again, the one before.
+    private var shownSignInProblem: SetupProblem? {
+        if case .blocked(let problem) = model.setup { return problem }
+        return signInProblem
     }
 
     private var split: some View {
