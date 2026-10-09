@@ -194,8 +194,10 @@ struct UpdatedText: View {
     }
 }
 
-/// An issue as a row shows it: its state, title and reference, and what
-/// it carries. Lists, sub-issue outlines and pickers all use it.
+/// An issue as a row shows it: its state and title, and below them its
+/// reference, its repository where the list does not say it, how it relates
+/// to other issues, and its labels, wrapping as they need. Lists, sub-issue
+/// outlines and pickers all use it.
 struct IssueRowContent: View {
     @Environment(\.palette) private var palette
     var issue: IssueInfo
@@ -205,95 +207,198 @@ struct IssueRowContent: View {
     var dimmed = false
     /// Why it has not been read, if it has not.
     var unread: UnreadIssue?
+    /// Whether the dimming takes in the blocked-by and blocks counts too. It
+    /// does for a context issue; a list that dims an issue only for being in
+    /// the other state keeps them clear, since what blocks still counts.
+    var dimsRelationships = true
+    /// A context issue in a view whose results are incomplete, which may
+    /// match too: its reference says so with "?".
+    var mayMatch = false
+    /// How many matches its collapsed sub-issues hold, said beside it.
+    var matchesInside = 0
+    /// Whether it says how long ago it was opened, at the end of its title.
+    var showsAge = false
+    /// Adds a label to the list's label filter: its labels are buttons then.
+    var onFilterLabel: ((IssueLabel) -> Void)?
+
+    /// How many labels show before `+N` stands for the rest.
+    private static let labelsShown = 3
+    private static let dimming = 0.5
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             StateIcon(state: issue.state, reason: issue.stateReason)
                 .font(.body)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(issue.title)
-                    .font(.body)
-                    .foregroundStyle(palette.foreground)
-                    .lineLimit(3)
-                FlowLayout(spacing: 6) {
-                    Text(issue.reference)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(palette.muted)
-                    if showsRepository { RepositoryChip(repository: issue.repository) }
-                    if issue.external {
-                        Image(systemName: "arrow.up.forward.square")
-                            .font(.caption)
+                .opacity(faded)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(issue.title)
+                        .font(.body)
+                        .foregroundStyle(palette.foreground)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if showsAge, let created = issue.created {
+                        Text(IssueAge.short(since: created))
+                            .font(.caption.monospacedDigit())
                             .foregroundStyle(palette.muted)
-                            .accessibilityLabel("Outside your tracked repositories")
-                    }
-                    ForEach(issue.labels ?? []) { label in LabelChip(label: label, compact: true) }
-                    RelationshipCounts(
-                        blockedBy: issue.blockedBy, blocking: issue.blocking, subIssues: issue.subIssueProgress)
-                    switch unread {
-                    case .loading:
-                        ProgressView().controlSize(.mini)
-                    case .failed(let problem):
-                        Label(problem.message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(palette.warning)
-                            .lineLimit(1)
-                    case nil:
-                        EmptyView()
+                            .accessibilityLabel("Opened \(created.formatted(.relative(presentation: .named)))")
                     }
                 }
+                .opacity(faded)
+                details
             }
         }
-        .opacity(dimmed ? 0.55 : 1)
     }
+
+    /// What the row carries below its title, as one paragraph of chips.
+    private var details: some View {
+        FlowLayout(spacing: 6, lineSpacing: 5) {
+            reference.opacity(faded)
+            if showsRepository {
+                RowRepositoryChip(repository: issue.repository, external: issue.external).opacity(faded)
+            } else if issue.external {
+                externalTag.opacity(faded)
+            }
+            if let progress = issue.subIssueProgress, progress.total > 0 {
+                SubIssueProgressBadge(progress: progress).opacity(faded)
+            }
+            if let blockedBy = issue.blockedBy, blockedBy.total > 0 {
+                RelationshipBadge(side: .blockedBy, count: blockedBy, state: issue.state).opacity(relationshipsFaded)
+            }
+            if let blocking = issue.blocking, blocking.total > 0 {
+                RelationshipBadge(side: .blocking, count: blocking, state: issue.state).opacity(relationshipsFaded)
+            }
+            if matchesInside > 0 {
+                Text("\(matchesInside) inside")
+                    .font(.caption2.weight(.medium))
+                    .monospacedDigit()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .foregroundStyle(palette.muted)
+                    .background(palette.muted.opacity(0.15), in: .capsule)
+                    .opacity(faded)
+                    .accessibilityLabel("\(matchesInside) \(matchesInside == 1 ? "match" : "matches") below this issue")
+            }
+            let labels = issue.labels ?? []
+            ForEach(labels.prefix(Self.labelsShown)) { label in
+                RowLabel(label: label, onFilter: onFilterLabel).opacity(faded)
+            }
+            if labels.count > Self.labelsShown {
+                MoreLabels(labels: labels, hidden: labels.count - Self.labelsShown, onFilter: onFilterLabel)
+                    .opacity(faded)
+            }
+            if let incomplete = issue.incomplete {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(palette.warning)
+                    .accessibilityLabel("Shown in part: \(ProblemText(incomplete).sentence)")
+            }
+            if let unread {
+                UnreadNote(unread: unread)
+            }
+        }
+    }
+
+    private var reference: some View {
+        HStack(spacing: 1) {
+            Text(issue.reference)
+            if mayMatch {
+                Text("?").fontWeight(.bold)
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(palette.muted)
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mayMatch ? "\(issue.reference), may match" : issue.reference)
+    }
+
+    /// Marks an issue outside every tracked repository, where no chip names
+    /// its repository.
+    private var externalTag: some View {
+        Text("external")
+            .font(.caption2)
+            .foregroundStyle(palette.muted)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .overlay(Capsule().strokeBorder(palette.muted, style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
+            .accessibilityLabel("Not in a tracked repository")
+    }
+
+    private var faded: Double { dimmed ? Self.dimming : 1 }
+    private var relationshipsFaded: Double { dimmed && dimsRelationships ? Self.dimming : 1 }
 }
 
 /// Lays its views out in rows, wrapping as a paragraph wraps words.
+///
+/// It places its views on the lines it measured for the width it was
+/// offered, not for its bounds, which can be a hair narrower once rounded to
+/// pixels: a List row sizes itself by what it measured, and a line that
+/// placing added would be cut off. A view wider than a whole line is given
+/// the line's width, to wrap or shorten in.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
     var lineSpacing: CGFloat = 4
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if size.width == 0 { continue }
-            if x > 0, x + size.width > width {
-                y += lineHeight + lineSpacing
-                x = 0
-                lineHeight = 0
-            }
-            x += size.width + spacing
-            widest = max(widest, x - spacing)
-            lineHeight = max(lineHeight, size.height)
-        }
-        return CGSize(width: min(widest, width), height: y + lineHeight)
+    struct Line {
+        var items: [(index: Int, size: CGSize)] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, lineHeight: CGFloat = 0
-        var line: [(LayoutSubview, CGSize, CGFloat)] = []
-        func placeLine() {
-            for (subview, size, at) in line {
-                subview.place(
-                    at: CGPoint(x: at, y: y + (lineHeight - size.height) / 2), anchor: .topLeading,
-                    proposal: ProposedViewSize(size))
+    /// Each view's own size, measured once for all the widths it is offered.
+    func makeCache(subviews: Subviews) -> [CGSize] {
+        subviews.map { $0.sizeThatFits(.unspecified) }
+    }
+
+    func updateCache(_ cache: inout [CGSize], subviews: Subviews) {
+        cache = makeCache(subviews: subviews)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout [CGSize]) -> CGSize {
+        let lines = arrange(subviews, sizes: cache, width: proposal.width ?? .infinity)
+        let width = lines.map(\.width).max() ?? 0
+        let height = lines.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(lines.count - 1, 0))
+        return CGSize(width: proposal.width.map { min(width, $0) } ?? width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout [CGSize]
+    ) {
+        let width = max(bounds.width, proposal.width ?? bounds.width)
+        var y = bounds.minY
+        for line in arrange(subviews, sizes: cache, width: width) {
+            var x = bounds.minX
+            for item in line.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y + (line.height - item.size.height) / 2), anchor: .topLeading,
+                    proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
             }
-            line = []
+            y += line.height + lineSpacing
         }
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if size.width == 0 { continue }
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                placeLine()
-                y += lineHeight + lineSpacing
-                x = bounds.minX
-                lineHeight = 0
+    }
+
+    private func arrange(_ subviews: Subviews, sizes: [CGSize], width: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for (index, subview) in subviews.enumerated() {
+            var size = sizes.indices.contains(index) ? sizes[index] : subview.sizeThatFits(.unspecified)
+            if size.width == 0 && size.height == 0 { continue }
+            if size.width > width {
+                size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+                size.width = min(size.width, width)
             }
-            line.append((subview, size, x))
-            x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
+            // Half a point of slack, so that rounding never wraps a line that fits.
+            if !line.items.isEmpty, line.width + spacing + size.width > width + 0.5 {
+                lines.append(line)
+                line = Line()
+            }
+            line.width += (line.items.isEmpty ? 0 : spacing) + size.width
+            line.height = max(line.height, size.height)
+            line.items.append((index, size))
         }
-        placeLine()
+        if !line.items.isEmpty { lines.append(line) }
+        return lines
     }
 }
