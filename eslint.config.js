@@ -25,7 +25,11 @@ export default defineConfig(
   {
     // Agent skills' and the desktop app's scripts run on Node (or Electron),
     // and may pass functions to a page.
-    files: [".agents/**/*.mjs", "apps/desktop/scripts/**/*.mjs"],
+    files: [
+      ".agents/**/*.mjs",
+      "apps/desktop/scripts/**/*.mjs",
+      "apps/ios/scripts/**/*.mjs",
+    ],
     languageOptions: {
       globals: {
         console: "readonly",

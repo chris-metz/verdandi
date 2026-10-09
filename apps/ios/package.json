@@ -1,0 +1,17 @@
+{
+  "name": "@verdandi/ios",
+  "description": "The iPhone and iPad app: SwiftUI over the core, run on JavaScriptCore.",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node scripts/bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "@verdandi/core": "workspace:*",
+    "esbuild": "^0.28.2",
+    "typescript": "~6.0.3"
+  }
+}
