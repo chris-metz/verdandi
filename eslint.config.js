@@ -5,7 +5,12 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  globalIgnores(["**/out/", "**/dist/"]),
+  globalIgnores([
+    "**/out/",
+    "**/dist/",
+    "**/.build/",
+    "apps/ios/Verdandi/Resources/core.js",
+  ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {

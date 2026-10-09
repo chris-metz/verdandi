@@ -3,3 +3,6 @@ out/
 dist/
 # Throwaway prototypes stay as they were written.
 docs/prototypes/
+# Bundled from the core when the iOS app builds.
+apps/ios/Verdandi/Resources/core.js
+**/.build/
