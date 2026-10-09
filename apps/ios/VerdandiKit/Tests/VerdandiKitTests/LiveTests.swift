@@ -82,4 +82,53 @@ struct Live {
         }
         #expect(list.matchCount != nil)
     }
+
+    @Test func suggestsRepositoriesAndReportsBudgets() async throws {
+        let core = try start()
+        _ = try await core.checkSetupAgain()
+
+        try await core.openRepositoryPicker()
+        let suggestions = try await first(core) { event -> RepositorySuggestions? in
+            if case .repositorySuggestionsChanged(let suggestions) = event, case .loaded = suggestions.loading {
+                return suggestions
+            }
+            return nil
+        }
+        try await core.closeRepositoryPicker()
+        let check = try await core.checkRepository(repository)
+        let budgets = try await core.getRateLimitBudgets()
+        let config = try await core.getConfig()
+
+        #expect(!suggestions.repositories.isEmpty)
+        #expect(suggestions.owners.first?.kind == .account)
+        if case .found(let found) = check { #expect(found.repository == repository) } else { Issue.record("\(check)") }
+        #expect(budgets.contains { $0.pool == .graphql })
+        #expect(config.status == .missing)
+    }
+
+    @Test func readsAClosedListAndAnIssueOutsideTrackedRepositories() async throws {
+        let core = try start()
+        _ = try await core.checkSetupAgain()
+        _ = try await core.addRepositories([repository])
+
+        try await core.switchState(.repository(repository), to: .closed)
+        let closed = try await first(core) { event -> IssueList? in
+            if case .listChanged(let list) = event, list.state == .closed, case .current = list.loading.state { return list }
+            return nil
+        }
+        let lookup = try await core.lookUpIssue(RepositoryAddress(owner: "cli", name: "cli"), number: 2)
+
+        #expect(!closed.trees.isEmpty)
+        guard case .found(let issue) = lookup else {
+            Issue.record("\(lookup)")
+            return
+        }
+        try await core.openIssuePage(issue.id)
+        let page = try await first(core) { event -> IssuePage? in
+            if case .issuePageChanged(let page) = event, page.issueId == issue.id, case .current = page.loading { return page }
+            return nil
+        }
+        #expect(page.issue?.external == true)
+        #expect(page.comments?.comments.isEmpty == false)
+    }
 }
