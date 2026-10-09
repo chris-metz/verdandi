@@ -129,7 +129,13 @@ final class BodyWebViews: NSObject {
         view.coordinator = nil
         guard view.isReady, idle.count < Self.idleLimit, !idle.contains(view) else { return }
         view.callAsyncJavaScript("verdandi.clear()", in: nil, in: BodyDocument.world, completionHandler: nil)
-        idle.append(view)
+        // It waits from the next turn on, once SwiftUI has let go of the
+        // view it sat in, so that no body takes it while it is still there.
+        Task { @MainActor [weak self] in
+            guard let self, view.coordinator == nil, !idle.contains(view), idle.count < Self.idleLimit else { return }
+            view.removeFromSuperview()
+            idle.append(view)
+        }
     }
 
     private func load(_ view: BodyWKWebView) {
