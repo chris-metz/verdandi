@@ -100,14 +100,14 @@ struct BlockingMapView: View {
 
     // MARK: - Acting
 
+    // Through the model, which makes the page the core's screen first: on an
+    // iPad the core may be reading the list beside it.
     private func activate(_ side: BlockingSide) {
-        guard let core = model.core else { return }
-        Task { await model.attempt { try await core.activateBlockingEnd(issueId, side: side) } }
+        Task { await model.activateBlockingEnd(issueId, side: side) }
     }
 
     private func retry(_ card: BlockingMap.Card, _ side: BlockingSide) {
-        guard let core = model.core else { return }
-        Task { await model.attempt { try await core.retryBlockingBranch(issueId, cardId: card.id, side: side) } }
+        Task { await model.retryBlockingBranch(issueId, cardId: card.id, side: side) }
     }
 
     private func toggle(_ step: Int) {
