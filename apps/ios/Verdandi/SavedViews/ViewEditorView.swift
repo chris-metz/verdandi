@@ -157,7 +157,20 @@ struct ViewEditorView: View {
             // The keyboard comes once the sheet is up.
             try? await Task.sleep(for: .milliseconds(450))
             guard !busy, outcome == nil else { return }
-            if case .edit = purpose { focus = .search } else { focus = .name }
+            switch purpose {
+            case .edit:
+                focus = .search
+                // An edit goes on where the search ends.
+                try? await Task.sleep(for: .milliseconds(100))
+                querySelection = TextSelection(insertionPoint: query.endIndex)
+            case .duplicate:
+                focus = .name
+                // The copy's name is there to be typed over.
+                try? await Task.sleep(for: .milliseconds(100))
+                nameSelection = TextSelection(range: name.startIndex..<name.endIndex)
+            case .new, nil:
+                focus = .name
+            }
         }
         .onDisappear {
             model.editedView = nil
@@ -214,12 +227,10 @@ struct ViewEditorView: View {
             purpose = .edit(editing)
             name = editing.name
             query = editing.query
-            querySelection = TextSelection(insertionPoint: query.endIndex)
         } else if let original = model.duplicatedView {
             purpose = .duplicate(original)
             name = "\(original.name) copy"
             query = original.query
-            nameSelection = TextSelection(range: name.startIndex..<name.endIndex)
         } else {
             purpose = .new
             if let draft = SidebarLaunchOptions.draft {
@@ -246,9 +257,12 @@ struct ViewEditorView: View {
             outcome = nil
         }
         if snippet.isOpen {
-            // Its value is typed right after it.
+            // Its value is typed right after it, once the field has the keyboard.
             focus = .search
-            querySelection = TextSelection(insertionPoint: query.endIndex)
+            Task {
+                try? await Task.sleep(for: .milliseconds(100))
+                querySelection = TextSelection(insertionPoint: query.endIndex)
+            }
         }
     }
 
