@@ -2,42 +2,32 @@ import CoreGraphics
 import Foundation
 
 /// Where a blocking map's cards, ends and arrows go: a column per step,
-/// the issue's in the middle, what blocks it before and what it blocks
-/// after, as the desktop app lays it out. The core decides each card's
-/// step; this decides only the order within a step, the places, and the
-/// arrows' routes, so that the app draws what it is given.
+/// the issue's in the middle, what blocks it to the left and what it blocks
+/// to the right, as the desktop app lays it out. The core decides each
+/// card's step; this decides only the order within a column, the places,
+/// and the arrows' routes, so that the app draws what it is given.
 ///
-/// The steps run along an axis: left to right, as on the desktop, or top
-/// to bottom. Within a step, cards stand in the order that crosses the
-/// fewest arrows the layout can cheaply find: each next to the cards
-/// nearer the issue it is linked to. A step with more cards than
-/// `Metrics.cardsPerStep` shows that many and a control for the rest,
-/// unless it is in `expandedSteps`.
+/// Within a column, cards stand in the order that crosses the fewest arrows
+/// the layout can cheaply find: each level with the cards nearer the issue
+/// it is linked to, as far as the column allows. A column with more cards
+/// than `Metrics.cardsPerStep` shows that many and a toggle for the rest,
+/// unless its step is in `expandedSteps`.
 public struct BlockingMapLayout: Hashable, Sendable {
-    /// Which way the steps run.
-    public enum Axis: Hashable, Sendable {
-        /// Columns, left to right, as on the desktop.
-        case horizontal
-        /// Rows, top to bottom.
-        case vertical
-    }
-
     /// The sizes the layout works with, which the app takes from the text
     /// size.
     public struct Metrics: Hashable, Sendable {
-        /// A card's size on screen.
         public var cardSize: CGSize
-        /// The size of an end's control, and of a step's control for the
-        /// cards it does not show, across the step (its other side is the
-        /// card's).
+        /// An end's control. A column's toggle is as wide as its cards and
+        /// as tall as this.
         public var controlSize: CGSize
-        /// Between one step's cards and the next step's.
+        /// Between one column's cards and the next column's.
         public var stepGap: CGFloat
-        /// Between the cards of a step.
+        /// Between the cards of a column.
         public var cardGap: CGFloat
-        /// Room for a step's title before its cards.
+        /// Room for the columns' titles, above everything.
         public var titleHeight: CGFloat
-        /// Room beside the cards for arrows that go around them.
+        /// Room between the titles and the cards for arrows that go round
+        /// the cards.
         public var lane: CGFloat
         /// How far an arrow bends out of a card on its way to the lane.
         public var turn: CGFloat
@@ -47,7 +37,7 @@ public struct BlockingMapLayout: Hashable, Sendable {
         public var head: CGFloat
         /// The most room arrows leaving or reaching one card keep apart.
         public var portSpacing: CGFloat
-        /// The most cards a step shows unless expanded.
+        /// The most cards a column shows unless expanded.
         public var cardsPerStep: Int
 
         public init(
@@ -74,21 +64,20 @@ public struct BlockingMapLayout: Hashable, Sendable {
         case card(BlockingMap.Card)
         /// A side's end: more to read, reading, or fewer to show.
         case end(BlockingSide, BlockingEnd)
-        /// A step's cards beyond those it shows, `hidden` of them, or,
-        /// with none hidden, the control that shows fewer again.
+        /// A column's cards beyond those it shows, `hidden` of them, or,
+        /// with none hidden, the toggle that shows fewer again.
         case stepToggle(step: Int, hidden: Int)
     }
 
     public struct Node: Hashable, Sendable, Identifiable {
         /// The issue's ID for a card; `edge:blockedBy` or `edge:blocking`
         /// for an end, as the core names them in edges; `step:<n>` for a
-        /// step's toggle.
+        /// column's toggle.
         public var id: String
         public var content: Content
         public var step: Int
         public var frame: CGRect
-        /// Its place in reading order: step by step, outwards from the
-        /// first, then down or along the step.
+        /// Its place in reading order: column by column, top to bottom.
         public var order: Int
 
         public var card: BlockingMap.Card? {
@@ -96,7 +85,7 @@ public struct BlockingMapLayout: Hashable, Sendable {
         }
     }
 
-    /// A step that holds cards, with where its title goes.
+    /// A column that holds cards, with where its title goes.
     public struct Step: Hashable, Sendable, Identifiable {
         public var step: Int
         public var title: String
@@ -108,9 +97,9 @@ public struct BlockingMapLayout: Hashable, Sendable {
     public enum Route: Hashable, Sendable {
         /// Straight on, curving from one card to the next.
         case direct
-        /// Out into the lane beside the cards, along it and back in, at
-        /// this distance across the steps: round the cards in the way, or
-        /// back against the steps for a cycle.
+        /// Up over the cards, along at this height and back down: round the
+        /// cards in the way, or back to the left for a cycle. It runs as low
+        /// as clears them, and no higher than the lane below the titles.
         case lane(CGFloat)
     }
 
@@ -120,11 +109,11 @@ public struct BlockingMapLayout: Hashable, Sendable {
         public var to: String
         public var cycle: Bool
         public var closed: Bool
-        /// Where it leaves its blocker.
+        /// Where it leaves its blocker, on its right side.
         public var start: CGPoint
         /// Where its line ends and its head begins.
         public var end: CGPoint
-        /// Where its head points to, on the edge of what waits.
+        /// Where its head points to, on the left side of what waits.
         public var tip: CGPoint
         public var route: Route
 
@@ -138,7 +127,6 @@ public struct BlockingMapLayout: Hashable, Sendable {
         case curve(CGPoint, control1: CGPoint, control2: CGPoint)
     }
 
-    public var axis: Axis
     public var nodes: [Node]
     public var steps: [Step]
     public var arrows: [Arrow]
@@ -146,13 +134,12 @@ public struct BlockingMapLayout: Hashable, Sendable {
     /// How far an arrow bends on its way to the lane, for drawing it.
     public var turn: CGFloat
 
-    /// The node of the map's issue.
     public func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 
     /// The ID of a side's end, as the core names it in edges.
     public static func endId(_ side: BlockingSide) -> String { "edge:\(side.rawValue)" }
 
-    /// What a step's title says, as on the desktop.
+    /// What a column's title says, as on the desktop.
     public static func title(ofStep step: Int) -> String {
         switch step {
         case -1: "Blocked by"
@@ -165,11 +152,8 @@ public struct BlockingMapLayout: Hashable, Sendable {
     // MARK: - Laying out
 
     /// Lays out `map`, whose issue is `root`.
-    public init(
-        map: BlockingMap, root: String, metrics: Metrics, axis: Axis = .horizontal, expandedSteps: Set<Int> = []
-    ) {
-        self.axis = axis
-        self.turn = metrics.turn
+    public init(map: BlockingMap, root: String, metrics: Metrics, expandedSteps: Set<Int> = []) {
+        turn = metrics.turn
         let discovery = Dictionary(map.cards.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         let byStep = Dictionary(grouping: map.cards, by: \.step)
         let cardSteps = map.cards.map(\.step)
@@ -179,6 +163,7 @@ public struct BlockingMapLayout: Hashable, Sendable {
         for side in BlockingSide.allCases where map.ends[side] != .none {
             endSteps[side == .blockedBy ? firstCardStep - 1 : lastCardStep + 1] = side
         }
+        let allSteps = Array((endSteps.keys.min() ?? firstCardStep)...(endSteps.keys.max() ?? lastCardStep))
 
         // The arrows in the core's terms, with one from each branch that
         // goes on to its side's end, even before anything has been folded
@@ -194,129 +179,109 @@ public struct BlockingMapLayout: Hashable, Sendable {
                 }
             }
         }
+        let ordering = edges.filter { !$0.cycle }
 
-        // Placed outwards from the issue, so that each step orders itself
-        // by the steps nearer the issue, which stand already.
-        let cross = CrossPlacement(metrics: metrics, axis: axis)
-        var centres: [String: CGFloat] = [:]
+        // Placed outwards from the issue, so that each column orders itself
+        // by the columns nearer the issue, which stand already. Heights are
+        // relative to the issue's middle until the end.
+        var middles: [String: CGFloat] = [:]
         var standIn: [String: String] = [:]
         var placed: [Int: [(id: String, content: Content)]] = [:]
-        let allSteps = Array((endSteps.keys.min() ?? firstCardStep)...(endSteps.keys.max() ?? lastCardStep))
-        let outwards = [0] + allSteps.filter { $0 > 0 }.sorted() + allSteps.filter { $0 < 0 }.sorted(by: >)
+        let outwards = [0] + allSteps.filter { $0 > 0 } + allSteps.filter { $0 < 0 }.reversed()
         for step in outwards {
             var members: [(id: String, content: Content)]
             if let side = endSteps[step] {
                 members = [(Self.endId(side), .end(side, map.ends[side]))]
             } else {
-                members = (byStep[step] ?? []).map { ($0.id, .card($0)) }
+                members = (byStep[step] ?? []).map { (id: $0.id, content: .card($0)) }
             }
-            func neighbours(of id: String) -> [CGFloat] {
-                edges.filter { !$0.cycle }.compactMap { edge in
-                    let other = edge.from == id ? edge.to : edge.to == id ? edge.from : nil
-                    return other.flatMap { centres[standIn[$0] ?? $0] }
+            /// The middle of the placed cards it is linked to, if any.
+            func barycentre(of ids: [String]) -> CGFloat? {
+                let known = ordering.compactMap { edge -> CGFloat? in
+                    let other = ids.contains(edge.from) ? edge.to : ids.contains(edge.to) ? edge.from : nil
+                    return other.flatMap { middles[standIn[$0] ?? $0] }
+                }
+                return known.isEmpty ? nil : known.reduce(0, +) / CGFloat(known.count)
+            }
+            let wanted = Dictionary(
+                members.map { ($0.id, barycentre(of: [$0.id])) }, uniquingKeysWith: { first, _ in first })
+            members.sort { a, b in
+                switch (wanted[a.id] ?? nil, wanted[b.id] ?? nil) {
+                case (let x?, let y?) where x != y: return x < y
+                case (.some, nil): return true
+                case (nil, .some): return false
+                default: return (discovery[a.id] ?? 0) < (discovery[b.id] ?? 0)
                 }
             }
-            let barycentres = Dictionary(
-                members.map { member in
-                    let known = neighbours(of: member.id)
-                    return (member.id, known.isEmpty ? nil : known.reduce(0, +) / CGFloat(known.count))
-                }, uniquingKeysWith: { first, _ in first })
-            members.sort { a, b in
-                let (x, y) = (barycentres[a.id] ?? nil, barycentres[b.id] ?? nil)
-                if let x, let y, x != y { return x < y }
-                if (x == nil) != (y == nil) { return x != nil }
-                return (discovery[a.id] ?? 0) < (discovery[b.id] ?? 0)
-            }
-            // A long step shows its first cards and a toggle for the rest.
-            let limit = max(1, metrics.cardsPerStep)
+            // A long column shows its first cards and a toggle for the rest.
             var shown = members
-            var desired = members.map { barycentres[$0.id] ?? nil }
+            var desired = members.map { wanted[$0.id] ?? nil }
+            let limit = max(1, metrics.cardsPerStep)
             if step != 0, endSteps[step] == nil, members.count > limit {
                 let toggle = "step:\(step)"
                 if expandedSteps.contains(step) {
                     shown.append((toggle, .stepToggle(step: step, hidden: 0)))
                     desired.append(nil)
                 } else {
-                    let hidden = members.dropFirst(limit)
-                    for member in hidden { standIn[member.id] = toggle }
-                    let known = hidden.flatMap { neighbours(of: $0.id) }
+                    let hidden = Array(members.dropFirst(limit))
                     shown = Array(members.prefix(limit)) + [(toggle, .stepToggle(step: step, hidden: hidden.count))]
-                    desired = Array(desired.prefix(limit)) + [known.isEmpty ? nil : known.reduce(0, +) / CGFloat(known.count)]
+                    desired = Array(desired.prefix(limit)) + [barycentre(of: hidden.map(\.id))]
+                    for member in hidden { standIn[member.id] = toggle }
                 }
             }
-            let sizes = shown.map { cross.extent(of: $0.content) }
-            for (member, centre) in zip(shown, cross.place(desired: desired, sizes: sizes)) {
-                centres[member.id] = centre
+            let heights = shown.map { Self.height(of: $0.content, metrics) }
+            for (member, middle) in zip(shown, Self.place(desired: desired, heights: heights, gap: metrics.cardGap)) {
+                middles[member.id] = middle
             }
             placed[step] = shown
         }
 
-        // The steps along the axis, each as long as what it holds.
-        let ordered = allSteps
-        let titled = { (step: Int) in endSteps[step] == nil }
-        var mainStarts: [Int: CGFloat] = [:]
-        var mainLengths: [Int: CGFloat] = [:]
-        var position = metrics.padding
-        for step in ordered {
-            let length = endSteps[step] != nil ? cross.mainLength(ofControl: true) : cross.mainLength(ofControl: false)
-            mainStarts[step] = position
-            mainLengths[step] = length
-            switch axis {
-            case .horizontal: position += length + metrics.stepGap
-            case .vertical: position += (titled(step) ? metrics.titleHeight : 0) + length + metrics.stepGap
-            }
+        // The columns, left to right, each as wide as what it holds.
+        var lefts: [Int: CGFloat] = [:]
+        var widths: [Int: CGFloat] = [:]
+        var x = metrics.padding
+        for step in allSteps {
+            let width = endSteps[step] == nil ? metrics.cardSize.width : metrics.controlSize.width
+            lefts[step] = x
+            widths[step] = width
+            x += width + metrics.stepGap
         }
-        let mainEnd = position - metrics.stepGap + metrics.padding
+        let width = x - metrics.stepGap + metrics.padding
 
-        let extents = placed.values.joined().map { (centres[$0.id] ?? 0, cross.extent(of: $0.content)) }
-        let lowest = extents.map { $0.0 - $0.1 / 2 }.min() ?? 0
-        let highest = extents.map { $0.0 + $0.1 / 2 }.max() ?? 0
-        let crossOrigin =
-            metrics.padding + metrics.lane + (axis == .horizontal ? metrics.titleHeight : 0) - lowest
-        let crossEnd = crossOrigin + highest + metrics.padding
-        let laneCentre = crossOrigin + lowest - metrics.lane * 0.55
-
-        func point(main: CGFloat, cross: CGFloat) -> CGPoint {
-            axis == .horizontal ? CGPoint(x: main, y: cross) : CGPoint(x: cross, y: main)
-        }
-        func rect(main: CGFloat, cross: CGFloat, mainLength: CGFloat, crossLength: CGFloat) -> CGRect {
-            axis == .horizontal
-                ? CGRect(x: main, y: cross, width: mainLength, height: crossLength)
-                : CGRect(x: cross, y: main, width: crossLength, height: mainLength)
-        }
+        let spans = placed.values.joined().map { (middles[$0.id] ?? 0, Self.height(of: $0.content, metrics)) }
+        let highest = spans.map { $0.0 - $0.1 / 2 }.min() ?? 0
+        let lowest = spans.map { $0.0 + $0.1 / 2 }.max() ?? 0
+        let cardsTop = metrics.padding + metrics.titleHeight + metrics.lane
+        let shift = cardsTop - highest
+        let lane = cardsTop - metrics.lane * 0.55
 
         var nodes: [Node] = []
         var steps: [Step] = []
-        for (index, step) in ordered.enumerated() {
-            guard let start = mainStarts[step] else { continue }
-            let cardsStart = start + (axis == .vertical && titled(step) ? metrics.titleHeight : 0)
-            if titled(step) {
-                let titleFrame =
-                    axis == .horizontal
-                    ? CGRect(x: start, y: metrics.padding, width: mainLengths[step] ?? 0, height: metrics.titleHeight)
-                    : CGRect(
-                        x: crossOrigin + lowest, y: start, width: max(0, highest - lowest),
-                        height: metrics.titleHeight)
-                steps.append(Step(step: step, title: Self.title(ofStep: step), titleFrame: titleFrame))
+        for (column, step) in allSteps.enumerated() {
+            guard let left = lefts[step], let columnWidth = widths[step] else { continue }
+            if endSteps[step] == nil {
+                steps.append(
+                    Step(
+                        step: step, title: Self.title(ofStep: step),
+                        titleFrame: CGRect(x: left, y: metrics.padding, width: columnWidth, height: metrics.titleHeight)))
             }
             for (row, member) in (placed[step] ?? []).enumerated() {
-                let extent = cross.extent(of: member.content)
-                let mainLength = cross.mainLength(of: member.content)
-                let centre = crossOrigin + (centres[member.id] ?? 0)
-                // A control shorter than its step stands in its middle.
-                let main = cardsStart + ((mainLengths[step] ?? mainLength) - mainLength) / 2
+                let size = Self.size(of: member.content, metrics)
+                let middle = shift + (middles[member.id] ?? 0)
                 nodes.append(
                     Node(
                         id: member.id, content: member.content, step: step,
-                        frame: rect(main: main, cross: centre - extent / 2, mainLength: mainLength, crossLength: extent),
-                        order: index * 1000 + row))
+                        frame: CGRect(
+                            x: left + (columnWidth - size.width) / 2, y: middle - size.height / 2, width: size.width,
+                            height: size.height),
+                        order: column * 1000 + row))
             }
         }
 
         // The arrows between what shows: one to a card that does not show
         // ends at the toggle standing for it.
-        var shownEdges: [BlockingMap.Edge] = []
         let shownIds = Set(nodes.map(\.id))
+        var shownEdges: [BlockingMap.Edge] = []
         for edge in edges {
             var edge = edge
             edge.from = standIn[edge.from] ?? edge.from
@@ -329,157 +294,92 @@ public struct BlockingMapLayout: Hashable, Sendable {
                 shownEdges.append(edge)
             }
         }
-        let frames = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let main = { (rect: CGRect) in axis == .horizontal ? (rect.minX, rect.maxX) : (rect.minY, rect.maxY) }
-        let across = { (rect: CGRect) in axis == .horizontal ? (rect.minY, rect.maxY) : (rect.minX, rect.maxX) }
+        let byId = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        /// Just above its ends and every card in the columns between them,
+        /// rather than up at the top of the map.
+        func laneOver(_ from: Node, _ to: Node) -> Route {
+            let (left, right) = (min(from.step, to.step), max(from.step, to.step))
+            let between = nodes.filter { $0.step > left && $0.step < right }
+            let top = ([from, to] + between).map(\.frame.minY).min() ?? cardsTop
+            return .lane(max(lane, top - metrics.lane * 0.55))
+        }
         let routes = shownEdges.map { edge -> Route in
-            guard let from = frames[edge.from], let to = frames[edge.to] else { return .direct }
-            if edge.cycle || to.step <= from.step { return .lane(laneCentre) }
-            let (a, b) = (across(from.frame), across(to.frame))
-            let low = min((a.0 + a.1) / 2, (b.0 + b.1) / 2) - 4
-            let high = max((a.0 + a.1) / 2, (b.0 + b.1) / 2) + 4
-            // Past empty steps it runs straight; round a card in the way.
+            guard let from = byId[edge.from], let to = byId[edge.to] else { return .direct }
+            if edge.cycle || to.step <= from.step { return laneOver(from, to) }
+            let top = min(from.frame.midY, to.frame.midY) - 4
+            let bottom = max(from.frame.midY, to.frame.midY) + 4
+            // Past empty columns it runs straight; round a card in the way.
             let inTheWay = nodes.contains { node in
-                node.step > from.step && node.step < to.step && across(node.frame).1 > low && across(node.frame).0 < high
+                node.step > from.step && node.step < to.step && node.frame.maxY > top && node.frame.minY < bottom
             }
-            return inTheWay ? .lane(laneCentre) : .direct
+            return inTheWay ? laneOver(from, to) : .direct
         }
 
         // Arrows that leave or reach one card spread along its side in the
         // order of their other ends, so that they do not cross there. Those
-        // in the lane come from, or go to, its side.
-        func crossCentre(_ id: String) -> CGFloat {
-            frames[id].map { let (a, b) = across($0.frame); return (a + b) / 2 } ?? 0
-        }
-        func ports(grouping key: (BlockingMap.Edge) -> String, other: (BlockingMap.Edge) -> String) -> [Int: CGFloat] {
+        // in the lane leave and arrive at the top.
+        func ports(of key: KeyPath<BlockingMap.Edge, String>, other: KeyPath<BlockingMap.Edge, String>) -> [Int: CGFloat] {
             var result: [Int: CGFloat] = [:]
-            for (id, indices) in Dictionary(grouping: shownEdges.indices, by: { key(shownEdges[$0]) }) {
-                guard let node = frames[id] else { continue }
+            for (id, indices) in Dictionary(grouping: shownEdges.indices, by: { shownEdges[$0][keyPath: key] }) {
+                guard let node = byId[id] else { continue }
                 let sorted = indices.sorted { a, b in
-                    let x = routes[a] == .direct ? crossCentre(other(shownEdges[a])) : -.infinity
-                    let y = routes[b] == .direct ? crossCentre(other(shownEdges[b])) : -.infinity
-                    return x != y ? x < y : a < b
+                    let y = routes[a] == .direct ? byId[shownEdges[a][keyPath: other]]?.frame.midY ?? 0 : -.infinity
+                    let z = routes[b] == .direct ? byId[shownEdges[b][keyPath: other]]?.frame.midY ?? 0 : -.infinity
+                    return y != z ? y < z : a < b
                 }
-                let (low, high) = across(node.frame)
-                let room = max(0, high - low - 2 * min(12, (high - low) / 4))
+                let height = node.frame.height
+                let room = max(0, height - 2 * min(12, height / 4))
                 let spacing = sorted.count > 1 ? min(metrics.portSpacing, room / CGFloat(sorted.count - 1)) : 0
                 for (place, index) in sorted.enumerated() {
-                    result[index] = (low + high) / 2 + (CGFloat(place) - CGFloat(sorted.count - 1) / 2) * spacing
+                    result[index] = node.frame.midY + (CGFloat(place) - CGFloat(sorted.count - 1) / 2) * spacing
                 }
             }
             return result
         }
-        let starts = ports(grouping: \.from, other: \.to)
-        let ends = ports(grouping: \.to, other: \.from)
+        let starts = ports(of: \.from, other: \.to)
+        let ends = ports(of: \.to, other: \.from)
         var arrows: [Arrow] = []
         for (index, edge) in shownEdges.enumerated() {
-            guard let from = frames[edge.from], let to = frames[edge.to] else { continue }
-            let exit = main(from.frame).1
-            let entry = main(to.frame).0
-            let startCross = starts[index] ?? crossCentre(edge.from)
-            let endCross = ends[index] ?? crossCentre(edge.to)
+            guard let from = byId[edge.from], let to = byId[edge.to] else { continue }
+            let startY = starts[index] ?? from.frame.midY
+            let endY = ends[index] ?? to.frame.midY
             arrows.append(
                 Arrow(
                     from: edge.from, to: edge.to, cycle: edge.cycle, closed: edge.closed,
-                    start: point(main: exit, cross: startCross),
-                    end: point(main: entry - metrics.head, cross: endCross),
-                    tip: point(main: entry, cross: endCross), route: routes[index]))
+                    start: CGPoint(x: from.frame.maxX, y: startY),
+                    end: CGPoint(x: to.frame.minX - metrics.head, y: endY),
+                    tip: CGPoint(x: to.frame.minX, y: endY), route: routes[index]))
         }
 
-        self.nodes = nodes.sorted { $0.order < $1.order }
+        self.nodes = nodes
         self.steps = steps
         self.arrows = arrows
-        self.size = axis == .horizontal ? CGSize(width: mainEnd, height: crossEnd) : CGSize(width: crossEnd, height: mainEnd)
+        size = CGSize(width: width, height: shift + lowest + metrics.padding)
     }
 
-    // MARK: - Drawing arrows
-
-    /// An arrow's line, from where it leaves its blocker to where its head
-    /// begins. The app draws it from the points, so that an arrow can move
-    /// with its cards.
-    public static func segments(from start: CGPoint, to end: CGPoint, route: Route, axis: Axis, turn: CGFloat) -> [Segment]
-    {
-        // Worked out as if the steps ran left to right, then turned.
-        let flip = { (point: CGPoint) in axis == .horizontal ? point : CGPoint(x: point.y, y: point.x) }
-        let (a, b) = (flip(start), flip(end))
-        var segments: [Segment] = [.move(a)]
-        switch route {
-        case .direct:
-            let bend = max(turn, (b.x - a.x) / 2)
-            segments.append(.curve(b, control1: CGPoint(x: a.x + bend, y: a.y), control2: CGPoint(x: b.x - bend, y: b.y)))
-        case .lane(let lane):
-            let out = CGPoint(x: a.x + turn, y: lane)
-            let back = CGPoint(x: b.x - turn, y: lane)
-            let toward: CGFloat = lane < a.y ? 1 : -1
-            segments.append(
-                .curve(out, control1: CGPoint(x: a.x + turn, y: a.y), control2: CGPoint(x: a.x + turn, y: lane + 4 * toward)))
-            segments.append(.line(back))
-            segments.append(
-                .curve(b, control1: CGPoint(x: b.x - turn, y: lane + 4 * toward), control2: CGPoint(x: b.x - turn, y: b.y)))
-        }
-        return segments.map { segment in
-            switch segment {
-            case .move(let point): .move(flip(point))
-            case .line(let point): .line(flip(point))
-            case .curve(let point, let control1, let control2):
-                .curve(flip(point), control1: flip(control1), control2: flip(control2))
-            }
+    private static func size(of content: Content, _ metrics: Metrics) -> CGSize {
+        switch content {
+        case .card: metrics.cardSize
+        case .end: metrics.controlSize
+        case .stepToggle: CGSize(width: metrics.cardSize.width, height: metrics.controlSize.height)
         }
     }
 
-    /// The arrow's head: its tip and the two corners behind it.
-    public static func head(tip: CGPoint, end: CGPoint, width: CGFloat = 9) -> [CGPoint] {
-        let length = max(0.001, hypot(tip.x - end.x, tip.y - end.y))
-        let (dx, dy) = ((tip.x - end.x) / length, (tip.y - end.y) / length)
-        let half = width / 2
-        return [
-            tip, CGPoint(x: end.x - dy * half, y: end.y + dx * half), CGPoint(x: end.x + dy * half, y: end.y - dx * half),
-        ]
-    }
-}
-
-/// Places a step's nodes across it.
-private struct CrossPlacement {
-    var metrics: BlockingMapLayout.Metrics
-    var axis: BlockingMapLayout.Axis
-
-    /// How much room a node takes across its step.
-    func extent(of content: BlockingMapLayout.Content) -> CGFloat {
-        switch (content, axis) {
-        case (.card, .horizontal): metrics.cardSize.height
-        case (.card, .vertical): metrics.cardSize.width
-        case (_, .horizontal): metrics.controlSize.height
-        case (_, .vertical): metrics.controlSize.width
-        }
+    private static func height(of content: Content, _ metrics: Metrics) -> CGFloat {
+        size(of: content, metrics).height
     }
 
-    /// How long a node is along the steps: a step's toggle is as long as
-    /// its cards, an end as its control.
-    func mainLength(of content: BlockingMapLayout.Content) -> CGFloat {
-        if case .end = content { mainLength(ofControl: true) } else { mainLength(ofControl: false) }
-    }
-
-    func mainLength(ofControl control: Bool) -> CGFloat {
-        switch (control, axis) {
-        case (false, .horizontal): metrics.cardSize.width
-        case (false, .vertical): metrics.cardSize.height
-        case (true, .horizontal): metrics.controlSize.width
-        case (true, .vertical): metrics.controlSize.height
-        }
-    }
-
-    /// The centres across the step, in order, each as near to where it
-    /// would be best, `desired` (none for no preference), as the gaps
-    /// between them allow: the least squares, found by pooling neighbours
-    /// that would otherwise overlap.
-    func place(desired: [CGFloat?], sizes: [CGFloat]) -> [CGFloat] {
-        guard !sizes.isEmpty else { return [] }
-        // Each centre's least distance from the first, packed tight.
+    /// The middles down a column, in order, each as near to where it would
+    /// be best, `desired` (none for no preference), as the gaps between them
+    /// allow: the least squares, found by pooling neighbours that would
+    /// otherwise overlap. Without any preference, the column is centred.
+    static func place(desired: [CGFloat?], heights: [CGFloat], gap: CGFloat) -> [CGFloat] {
+        guard !heights.isEmpty else { return [] }
+        // Each middle's least distance from the first, packed tight.
         var offsets: [CGFloat] = [0]
-        for index in sizes.indices.dropFirst() {
-            offsets.append(offsets[index - 1] + (sizes[index - 1] + sizes[index]) / 2 + metrics.cardGap)
+        for index in heights.indices.dropFirst() {
+            offsets.append(offsets[index - 1] + (heights[index - 1] + heights[index]) / 2 + gap)
         }
-        // Without any preference, the step is centred.
         let anyDesired = desired.contains { $0 != nil }
         let packedMiddle = (offsets.last ?? 0) / 2
         struct Pool {
@@ -489,11 +389,11 @@ private struct CrossPlacement {
             var mean: CGFloat { sum / weight }
         }
         var pools: [Pool] = []
-        for index in sizes.indices {
+        for index in heights.indices {
             let wanted = desired[index] ?? (anyDesired ? nil : offsets[index] - packedMiddle)
+            // One without a preference only fills in between the others.
             let weight: CGFloat = wanted == nil ? 0.001 : 1
-            let target = (wanted ?? 0) - offsets[index]
-            pools.append(Pool(weight: weight, sum: target * weight, count: 1))
+            pools.append(Pool(weight: weight, sum: ((wanted ?? 0) - offsets[index]) * weight, count: 1))
             while pools.count > 1, pools[pools.count - 2].mean > pools[pools.count - 1].mean {
                 let last = pools.removeLast()
                 pools[pools.count - 1].weight += last.weight
@@ -501,10 +401,47 @@ private struct CrossPlacement {
                 pools[pools.count - 1].count += last.count
             }
         }
-        var centres: [CGFloat] = []
+        var middles: [CGFloat] = []
         for pool in pools {
-            for _ in 0..<pool.count { centres.append(pool.mean + offsets[centres.count]) }
+            for _ in 0..<pool.count { middles.append(pool.mean + offsets[middles.count]) }
         }
-        return centres
+        return middles
+    }
+
+    // MARK: - Drawing arrows
+
+    /// An arrow's line, from where it leaves its blocker to where its head
+    /// begins. The app draws it from the points, so that an arrow can move
+    /// with its cards.
+    public static func segments(from start: CGPoint, to end: CGPoint, route: Route, turn: CGFloat) -> [Segment] {
+        switch route {
+        case .direct:
+            let bend = max(turn, (end.x - start.x) / 2)
+            return [
+                .move(start),
+                .curve(end, control1: CGPoint(x: start.x + bend, y: start.y), control2: CGPoint(x: end.x - bend, y: end.y)),
+            ]
+        case .lane(let lane):
+            let toward: CGFloat = lane < start.y ? 4 : -4
+            return [
+                .move(start),
+                .curve(
+                    CGPoint(x: start.x + turn, y: lane), control1: CGPoint(x: start.x + turn, y: start.y),
+                    control2: CGPoint(x: start.x + turn, y: lane + toward)),
+                .line(CGPoint(x: end.x - turn, y: lane)),
+                .curve(
+                    end, control1: CGPoint(x: end.x - turn, y: lane + toward), control2: CGPoint(x: end.x - turn, y: end.y)),
+            ]
+        }
+    }
+
+    /// An arrow's head: its tip and the two corners behind it.
+    public static func head(tip: CGPoint, end: CGPoint, width: CGFloat = 9) -> [CGPoint] {
+        let length = max(0.001, hypot(tip.x - end.x, tip.y - end.y))
+        let (dx, dy) = ((tip.x - end.x) / length, (tip.y - end.y) / length)
+        let half = width / 2
+        return [
+            tip, CGPoint(x: end.x - dy * half, y: end.y + dx * half), CGPoint(x: end.x + dy * half, y: end.y - dx * half),
+        ]
     }
 }

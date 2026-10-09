@@ -28,10 +28,8 @@ private let metrics = BlockingMapLayout.Metrics(
     cardSize: CGSize(width: 200, height: 100), controlSize: CGSize(width: 120, height: 50), stepGap: 40,
     cardGap: 10, titleHeight: 20, lane: 30, turn: 20, padding: 10, cardsPerStep: 6)
 
-private func layout(_ builder: MapBuilder, axis: BlockingMapLayout.Axis = .horizontal, expanded: Set<Int> = [])
-    -> BlockingMapLayout
-{
-    BlockingMapLayout(map: builder.map, root: "root", metrics: metrics, axis: axis, expandedSteps: expanded)
+private func layout(_ builder: MapBuilder, expanded: Set<Int> = []) -> BlockingMapLayout {
+    BlockingMapLayout(map: builder.map, root: "root", metrics: metrics, expandedSteps: expanded)
 }
 
 /// The IDs of a step's nodes, top to bottom.
@@ -214,6 +212,27 @@ private func arrows(_ layout: BlockingMapLayout) -> Set<String> {
         #expect(map.arrows.first { $0.cycle }.map { "\($0.from)>\($0.to)" } == "far>root")
     }
 
+    @Test func goesRoundJustAboveTheCardsItPasses() {
+        var builder = MapBuilder()
+        builder.card("root", 0)
+        // A tall column elsewhere, which the arrow need not climb over.
+        for index in 1...4 {
+            builder.card("b\(index)", -1)
+            builder.block("b\(index)", "root")
+        }
+        builder.card("near", 1)
+        builder.card("far", 2)
+        builder.block("root", "near")
+        builder.block("near", "far")
+        builder.block("root", "far")
+        let map = layout(builder)
+
+        let top = map.nodes.map(\.frame.minY).min() ?? 0
+        let route = map.arrows.first { $0.from == "root" && $0.to == "far" }?.route
+        #expect(frame(map, "root").minY > top + 100)
+        #expect(route == .lane(frame(map, "root").minY - metrics.lane * 0.55))
+    }
+
     @Test func spreadsArrowsAlongACardsSide() {
         var builder = MapBuilder()
         builder.card("root", 0)
@@ -234,31 +253,6 @@ private func arrows(_ layout: BlockingMapLayout) -> Set<String> {
         }
     }
 
-    @Test func runsTheStepsTopToBottomWhenVertical() {
-        var builder = MapBuilder()
-        builder.card("root", 0)
-        builder.card("a", -1)
-        builder.card("b", -1)
-        builder.card("c", 1)
-        builder.block("a", "root")
-        builder.block("b", "root")
-        builder.block("root", "c")
-        let map = layout(builder, axis: .vertical)
-
-        // Each row's title above its cards, side by side across it.
-        let blockers = map.steps.first { $0.step == -1 }
-        #expect(blockers?.titleFrame.minY == metrics.padding)
-        #expect(frame(map, "a").minY == metrics.padding + metrics.titleHeight)
-        #expect(frame(map, "a").maxX + metrics.cardGap == frame(map, "b").minX)
-        #expect(frame(map, "root").minY == frame(map, "a").maxY + metrics.stepGap + metrics.titleHeight)
-        #expect(frame(map, "root").midX == frame(map, "c").midX)
-        #expect(map.size.height == frame(map, "c").maxY + metrics.padding)
-        // Arrows leave a card's bottom for the top of the next.
-        let arrow = map.arrows.first { $0.from == "root" }
-        #expect(arrow?.start == CGPoint(x: frame(map, "root").midX, y: frame(map, "root").maxY))
-        #expect(arrow?.tip == CGPoint(x: frame(map, "c").midX, y: frame(map, "c").minY))
-    }
-
     @Test func readsStepByStep() {
         var builder = MapBuilder()
         builder.card("root", 0)
@@ -274,22 +268,27 @@ private func arrows(_ layout: BlockingMapLayout) -> Set<String> {
     @Test func drawsADirectArrowAsOneCurveAndALaneArrowRoundIt() {
         let start = CGPoint(x: 100, y: 50)
         let end = CGPoint(x: 200, y: 90)
-        let direct = BlockingMapLayout.segments(from: start, to: end, route: .direct, axis: .horizontal, turn: 20)
+        let direct = BlockingMapLayout.segments(from: start, to: end, route: .direct, turn: 20)
         #expect(
             direct == [.move(start), .curve(end, control1: CGPoint(x: 150, y: 50), control2: CGPoint(x: 150, y: 90))])
 
-        let lane = BlockingMapLayout.segments(from: start, to: end, route: .lane(10), axis: .horizontal, turn: 20)
+        let lane = BlockingMapLayout.segments(from: start, to: end, route: .lane(10), turn: 20)
         #expect(lane.count == 4)
+        #expect(lane[1] == .curve(CGPoint(x: 120, y: 10), control1: CGPoint(x: 120, y: 50), control2: CGPoint(x: 120, y: 14)))
         #expect(lane[2] == .line(CGPoint(x: 180, y: 10)))
+        #expect(lane[3] == .curve(end, control1: CGPoint(x: 180, y: 14), control2: CGPoint(x: 180, y: 90)))
+    }
 
-        // Turned, the same arrow runs down instead of across.
-        let turned = BlockingMapLayout.segments(
-            from: CGPoint(x: 50, y: 100), to: CGPoint(x: 90, y: 200), route: .direct, axis: .vertical, turn: 20)
-        #expect(
-            turned == [
-                .move(CGPoint(x: 50, y: 100)),
-                .curve(CGPoint(x: 90, y: 200), control1: CGPoint(x: 50, y: 150), control2: CGPoint(x: 90, y: 150)),
-            ])
+    @Test func placesAColumnAsNearAsItCanToWhereEachCardWouldBe() {
+        // Both want the same place: they share it, a gap apart.
+        #expect(BlockingMapLayout.place(desired: [0, 0], heights: [100, 100], gap: 10) == [-55, 55])
+        // Apart enough already, each keeps its own.
+        #expect(BlockingMapLayout.place(desired: [-200, 200], heights: [100, 100], gap: 10) == [-200, 200])
+        // Without a preference, it fills in after the one before.
+        let filled = BlockingMapLayout.place(desired: [40, nil], heights: [100, 50], gap: 10)
+        #expect(abs(filled[0] - 40) < 0.5 && abs(filled[1] - 125) < 0.5)
+        // With none at all, the column is centred.
+        #expect(BlockingMapLayout.place(desired: [nil, nil, nil], heights: [100, 100, 100], gap: 10) == [-110, 0, 110])
     }
 
     @Test func pointsTheHeadAlongTheArrow() {
