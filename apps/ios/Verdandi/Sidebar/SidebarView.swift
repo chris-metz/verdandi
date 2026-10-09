@@ -263,6 +263,9 @@ struct SidebarView: View {
     private func offerPicker(_ first: Bool) {
         guard first, !offeredPicker else { return }
         offeredPicker = true
+        // A launch for development that tracks repositories or saves a
+        // view sets the profile up itself.
+        guard model.launch.track.isEmpty, model.launch.view == nil else { return }
         if model.sheet == nil { model.sheet = .repositoryPicker }
     }
 
