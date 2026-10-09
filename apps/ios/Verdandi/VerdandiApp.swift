@@ -19,6 +19,9 @@ struct VerdandiApp: App {
             // Back in front, what is old or failed is read again.
             if phase == .active { Task { await model.revalidate() } }
         }
-        .commands { AppCommands(model: model) }
+        .commands {
+            AppCommands(model: model)
+            SidebarCommands(model: model)
+        }
     }
 }

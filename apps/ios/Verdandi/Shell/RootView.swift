@@ -91,6 +91,12 @@ struct RootView: View {
         .onChange(of: model.issuePath) { previous, path in
             if path.count < previous.count { model.openShown() }
         }
+        .task {
+            // A launch for development shows the sidebar, as its button would.
+            guard SidebarLaunchOptions.showsSidebar else { return }
+            try? await Task.sleep(for: .seconds(1))
+            columns = .all
+        }
     }
 
     /// The theme shown: the user's light or dark one, as the appearance says.

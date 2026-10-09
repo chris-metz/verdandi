@@ -122,6 +122,9 @@ final class AppModel {
 
     /// The view being edited, when the view editor edits one.
     var editedView: SavedView?
+    /// The view the view editor makes a copy of, when it duplicates one:
+    /// the copy is a new view that goes right after it.
+    var duplicatedView: SavedView?
 
     init(credentials: Credentials = Credentials(), launch: LaunchOptions = .current) {
         self.credentials = credentials
