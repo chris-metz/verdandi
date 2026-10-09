@@ -189,6 +189,10 @@ final class RepositoryPickerModel {
             check = .failed(.error(message: error.localizedDescription))
         }
         checks[key] = .done(typed, check)
+        // An exact address is typed to be added: it is checked at once.
+        if case .found(let found) = check, !found.tracked, found.unavailable == nil, !isSelected(found.id) {
+            selected.append(found)
+        }
     }
 
     // MARK: Adding
