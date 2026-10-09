@@ -113,6 +113,15 @@ struct ListColumn: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        list
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Go to Issue", systemImage: "number") { model.sheet = .goToIssue }
+                }
+            }
+    }
+
+    @ViewBuilder private var list: some View {
         switch model.selection {
         case .all: IssueListScreen(scope: .all)
         case .repository(let repository): IssueListScreen(scope: .repository(repository)).id(repository)
