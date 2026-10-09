@@ -14,7 +14,10 @@ struct IssuePageScreen: View {
                 Text(route.reference).font(.subheadline).foregroundStyle(.secondary)
                 Text(page?.issue?.title ?? route.title).font(.title2.bold())
                 if let map = page?.blockingMap {
-                    Text("\(map.cards.count) issues in the blocking map")
+                    BlockingMapView(map: map, issueId: route.id)
+                }
+                if let issue = page?.issue {
+                    BodyHTMLView(html: issue.bodyHTML ?? "", issueId: issue.id, bodyId: issue.id)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

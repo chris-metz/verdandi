@@ -12,12 +12,16 @@ import VerdandiKit
 /// - `VERDANDI_ISSUE`: `owner/name#12`, opened over the selected list.
 /// - `VERDANDI_SHEET`: `repositoryPicker`, `newView`, `settings` or `goToIssue`.
 /// - `VERDANDI_APPEARANCE`: `light` or `dark`, whatever `config.toml` says.
+/// - `VERDANDI_TRACK`: `owner/name,owner/name`, tracked unless they are.
+/// - `VERDANDI_VIEW`: `Name|search`, saved as a view unless one has the name.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
     var issue: (repository: RepositoryAddress, number: Int)?
     var sheet: AppModel.Sheet?
     var appearance: Appearance?
+    var track: [RepositoryAddress] = []
+    var view: (name: String, query: String)?
 
     /// Whether the launch chooses where the app opens.
     var selects: Bool { select != nil || issue != nil }
@@ -45,11 +49,30 @@ struct LaunchOptions {
         }
         options.sheet = environment["VERDANDI_SHEET"].flatMap(AppModel.Sheet.init(rawValue:))
         options.appearance = environment["VERDANDI_APPEARANCE"].flatMap(Appearance.init(rawValue:))
+        options.track = (environment["VERDANDI_TRACK"] ?? "").split(separator: ",").compactMap {
+            RepositoryAddress(parsing: String($0))
+        }
+        if let view = environment["VERDANDI_VIEW"], let bar = view.firstIndex(of: "|") {
+            options.view = (String(view[..<bar]), String(view[view.index(after: bar)...]))
+        }
         return options
     }
 
     @MainActor
     func apply(to model: AppModel) async {
+        if let core = model.core, !track.isEmpty || view != nil {
+            if case .ready = (try? await core.checkSetupAgain()) ?? .checking {
+                let sidebar = try? await core.getSidebar()
+                var entries: SidebarEntries.Read?
+                if case .read(let read) = sidebar { entries = read }
+                let tracked = entries?.repositories.map(\.repository.address) ?? []
+                let missing = track.filter { address in !tracked.contains { $0.sameRepository(as: address) } }
+                if !missing.isEmpty { _ = try? await core.addRepositories(missing) }
+                if let view, !(entries?.views.contains { $0.view.name == view.name } ?? false) {
+                    _ = try? await core.saveView(ViewDraft(name: view.name, query: view.query), force: true)
+                }
+            }
+        }
         if let select { model.select(select) }
         if let issue, let core = model.core {
             if model.selection == nil { model.select(.repository(issue.repository)) }
