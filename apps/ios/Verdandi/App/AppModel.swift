@@ -294,18 +294,29 @@ final class AppModel {
     /// at a time, and drops what another still needed.
     private var coreScreen: Screen?
 
+    /// The last screen sent to the core, which the next waits for: sent
+    /// from separate tasks, two could reach the core in the wrong order and
+    /// leave the screen shown last unread.
+    private var showing: Task<Void, Never>?
+
     /// Has the core show a screen: it reads what it lacks or what is old.
     private func show(_ screen: Screen?) async {
         guard let core else { return }
         coreScreen = screen
-        await attempt {
-            switch screen {
-            case .list(let scope): try await core.openList(scope)
-            case .view(let id): try await core.openView(id)
-            case .issue(let id): try await core.openIssuePage(id)
-            case nil: break
+        let previous = showing
+        let next = Task {
+            await previous?.value
+            await attempt {
+                switch screen {
+                case .list(let scope): try await core.openList(scope)
+                case .view(let id): try await core.openView(id)
+                case .issue(let id): try await core.openIssuePage(id)
+                case nil: break
+                }
             }
         }
+        showing = next
+        await next.value
     }
 
     /// Whether the list stays in sight beside the issue page, as in an
