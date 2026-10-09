@@ -61,19 +61,11 @@ struct StartFailedView: View {
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
                 }
-                HStack(spacing: 10) {
-                    Button(copied ? "Copied" : "Copy Details", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                        UIPasteboard.general.string = details
-                        copied = true
-                    }
-                    .buttonStyle(.glass)
-                    .contentTransition(.symbolEffect(.replace))
-                    if let newIssue = Self.newIssue {
-                        Link(destination: newIssue) {
-                            Label("Report an Issue", systemImage: "arrow.up.forward")
-                        }
-                        .buttonStyle(.glassProminent)
-                    }
+                // Side by side, or one above the other where they do not fit.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { buttons(stacked: false) }
+                        .fixedSize()
+                    VStack(spacing: 10) { buttons(stacked: true) }
                 }
                 .controlSize(.large)
             }
@@ -84,6 +76,26 @@ struct StartFailedView: View {
         .defaultScrollAnchor(.center)
         .scrollBounceBehavior(.basedOnSize)
         .background(Color(uiColor: .systemBackground))
+    }
+
+    /// Copy Details and Report an Issue, as wide as each other when stacked.
+    @ViewBuilder private func buttons(stacked: Bool) -> some View {
+        Button {
+            UIPasteboard.general.string = details
+            copied = true
+        } label: {
+            Label(copied ? "Copied" : "Copy Details", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .frame(maxWidth: stacked ? .infinity : nil)
+        }
+        .buttonStyle(.glass)
+        .contentTransition(.symbolEffect(.replace))
+        if let newIssue = Self.newIssue {
+            Link(destination: newIssue) {
+                Label("Report an Issue", systemImage: "arrow.up.forward")
+                    .frame(maxWidth: stacked ? .infinity : nil)
+            }
+            .buttonStyle(.glassProminent)
+        }
     }
 
     /// The message, with the app's version and the system's, as an issue

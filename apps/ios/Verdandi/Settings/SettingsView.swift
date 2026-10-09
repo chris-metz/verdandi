@@ -39,6 +39,7 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(role: .close) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             .navigationDestination(for: Page.self) { _ in AboutView() }

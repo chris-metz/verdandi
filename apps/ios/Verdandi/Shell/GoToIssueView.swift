@@ -34,7 +34,6 @@ struct GoToIssueView: View {
         let choices = GoToChoices(text, from: from, recents: model.recentIssues)
         NavigationStack {
             List {
-                statusSection(hint: choices.hint)
                 let typed = choices.destinations.first.flatMap { destination -> GoToDestination? in
                     if case .lookUp = destination { return destination }
                     return nil
@@ -44,6 +43,8 @@ struct GoToIssueView: View {
                         row(typed)
                     }
                 }
+                // Under the issue typed, what became of it.
+                statusSection(hint: choices.hint)
                 let recents = choices.destinations.filter { $0 != typed }
                 if !recents.isEmpty {
                     Section("Recent") {
@@ -63,12 +64,14 @@ struct GoToIssueView: View {
             .searchFocused($focused)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
+            .submitLabel(.go)
             .onSubmit(of: .search) { go(to: choices.destinations.first) }
             .navigationTitle("Go to Issue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(role: .close) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             .animation(.snappy(duration: 0.2), value: choices)

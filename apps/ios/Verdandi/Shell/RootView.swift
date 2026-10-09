@@ -31,7 +31,7 @@ struct RootView: View {
                 .environment(\.palette, palette)
                 .tint(palette.accent)
             }
-            .overlay(alignment: .top) { NoticesOverlay() }
+            .overlay(alignment: .bottom) { NoticesOverlay() }
     }
 
     @ViewBuilder private var content: some View {

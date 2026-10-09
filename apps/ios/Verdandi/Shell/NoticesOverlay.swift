@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Notices, briefly, over the top of the window, newest last, as glass
-/// toasts. Each goes after a while, or as it is swiped away, and VoiceOver
-/// reads it out as it comes.
+/// Notices, briefly, over the bottom of the window, newest last, as glass
+/// toasts: there they leave the navigation bar's buttons free. Each goes
+/// after a while, or as it is swiped down or aside, and VoiceOver reads it
+/// out as it comes.
 struct NoticesOverlay: View {
     @Environment(AppModel.self) private var model
     /// At most this many show at once, the newest.
@@ -15,19 +16,20 @@ struct NoticesOverlay: View {
                     NoticeToast(notice: notice)
                         .transition(
                             .asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
+                                insertion: .move(edge: .bottom).combined(with: .opacity),
                                 removal: .scale(scale: 0.92).combined(with: .opacity)))
                 }
             }
         }
         .frame(maxWidth: 560)
         .padding(.horizontal, 16)
-        .padding(.top, 4)
+        .padding(.bottom, 8)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: model.notices)
     }
 }
 
-/// One notice: its symbol and text on glass, gone when swiped up or aside.
+/// One notice: its symbol and text on glass, gone when swiped down or
+/// aside.
 private struct NoticeToast: View {
     @Environment(AppModel.self) private var model
     @Environment(\.palette) private var palette
@@ -51,15 +53,19 @@ private struct NoticeToast: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .frame(minHeight: 48)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24, style: .continuous))
-        .offset(x: drag.width, y: min(drag.height, 0) + rubberBand(max(drag.height, 0)))
-        .opacity(1 - min(max(abs(drag.width) / 240, -drag.height / 120), 0.6))
+        // A touch of the window's colour keeps it legible over busy rows.
+        .glassEffect(
+            .regular.tint(palette.background.opacity(0.5)).interactive(),
+            in: .rect(cornerRadius: 24, style: .continuous)
+        )
+        .offset(x: drag.width, y: max(drag.height, 0) - rubberBand(max(-drag.height, 0)))
+        .opacity(1 - min(max(abs(drag.width) / 240, drag.height / 120), 0.6))
         .gesture(
             DragGesture(minimumDistance: 8)
                 .onChanged { drag = $0.translation }
                 .onEnded { value in
                     let end = value.predictedEndTranslation
-                    if end.height < -50 || abs(end.width) > 140 {
+                    if end.height > 50 || abs(end.width) > 140 {
                         dismiss()
                     } else {
                         withAnimation(.spring(duration: 0.3)) { drag = .zero }
@@ -74,7 +80,7 @@ private struct NoticeToast: View {
         }
     }
 
-    /// Pulled down, it gives a little and no more.
+    /// Pulled up, it gives a little and no more.
     private func rubberBand(_ distance: CGFloat) -> CGFloat {
         12 * (1 - 1 / (distance / 40 + 1))
     }

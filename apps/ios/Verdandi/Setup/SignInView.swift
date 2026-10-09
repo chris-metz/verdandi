@@ -334,17 +334,11 @@ private struct DeviceFlowSection: View {
                 .lineLimit(1)
                 .textSelection(.enabled)
                 .accessibilityLabel(code.userCode.map(String.init).joined(separator: " "))
-            HStack(spacing: 10) {
-                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                    copy(code)
-                }
-                .buttonStyle(.glass)
-                .contentTransition(.symbolEffect(.replace))
-                Button("Open GitHub", systemImage: "arrow.up.forward") {
-                    copy(code)
-                    openURL(code.verificationURI)
-                }
-                .buttonStyle(.glassProminent)
+            // Side by side, or one above the other at a large text size.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { codeButtons(code, stacked: false) }
+                    .fixedSize()
+                VStack(spacing: 10) { codeButtons(code, stacked: true) }
             }
             .controlSize(.large)
             .sensoryFeedback(.success, trigger: copied) { _, now in now }
@@ -371,6 +365,27 @@ private struct DeviceFlowSection: View {
         .padding(20)
         .frame(maxWidth: .infinity)
         .background(fieldBackground, in: .rect(cornerRadius: 26, style: .continuous))
+    }
+
+    /// Copy, and Open GitHub, which copies the code too, to paste there;
+    /// as wide as each other when stacked.
+    @ViewBuilder private func codeButtons(_ code: DeviceCode, stacked: Bool) -> some View {
+        Button {
+            copy(code)
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .frame(maxWidth: stacked ? .infinity : nil)
+        }
+        .buttonStyle(.glass)
+        .contentTransition(.symbolEffect(.replace))
+        Button {
+            copy(code)
+            openURL(code.verificationURI)
+        } label: {
+            Label("Open GitHub", systemImage: "arrow.up.forward")
+                .frame(maxWidth: stacked ? .infinity : nil)
+        }
+        .buttonStyle(.glassProminent)
     }
 
     /// Asks GitHub for a code, then for the token until the user has
