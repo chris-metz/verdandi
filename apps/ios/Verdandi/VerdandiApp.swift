@@ -3,18 +3,22 @@ import VerdandiKit
 
 @main
 struct VerdandiApp: App {
-    @State private var model = AppModel()
+    @State private var model = AppModel(credentials: LaunchOptions.current.makeCredentials())
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(model)
-                .task { await model.start() }
+                .task {
+                    await model.start()
+                    if let notice = model.launch.notice { model.post(notice) }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             // Back in front, what is old or failed is read again.
             if phase == .active { Task { await model.revalidate() } }
         }
+        .commands { AppCommands(model: model) }
     }
 }

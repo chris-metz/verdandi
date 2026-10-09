@@ -20,6 +20,19 @@ import VerdandiKit
 /// - `VERDANDI_SCROLL`: `map`, `comments` or `end`, where an issue page
 ///   scrolls once it has loaded.
 /// - `VERDANDI_EXPAND`: `1`, every sub-issue on an issue page expanded.
+/// - `VERDANDI_SIGNED_OUT=1`: no token at all: the environment's is ignored
+///   and the Keychain's forgotten, to show signing in.
+/// - `VERDANDI_SIGN_IN`: a token signed in with at launch, as if typed: a
+///   made-up one, to see GitHub reject it.
+/// - `VERDANDI_CLIENT_ID`: a GitHub OAuth App's client ID for Sign in with
+///   GitHub, instead of the bundle's `VerdandiGitHubClientID`.
+/// - `VERDANDI_DEVICE_FLOW`: `start` signs in with GitHub at once; `demo`
+///   does so with a made-up GitHub that hands out a code and waits, to show
+///   the code without an OAuth App.
+/// - `VERDANDI_GO_TO`: typed into Go to Issue; `VERDANDI_GO_TO_SUBMIT=1`
+///   then goes to it, as Return would.
+/// - `VERDANDI_NOTICE`: shown as a notice once the app has started.
+/// - `VERDANDI_SETTINGS=about`: Settings opens on About.
 struct LaunchOptions {
     var home: URL?
     var select: SidebarItem?
@@ -31,6 +44,16 @@ struct LaunchOptions {
     var issueId: String?
     var scroll: String?
     var expandsSubIssues = false
+    var signedOut = false
+    var signInToken: String?
+    var clientID: String?
+    var deviceFlow: DeviceFlowLaunch?
+    var goTo: String?
+    var goToSubmits = false
+    var notice: String?
+    var settingsPage: String?
+
+    enum DeviceFlowLaunch: String { case start, demo }
 
     /// Whether the launch chooses where the app opens.
     var selects: Bool { select != nil || issue != nil || issueId != nil }
@@ -70,7 +93,24 @@ struct LaunchOptions {
         options.issueId = environment["VERDANDI_ISSUE_ID"].flatMap { $0.isEmpty ? nil : $0 }
         options.scroll = environment["VERDANDI_SCROLL"]
         options.expandsSubIssues = environment["VERDANDI_EXPAND"] == "1"
+        options.signedOut = environment["VERDANDI_SIGNED_OUT"] == "1"
+        options.signInToken = environment["VERDANDI_SIGN_IN"].flatMap { $0.isEmpty ? nil : $0 }
+        options.clientID = environment["VERDANDI_CLIENT_ID"].flatMap { $0.isEmpty ? nil : $0 }
+        options.deviceFlow = environment["VERDANDI_DEVICE_FLOW"].flatMap(DeviceFlowLaunch.init(rawValue:))
+        options.goTo = environment["VERDANDI_GO_TO"]
+        options.goToSubmits = environment["VERDANDI_GO_TO_SUBMIT"] == "1"
+        options.notice = environment["VERDANDI_NOTICE"].flatMap { $0.isEmpty ? nil : $0 }
+        options.settingsPage = environment["VERDANDI_SETTINGS"]
         return options
+    }
+
+    /// The token GitHub is read with: as the environment and the Keychain
+    /// give it, or none for `VERDANDI_SIGNED_OUT`.
+    func makeCredentials() -> Credentials {
+        guard signedOut else { return Credentials() }
+        let credentials = Credentials(environment: [:])
+        try? credentials.remove()
+        return credentials
     }
 
     @MainActor

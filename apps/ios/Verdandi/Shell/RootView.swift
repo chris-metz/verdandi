@@ -9,6 +9,9 @@ struct RootView: View {
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columns = NavigationSplitViewVisibility.all
+    /// Why signing in is needed, kept while GitHub checks a token, so that
+    /// signing in holds still until GitHub has answered.
+    @State private var signInProblem: SetupProblem?
 
     var body: some View {
         @Bindable var model = model
@@ -29,27 +32,40 @@ struct RootView: View {
                 .environment(\.palette, palette)
                 .tint(palette.accent)
             }
-            .overlay(alignment: .top) { NoticesOverlay() }
+            .overlay(alignment: .bottom) { NoticesOverlay() }
     }
 
     @ViewBuilder private var content: some View {
         switch model.phase {
         case .starting:
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            StartingView(message: "Starting…")
         case .failed(let message):
-            ContentUnavailableView("Verdandi could not start", systemImage: "exclamationmark.triangle", description: Text(message))
+            StartFailedView(message: message)
         case .running:
-            switch model.setup {
-            case .checking:
-                ProgressView("Checking your GitHub sign-in…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .blocked(let problem):
-                SignInView(problem: problem)
-            case .ready:
-                split
+            Group {
+                if case .ready = model.setup {
+                    split
+                } else if let problem = shownSignInProblem {
+                    SignInView(problem: problem)
+                } else {
+                    StartingView(message: "Checking your GitHub sign-in…")
+                }
+            }
+            .onChange(of: model.setup, initial: true) { _, setup in
+                switch setup {
+                case .blocked(let problem): signInProblem = problem
+                case .ready: signInProblem = nil
+                case .checking: break
+                }
             }
         }
+    }
+
+    /// The problem signing in shows: the setup's, or, while it is checked
+    /// again, the one before.
+    private var shownSignInProblem: SetupProblem? {
+        if case .blocked(let problem) = model.setup { return problem }
+        return signInProblem
     }
 
     private var split: some View {
@@ -102,6 +118,15 @@ struct ListColumn: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        list
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Go to Issue", systemImage: "number") { model.sheet = .goToIssue }
+                }
+            }
+    }
+
+    @ViewBuilder private var list: some View {
         switch model.selection {
         case .all: IssueListScreen(scope: .all)
         case .repository(let repository): IssueListScreen(scope: .repository(repository)).id(repository)
@@ -133,27 +158,5 @@ struct IssueDetailColumn: View {
                 IssuePageScreen(route: route).id(route.id)
             }
         }
-    }
-}
-
-/// Notices, briefly, over the top of the window.
-struct NoticesOverlay: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            VStack(spacing: 8) {
-                ForEach(model.notices) { notice in
-                    Label(notice.text, systemImage: notice.systemImage)
-                        .font(.callout)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .glassEffect(.regular, in: .capsule)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-        }
-        .padding(.top, 8)
-        .padding(.horizontal)
     }
 }
