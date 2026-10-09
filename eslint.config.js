@@ -11,6 +11,7 @@ export default defineConfig(
     "**/.build/",
     "apps/ios/Verdandi/Resources/core.js",
     "apps/ios/build/",
+    ".claude/worktrees/",
   ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,

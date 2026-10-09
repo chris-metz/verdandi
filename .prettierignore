@@ -7,3 +7,5 @@ docs/prototypes/
 apps/ios/Verdandi/Resources/core.js
 apps/ios/build/
 **/.build/
+# Agents' worktrees, each a copy of the repository.
+.claude/worktrees/
