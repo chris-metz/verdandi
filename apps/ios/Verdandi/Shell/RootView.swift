@@ -7,6 +7,7 @@ import VerdandiKit
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
@@ -63,6 +64,10 @@ struct RootView: View {
             IssueDetailColumn()
         }
         .navigationSplitViewStyle(.balanced)
+        .onChange(of: sizeClass, initial: true) { _, sizeClass in
+            // In columns, the list stays in sight beside the issue page.
+            model.listBesideIssue = sizeClass == .regular
+        }
         .onChange(of: model.selectedIssue) { previous, issue in
             // Back from an issue on an iPhone: the list is on screen again.
             if issue == nil, previous != nil { model.openShown() }

@@ -192,7 +192,9 @@ final class AppModel {
         case .setupChanged(let setup): self.setup = setup
         case .notice(let notice): show(notice)
         case .listChanged(let list): lists[list.scope] = list
-        case .issuePageChanged(let page): pages[page.issueId] = page
+        case .issuePageChanged(let page):
+            pages[page.issueId] = page
+            resumeListBeside(page)
         case .viewChanged(let list): views[list.view.id] = list
         case .sidebarChanged(let sidebar):
             self.sidebar = sidebar
@@ -281,37 +283,109 @@ final class AppModel {
     /// Tells the core what is on screen now, as the user moved, so that it
     /// reads it and drops what it no longer needs.
     func openShown() {
-        guard let core else { return }
         let screen = shownScreen
         Task {
-            await attempt {
-                switch screen {
-                case .list(let scope): try await core.openList(scope)
-                case .view(let id): try await core.openView(id)
-                case .issue(let id): try await core.openIssuePage(id)
-                case nil: break
-                }
-            }
+            await show(screen)
             await saveTabs()
         }
     }
 
-    /// Reads what is on screen again now.
-    func refresh() async {
+    /// The screen the core was last told is shown. The core reads one screen
+    /// at a time, and drops what another still needed.
+    private var coreScreen: Screen?
+
+    /// Has the core show a screen: it reads what it lacks or what is old.
+    private func show(_ screen: Screen?) async {
         guard let core else { return }
-        await attempt { try await core.refresh(shownScreen) }
+        coreScreen = screen
+        await attempt {
+            switch screen {
+            case .list(let scope): try await core.openList(scope)
+            case .view(let id): try await core.openView(id)
+            case .issue(let id): try await core.openIssuePage(id)
+            case nil: break
+            }
+        }
     }
 
-    /// Reads again what failed on screen.
-    func retry() async {
+    /// Whether the list stays in sight beside the issue page, as in an
+    /// iPad's columns; the window says so as its size changes.
+    var listBesideIssue = false
+
+    /// On an iPad, the list stays beside the issue page; but the core reads
+    /// only the screen shown, and stops reading the list as the page opens.
+    /// Once the page has loaded, the list is shown to the core again, so that
+    /// it finishes loading too.
+    private func resumeListBeside(_ page: IssuePage) {
+        guard listBesideIssue, case .issue(let id) = coreScreen, id == page.issueId,
+            !page.loading.isBusy, let selection, !settled(selection)
+        else { return }
+        let screen = selection.screen
+        Task { await show(screen) }
+    }
+
+    /// Whether a sidebar entry's list has loaded all it shows.
+    private func settled(_ item: SidebarItem) -> Bool {
+        switch item {
+        case .view(let id):
+            guard let view = views[id] else { return false }
+            return !view.loading.isBusy && !view.readingContext
+        default:
+            guard let scope = item.scope, let list = lists[scope] else { return false }
+            return !list.loading.state.isBusy
+        }
+    }
+
+    /// Before an issue page asks the core for more, such as the next steps
+    /// of its blocking map, it is the screen the core shows: the core drops
+    /// what a screen not shown asks for.
+    func showPage(_ issueId: String) async {
+        if coreScreen != .issue(id: issueId) { await show(.issue(id: issueId)) }
+    }
+
+    /// Explores or folds one side of a page's blocking map.
+    func activateBlockingEnd(_ issueId: String, side: BlockingSide) async {
         guard let core else { return }
-        await attempt { try await core.retry(shownScreen) }
+        await showPage(issueId)
+        await attempt { try await core.activateBlockingEnd(issueId, side: side) }
+    }
+
+    /// Reads one card's relationships in a page's blocking map again.
+    func retryBlockingBranch(_ issueId: String, cardId: String, side: BlockingSide) async {
+        guard let core else { return }
+        await showPage(issueId)
+        await attempt { try await core.retryBlockingBranch(issueId, cardId: cardId, side: side) }
+    }
+
+    /// Reads a body on a page again for fresh links to its media.
+    func renewMediaLinks(_ issueId: String, bodyId: String) async -> RenewedMediaLinks? {
+        guard let core else { return nil }
+        await showPage(issueId)
+        return try? await core.renewMediaLinks(issueId, bodyId: bodyId)
+    }
+
+    /// Reads a screen again now: the one the user looks at, or another in
+    /// sight, such as the list beside an iPad's issue page.
+    func refresh(_ screen: Screen? = nil) async {
+        guard let core else { return }
+        let screen = screen ?? shownScreen
+        coreScreen = screen
+        await attempt { try await core.refresh(screen) }
+    }
+
+    /// Reads again what failed on a screen, by default the one on top.
+    func retry(_ screen: Screen? = nil) async {
+        guard let core else { return }
+        let screen = screen ?? shownScreen
+        coreScreen = screen
+        await attempt { try await core.retry(screen) }
     }
 
     /// As the app comes back to the front: what is old or failed is read
     /// again, and the token's account checked.
     func revalidate() async {
         guard let core, phase == .running else { return }
+        coreScreen = shownScreen
         await attempt { try await core.revalidate(shownScreen) }
     }
 
@@ -357,15 +431,7 @@ final class AppModel {
         selectedIssue = routes.first
         issuePath = Array(routes.dropFirst())
         // The list is read too, so that going back finds it.
-        if let selection, selectedIssue != nil {
-            await attempt {
-                switch selection.screen {
-                case .list(let scope): try await core.openList(scope)
-                case .view(let id): try await core.openView(id)
-                case .issue: break
-                }
-            }
-        }
+        if let selection, selectedIssue != nil { await show(selection.screen) }
         openShown()
     }
 
