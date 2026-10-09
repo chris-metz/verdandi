@@ -163,8 +163,7 @@ struct SidebarActions {
     /// Opens a repository's list and reads what failed of it again.
     func retry(_ repository: RepositoryAddress) async {
         model.select(.repository(repository))
-        guard let core = model.core else { return }
-        await model.attempt { try await core.retry(.list(.repository(repository))) }
+        await model.retry(.list(.repository(repository)))
     }
 
     // MARK: The settings file
