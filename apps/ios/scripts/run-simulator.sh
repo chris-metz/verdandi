@@ -1,8 +1,10 @@
 #!/bin/sh
 # Builds the app, installs it on a Simulator and launches it, signed in as
-# gh is on this Mac: GH_TOKEN comes from `gh auth token` unless it is set,
-# and goes only into the app's environment. Any VERDANDI_* variable set
-# here is passed on too (see Verdandi/App/LaunchOptions.swift).
+# gh is on this Mac: GH_TOKEN, or else `gh auth token`, goes into a file in
+# the app's own folder that it reads at launch and deletes
+# (scripts/dev-token.sh), never into an environment the Simulator or Xcode
+# would log. Any VERDANDI_* variable set here is passed on (see
+# Verdandi/App/LaunchOptions.swift).
 #
 #   scripts/run-simulator.sh [device] [--no-build]
 #   VERDANDI_SELECT=repo:chris-metz/verdandi scripts/run-simulator.sh "iPhone 18 Pro Max"
@@ -11,6 +13,8 @@
 # first booted device is used, or the iPad Pro 13-inch.
 set -eu
 cd "$(dirname "$0")/.."
+token="${GH_TOKEN:-}"
+unset GH_TOKEN GITHUB_TOKEN
 device="${1:-}"
 build=1
 [ "${2:-}" = "--no-build" ] && build=0
@@ -19,21 +23,19 @@ if [ -z "$device" ]; then
   [ -n "$device" ] || device="iPad Pro 13-inch (M5)"
 fi
 xcrun simctl boot "$device" 2>/dev/null || true
+device=$(xcrun simctl list devices | grep -F "$device" | grep -o '[0-9A-F]\{8\}-[0-9A-F-]*' | head -n 1)
 derived="build/DerivedData"
 if [ "$build" = 1 ]; then
   # New files join the project only as it is generated again.
   scripts/generate.sh >/dev/null
   xcodebuild -project Verdandi.xcodeproj -scheme Verdandi \
-    -destination "platform=iOS Simulator,id=$(xcrun simctl list devices | grep -F "$device" | grep -o '[0-9A-F]\{8\}-[0-9A-F-]*' | head -n 1)" \
+    -destination "platform=iOS Simulator,id=$device" \
     -derivedDataPath "$derived" build -quiet
 fi
 app="$derived/Build/Products/Debug-iphonesimulator/Verdandi.app"
 xcrun simctl install "$device" "$app"
 xcrun simctl terminate "$device" io.github.chris-metz.verdandi 2>/dev/null || true
-if [ -z "${GH_TOKEN:-}" ]; then
-  GH_TOKEN=$(gh auth token)
-fi
-export SIMCTL_CHILD_GH_TOKEN="$GH_TOKEN"
+GH_TOKEN="$token" scripts/dev-token.sh "$device" put
 for name in $(env | sed -n 's/^\(VERDANDI_[A-Z_]*\)=.*/\1/p'); do
   eval "export SIMCTL_CHILD_$name=\"\$$name\""
 done

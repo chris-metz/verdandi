@@ -111,10 +111,30 @@ struct LaunchOptions {
     /// The token GitHub is read with: as the environment and the Keychain
     /// give it, or none for `VERDANDI_SIGNED_OUT`.
     func makeCredentials() -> Credentials {
-        guard signedOut else { return Credentials() }
+        guard signedOut else { return Credentials(environment: Self.environmentWithDevelopmentToken()) }
         let credentials = Credentials(environment: [:])
         try? credentials.remove()
         return credentials
+    }
+
+    /// The environment, with the token a development script left in the
+    /// app's temporary folder as `GH_TOKEN` (`scripts/run-simulator.sh`,
+    /// `scripts/ui-test.sh`). It goes there rather than into the launch's
+    /// environment, which the Simulator writes to its logs. The file is
+    /// deleted once read, unless `VERDANDI_KEEP_DEV_TOKEN=1` keeps it for
+    /// the next launch, as UI tests launch the app again and again.
+    static func environmentWithDevelopmentToken() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        #if targetEnvironment(simulator)
+            let file = FileManager.default.temporaryDirectory.appending(path: "verdandi-dev-token")
+            if let token = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+                !token.isEmpty
+            {
+                environment["GH_TOKEN"] = token
+                if environment["VERDANDI_KEEP_DEV_TOKEN"] != "1" { try? FileManager.default.removeItem(at: file) }
+            }
+        #endif
+        return environment
     }
 
     @MainActor

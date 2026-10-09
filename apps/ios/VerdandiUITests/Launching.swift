@@ -1,15 +1,13 @@
 import XCTest
 
-/// Launches the app for a UI test, signed in with the `GH_TOKEN` the test
-/// runner was given (`scripts/ui-test.sh` passes it), in a fresh profile
-/// unless the test names one, and with the launch options it asks for.
+/// Launches the app for a UI test, signed in with the token
+/// `scripts/ui-test.sh` left in the app's folder, which each launch keeps
+/// for the next; in a fresh profile unless the test names one; and with the
+/// launch options it asks for.
 @MainActor
 func launchVerdandi(_ options: [String: String] = [:]) -> XCUIApplication {
     let app = XCUIApplication()
-    let environment = ProcessInfo.processInfo.environment
-    if let token = environment["GH_TOKEN"], !token.isEmpty {
-        app.launchEnvironment["GH_TOKEN"] = token
-    }
+    app.launchEnvironment["VERDANDI_KEEP_DEV_TOKEN"] = "1"
     app.launchEnvironment["VERDANDI_HOME"] = "fresh"
     for (name, value) in options { app.launchEnvironment[name] = value }
     app.launch()

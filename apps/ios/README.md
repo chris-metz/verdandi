@@ -38,7 +38,7 @@ VERDANDI_LIVE=1 GH_TOKEN="$(gh auth token)" apps/ios/scripts/test-kit.sh --filte
 pnpm vitest run --project ios-host              # the host's tests
 ```
 
-The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` passes `GH_TOKEN` from `gh auth token` into the app's environment only, and any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>`, `VERDANDI_GO_TO=owner/name#12`, `VERDANDI_NOTICE=<text>`, `VERDANDI_MAP_END=blocking` (see `Verdandi/App/LaunchOptions.swift`).
+The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` hands the app gh's token through a file in the app's own folder, which the app deletes once read (`scripts/dev-token.sh`): never through the launch's environment, which the Simulator writes to its logs. It passes any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>`, `VERDANDI_GO_TO=owner/name#12`, `VERDANDI_NOTICE=<text>`, `VERDANDI_MAP_END=blocking` (see `Verdandi/App/LaunchOptions.swift`).
 
 To run it on an iPhone or iPad, open the project, choose the device and Run. It is signed for the team in `project.yml`.
 

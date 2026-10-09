@@ -1,22 +1,27 @@
 #!/bin/sh
-# Runs the UI tests on a Simulator, signed in as gh is on this Mac (GH_TOKEN
-# from `gh auth token` unless it is set, passed to the test runner only),
-# and saves their screenshots as PNG files.
+# Runs the UI tests on a Simulator, signed in as gh is on this Mac, and
+# saves their screenshots as PNG files. The token goes into a file in the
+# app's own folder for the run (scripts/dev-token.sh), never into an
+# environment the Simulator or Xcode would log.
 #
 #   scripts/ui-test.sh <device UDID> [test, e.g. SmokeTests] [screenshot folder]
 set -eu
 cd "$(dirname "$0")/.."
+token="${GH_TOKEN:-}"
+unset GH_TOKEN GITHUB_TOKEN
 device="$1"
 only="${2:-}"
 shots="${3:-build/ui-test-shots}"
 scripts/generate.sh >/dev/null
-if [ -z "${GH_TOKEN:-}" ]; then
-  GH_TOKEN=$(gh auth token)
-fi
-export TEST_RUNNER_GH_TOKEN="$GH_TOKEN"
+xcrun simctl boot "$device" 2>/dev/null || true
+xcodebuild build-for-testing -project Verdandi.xcodeproj -scheme Verdandi \
+  -destination "id=$device" -derivedDataPath build/DerivedData -quiet
+xcrun simctl install "$device" build/DerivedData/Build/Products/Debug-iphonesimulator/Verdandi.app
+trap 'scripts/dev-token.sh "$device" remove' EXIT
+GH_TOKEN="$token" scripts/dev-token.sh "$device" put
 result="build/ui-tests-$(date +%s).xcresult"
 status=0
-xcodebuild test -project Verdandi.xcodeproj -scheme Verdandi \
+xcodebuild test-without-building -project Verdandi.xcodeproj -scheme Verdandi \
   -destination "id=$device" -derivedDataPath build/DerivedData \
   -resultBundlePath "$result" ${only:+-only-testing:VerdandiUITests/$only} -quiet || status=$?
 mkdir -p "$shots"
