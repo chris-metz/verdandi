@@ -7,7 +7,8 @@ import VerdandiKit
 /// photographed without tapping to it:
 ///
 /// - `VERDANDI_HOME`: another folder for the core's files, e.g. an empty one
-///   for a first launch.
+///   for a first launch; `fresh` makes a new empty one in the app's own
+///   temporary folder, as UI tests use.
 /// - `VERDANDI_SELECT`: `all`, `repo:owner/name` or `view:<id>`.
 /// - `VERDANDI_ISSUE`: `owner/name#12`, opened over the selected list.
 /// - `VERDANDI_SHEET`: `repositoryPicker`, `newView`, `settings` or `goToIssue`.
@@ -38,7 +39,10 @@ struct LaunchOptions {
         let environment = ProcessInfo.processInfo.environment
         var options = LaunchOptions()
         if let home = environment["VERDANDI_HOME"], !home.isEmpty {
-            options.home = URL(filePath: home, directoryHint: .isDirectory)
+            options.home =
+                home == "fresh"
+                ? FileManager.default.temporaryDirectory.appending(path: "home-\(UUID().uuidString)", directoryHint: .isDirectory)
+                : URL(filePath: home, directoryHint: .isDirectory)
         }
         if let select = environment["VERDANDI_SELECT"] {
             if select == "all" {

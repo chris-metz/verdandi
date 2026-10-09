@@ -66,12 +66,30 @@ targets:
         VerdandiGitHubClientID: ""
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+  VerdandiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: VerdandiUITests
+    dependencies:
+      - target: Verdandi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.chris-metz.verdandi.uitests
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Verdandi
 schemes:
   Verdandi:
     build:
       targets:
         Verdandi: all
+        VerdandiUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - VerdandiUITests
     archive:
       config: Release
