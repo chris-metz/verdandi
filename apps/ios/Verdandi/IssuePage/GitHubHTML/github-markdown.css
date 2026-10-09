@@ -428,13 +428,15 @@ body {
   list-style-type: none;
 }
 
+/* Sized by the text around it, which a control does not take on its own. */
 .markdown-body input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
   box-sizing: border-box;
+  font-size: inherit;
   width: 1.05em;
   height: 1.05em;
-  margin: 0 0.4em 0.2em -1.45em;
+  margin: 0 0.25em 0.2em -1.45em;
   vertical-align: middle;
   background: transparent center / 75% no-repeat;
   border: 1.5px solid var(--gh-fg-muted);
@@ -603,8 +605,10 @@ body {
   vertical-align: middle;
 }
 
+/* A tap opens it full screen, whose Share offers what a long press would. */
 .markdown-body img.media-image[role="button"] {
   cursor: zoom-in;
+  -webkit-touch-callout: none;
 }
 
 /* Never sized by the viewport: the web view is as tall as the body. */

@@ -60,6 +60,16 @@ final class BodyWebViews: NSObject {
 
     private var idle: [BodyWKWebView] = []
 
+    override init() {
+        super.init()
+        // Low on memory, the waiting web views and their processes go.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.idle.removeAll() }
+        }
+    }
+
     private lazy var configuration: WKWebViewConfiguration = {
         let configuration = WKWebViewConfiguration()
         // Nothing a body loads stays on disk, and no cookies reach it.
@@ -189,7 +199,27 @@ extension BodyWebViews: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        (webView as? BodyWKWebView)?.isLoadingPage = false
+        pageFailed(webView, error)
+    }
+
+    func webView(
+        _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
+    ) {
+        pageFailed(webView, error)
+    }
+
+    /// The page could not load, as when the system could not start a web
+    /// process: it loads again a moment later, while a body waits for it.
+    private func pageFailed(_ webView: WKWebView, _ error: any Error) {
+        guard let view = webView as? BodyWKWebView, view.isLoadingPage else { return }
+        view.isLoadingPage = false
+        BodyDocument.log.error("A body's page could not load: \(error.localizedDescription, privacy: .public)")
+        idle.removeAll { $0 === view }
+        Task { [weak self, weak view] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, let view, view.coordinator != nil, !view.isReady else { return }
+            load(view)
+        }
     }
 
     /// The system ended a web view's process, as it does for memory: its

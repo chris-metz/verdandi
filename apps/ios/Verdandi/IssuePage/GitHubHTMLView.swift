@@ -39,6 +39,10 @@ struct BodyHTMLView: View {
     @State private var measured: Measured?
     /// Whether the body has its web view, as it is near the screen.
     @State private var live = false
+    /// Whether its web view has shown it, since it was made.
+    @State private var rendered = false
+    /// Whether that takes long enough to say the body is loading.
+    @State private var slow = false
     /// A linked issue that could not be opened, and why.
     @State private var failure: LinkFailure?
 
@@ -74,6 +78,20 @@ struct BodyHTMLView: View {
                     .frame(height: height)
                     .overlay(alignment: .top) {
                         if live { webView }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if live, slow, !rendered {
+                            ProgressView()
+                                .padding(.top, 4)
+                                .accessibilityLabel("Loading the body")
+                        }
+                    }
+                    .task(id: live) {
+                        rendered = false
+                        slow = false
+                        guard live else { return }
+                        try? await Task.sleep(for: .milliseconds(600))
+                        slow = true
                     }
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.width
@@ -163,7 +181,10 @@ struct BodyHTMLView: View {
 
     private var actions: BodyActions {
         BodyActions(
-            heightChanged: { height in measured(height) },
+            heightChanged: { height in
+                rendered = true
+                measured(height)
+            },
             detailsChanged: { open in BodyMemory.remember(openDetails: open, in: bodyId) },
             openIssue: { link in await open(link) },
             renewMedia: { await renewMedia() },
@@ -255,9 +276,11 @@ struct BodyHTMLView: View {
     }
 }
 
-/// How far a body is from the part of the page on screen: near, within a
-/// screen's height, when its web view is made; far, more than three
-/// away, when it is given back; around, between, when it stays as it is.
+/// How far a body is from the part of the page on screen: near, within
+/// half a screen's height, when its web view is made; far, more than a
+/// screen and a quarter away, when it is given back; around, between, when
+/// it stays as it is. Each web view has a process of its own, so that few
+/// are kept beyond the screen.
 nonisolated private enum Proximity: Equatable, Sendable {
     case near, around, far
 
@@ -268,9 +291,9 @@ nonisolated private enum Proximity: Equatable, Sendable {
             return
         }
         let distance = max(0, visible.minY - size.height, -visible.maxY)
-        if distance <= visible.height {
+        if distance <= visible.height * 0.5 {
             self = .near
-        } else if distance <= visible.height * 3 {
+        } else if distance <= visible.height * 1.25 {
             self = .around
         } else {
             self = .far
