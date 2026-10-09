@@ -12,7 +12,7 @@ struct RateLimitsButton: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let gauge = RateLimitGauge(budgets: model.budgets, states: model.rateLimits, now: context.date)
+            let gauge = RateLimitGauge(budgets: model.shownBudgets, states: model.shownHolds, now: context.date)
             Button {
                 shown.toggle()
             } label: {
@@ -46,6 +46,15 @@ struct RateLimitsButton: View {
             shown = true
         }
     }
+}
+
+extension AppModel {
+    /// The rate-limit budgets the control shows: GitHub's, or the samples a
+    /// launch for development asks for.
+    fileprivate var shownBudgets: [RateLimitBudget] { SidebarLaunchOptions.sampleRateLimits?.budgets ?? budgets }
+
+    /// The pools that hold requests back, as the control shows them.
+    fileprivate var shownHolds: [RateLimitState] { SidebarLaunchOptions.sampleRateLimits?.states ?? rateLimits }
 }
 
 /// The gauge alone while all is well, the gauge with its word once a pool
@@ -85,14 +94,14 @@ struct RateLimitsPopover: View {
                         .font(.footnote)
                         .foregroundStyle(palette.muted)
                     }
-                    ForEach(RateLimitWords.holding(model.rateLimits, now: context.date), id: \.self) { line in
-                        Label(line, systemImage: "pause.circle.fill")
+                    ForEach(RateLimitWords.holding(model.shownHolds, now: context.date), id: \.self) { hold in
+                        Label(hold.text, systemImage: hold.paused ? "pause.circle.fill" : "exclamationmark.triangle.fill")
                             .font(.footnote.weight(.medium))
                             .foregroundStyle(palette.warning)
                     }
                     ForEach(RateLimitWords.pools, id: \.self) { pool in
                         PoolBudgetView(
-                            pool: pool, budget: model.budgets.first { $0.pool == pool }, now: context.date)
+                            pool: pool, budget: model.shownBudgets.first { $0.pool == pool }, now: context.date)
                     }
                 }
                 .padding(20)
@@ -293,18 +302,26 @@ enum RateLimitWords {
         }
     }
 
+    /// A pool holding requests back, as a line says it.
+    struct Hold: Hashable {
+        var text: String
+        var paused: Bool
+    }
+
     /// What the pools that hold requests back do, e.g. "GitHub rate limit
     /// reached · requests paused until 14:37". REST search is named apart.
-    static func holding(_ states: [RateLimitState], now: Date) -> [String] {
-        var lines: [String] = []
+    static func holding(_ states: [RateLimitState], now: Date) -> [Hold] {
+        var lines: [Hold] = []
         for state in states {
             let until = Date(timeIntervalSince1970: state.until / 1000)
             guard until > now else { continue }
             let limit = state.pool == .search ? "search limit" : "rate limit"
-            let line =
-                state.status == .paused
-                ? "GitHub \(limit) reached · requests paused until \(time(until, now: now))"
-                : "GitHub \(limit) low · automatic refresh off until \(time(until, now: now))"
+            let paused = state.status == .paused
+            let line = Hold(
+                text: paused
+                    ? "GitHub \(limit) reached · requests paused until \(time(until, now: now))"
+                    : "GitHub \(limit) low · automatic refresh off until \(time(until, now: now))",
+                paused: paused)
             if !lines.contains(line) { lines.append(line) }
         }
         return lines

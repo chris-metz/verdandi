@@ -5,7 +5,8 @@ import VerdandiKit
 /// `LaunchOptions`, so that their states can be shown and photographed
 /// without tapping to them:
 ///
-/// - `VERDANDI_RATE_LIMITS=open`: the rate-limit popover opens.
+/// - `VERDANDI_RATE_LIMITS=open`: the rate-limit popover opens; `low`: it
+///   opens on sample budgets with a pool low and one paused.
 /// - `VERDANDI_EDIT_VIEW=<name>`: the view editor edits the view of that name.
 /// - `VERDANDI_DUPLICATE_VIEW=<name>`: the view editor duplicates it.
 /// - `VERDANDI_DRAFT=Name|search`: a new view's fields start so.
@@ -22,7 +23,30 @@ import VerdandiKit
 enum SidebarLaunchOptions {
     private static var environment: [String: String] { ProcessInfo.processInfo.environment }
 
-    static var opensRateLimits: Bool { environment["VERDANDI_RATE_LIMITS"] == "open" }
+    static var opensRateLimits: Bool { ["open", "low"].contains(environment["VERDANDI_RATE_LIMITS"]) }
+
+    /// Budgets and holds that stand in for GitHub's, so that a pool running
+    /// low and one paused can be seen without using them up: REST low,
+    /// search used up and paused.
+    static let sampleRateLimits: (budgets: [RateLimitBudget], states: [RateLimitState])? = {
+        guard ProcessInfo.processInfo.environment["VERDANDI_RATE_LIMITS"] == "low" else { return nil }
+        struct Sample: Decodable {
+            var budgets: [RateLimitBudget]
+            var states: [RateLimitState]
+        }
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let json = """
+            {"budgets": [
+              {"pool": "graphql", "limit": 5000, "remaining": 4210, "resetAt": \(now + 2_280_000)},
+              {"pool": "core", "limit": 5000, "remaining": 380, "resetAt": \(now + 1_500_000)},
+              {"pool": "search", "limit": 30, "remaining": 0, "resetAt": \(now + 600_000)}],
+             "states": [
+              {"pool": "search", "status": "paused", "until": \(now + 600_000)},
+              {"pool": "core", "status": "low", "until": \(now + 1_500_000)}]}
+            """
+        guard let sample = try? JSONDecoder().decode(Sample.self, from: Data(json.utf8)) else { return nil }
+        return (sample.budgets, sample.states)
+    }()
     static var editedViewName: String? { environment["VERDANDI_EDIT_VIEW"] }
     static var duplicatedViewName: String? { environment["VERDANDI_DUPLICATE_VIEW"] }
     static var savesAtOnce: Bool { environment["VERDANDI_SAVE"] == "1" }
