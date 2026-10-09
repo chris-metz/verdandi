@@ -39,6 +39,10 @@ struct BodyHTMLView: View {
     @State private var measured: Measured?
     /// Whether the body has its web view, as it is near the screen.
     @State private var live = false
+    /// How far it was from the screen when last laid out.
+    @State private var proximity = Proximity.far
+    /// Whether its page shows, rather than another pushed over it.
+    @State private var appeared = false
     /// Whether its web view has shown it, since it was made.
     @State private var rendered = false
     /// Whether that takes long enough to say the body is loading.
@@ -101,11 +105,17 @@ struct BodyHTMLView: View {
                     .onGeometryChange(for: Proximity.self) { proxy in
                         Proximity(size: proxy.size, visible: proxy.bounds(of: .scrollView))
                     } action: { proximity in
-                        switch proximity {
-                        case .near: live = true
-                        case .far: live = false
-                        case .around: break
-                        }
+                        self.proximity = proximity
+                        updateLive()
+                    }
+                    // A page another is pushed over keeps no web views.
+                    .onAppear {
+                        appeared = true
+                        updateLive()
+                    }
+                    .onDisappear {
+                        appeared = false
+                        updateLive()
                     }
             }
             if let failure {
@@ -119,6 +129,20 @@ struct BodyHTMLView: View {
             guard !SignedLinks.sameExceptSignatures(shown, html) else { return }
             shown = html
             shownKey = BodyMemory.key(html)
+        }
+    }
+
+    /// Makes the body's web view as it comes near the screen, and gives it
+    /// back as it goes far, or its page no longer shows.
+    private func updateLive() {
+        guard appeared else {
+            live = false
+            return
+        }
+        switch proximity {
+        case .near: live = true
+        case .far: live = false
+        case .around: break
         }
     }
 
