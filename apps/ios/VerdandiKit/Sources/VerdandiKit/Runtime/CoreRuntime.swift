@@ -196,9 +196,13 @@ public final class CoreRuntime: @unchecked Sendable {
                 outcome = .unreachable(message: "The request could not be read: \(error)")
             }
             let outcomeJSON = String(decoding: (try? JSONEncoder().encode(outcome)) ?? Data(), as: UTF8.self)
-            self?.queue.async {
-                self?.host?.invokeMethod("githubAnswered", withArguments: [id, outcomeJSON])
-            }
+            self?.answer(id, outcomeJSON: outcomeJSON)
+        }
+    }
+
+    private func answer(_ id: Int, outcomeJSON: String) {
+        queue.async { [self] in
+            host?.invokeMethod("githubAnswered", withArguments: [id, outcomeJSON])
         }
     }
 
