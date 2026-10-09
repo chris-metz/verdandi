@@ -244,14 +244,15 @@ private struct SearchSummary: View {
                 Text(query)
                     .font(.callout.monospaced())
                     .foregroundStyle(palette.foreground)
-                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "pencil")
                     .foregroundStyle(palette.muted)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(palette.card, in: .rect(cornerRadius: 12, style: .continuous))
+            .background(palette.muted.opacity(0.12), in: .rect(cornerRadius: 12, style: .continuous))
             .contentShape(.rect)
         }
         .buttonStyle(.borderless)

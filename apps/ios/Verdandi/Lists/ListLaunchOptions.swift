@@ -23,6 +23,8 @@ enum ListLaunchOptions {
         }
         let expand = environment["VERDANDI_EXPAND"]
         guard !applied, state != nil || !labels.isEmpty || expand != nil, let core = model.core else { return }
+        // All may show for a moment before the launch selects its entry.
+        if let selected = model.launch.select, selected.expandableList != controller.list { return }
         applied = true
 
         if let state, case .scope(let scope) = controller.list {
