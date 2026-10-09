@@ -42,7 +42,7 @@ struct RateLimitsButton: View {
         .task {
             // A popover opens once its button is on screen.
             guard SidebarLaunchOptions.opensRateLimits else { return }
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(4))
             shown = true
         }
     }

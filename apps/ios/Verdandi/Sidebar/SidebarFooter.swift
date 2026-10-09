@@ -54,7 +54,7 @@ private struct AccountLabel: View {
                     Text(source == .stored ? account.host : "\(account.host) · \(source.rawValue)")
                         .font(.caption)
                         .foregroundStyle(palette.muted)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
                 .help(detail(source) ?? "GitHub is read as @\(account.login)")
                 .accessibilityElement(children: .combine)

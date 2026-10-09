@@ -32,19 +32,19 @@ struct RepositoryEntryRow: View {
                         .lineLimit(1)
                     Text(owner)
                         .font(.caption)
-                        .foregroundStyle(palette.muted)
+                        .meaning(palette.muted)
                         .lineLimit(1)
                     if let reason {
                         Text(reason)
                             .font(.caption)
-                            .foregroundStyle(palette.warning)
+                            .meaning(palette.warning)
                             .lineLimit(2)
                     }
                 }
                 .opacity(entry.unavailable == nil ? 1 : 0.7)
             } icon: {
                 Image(systemName: symbol)
-                    .foregroundStyle(entry.unavailable == nil ? AnyShapeStyle(.tint) : AnyShapeStyle(palette.warning))
+                    .meaning(entry.unavailable == nil ? nil : palette.warning, selected: .primary)
                     .contentTransition(.symbolEffect(.replace))
             }
             Spacer(minLength: 8)
@@ -100,13 +100,13 @@ struct ViewEntryRow: View {
                     if rejected != nil {
                         Text("GitHub rejected this search")
                             .font(.caption)
-                            .foregroundStyle(palette.warning)
+                            .meaning(palette.warning)
                             .lineLimit(1)
                     }
                 }
             } icon: {
                 Image(systemName: rejected == nil ? "line.3.horizontal.decrease.circle" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(rejected == nil ? AnyShapeStyle(.tint) : AnyShapeStyle(palette.warning))
+                    .meaning(rejected == nil ? nil : palette.warning, selected: .primary)
                     .contentTransition(.symbolEffect(.replace))
             }
             Spacer(minLength: 8)
@@ -150,7 +150,7 @@ struct OpenIssueBadge: View {
             case .failed:
                 Image(systemName: "exclamationmark.triangle")
                     .font(.footnote)
-                    .foregroundStyle(palette.warning)
+                    .meaning(palette.warning)
                     .transition(.opacity)
             }
         }
@@ -206,5 +206,30 @@ struct SidebarCountText: View {
         .foregroundStyle(.secondary)
         .contentTransition(.numericText(value: Double(count)))
         .animation(.smooth, value: count)
+    }
+}
+
+extension View {
+    /// Colours a part of a sidebar row by what it means, the tint when it
+    /// means nothing special. On a selected row, which the selection
+    /// colours, it takes the selection's text colour, as it would not read.
+    fileprivate func meaning(_ color: Color?, selected: HierarchicalShapeStyle = .secondary) -> some View {
+        modifier(Meaning(color: color, selected: selected))
+    }
+}
+
+private struct Meaning: ViewModifier {
+    @Environment(\.backgroundProminence) private var prominence
+    var color: Color?
+    var selected: HierarchicalShapeStyle
+
+    func body(content: Content) -> some View {
+        if prominence == .increased {
+            content.foregroundStyle(selected)
+        } else if let color {
+            content.foregroundStyle(color)
+        } else {
+            content.foregroundStyle(.tint)
+        }
     }
 }

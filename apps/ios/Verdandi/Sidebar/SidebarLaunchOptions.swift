@@ -16,8 +16,8 @@ import VerdandiKit
 /// - `VERDANDI_PICKER_SEARCH=<text>`: the repository picker's search.
 /// - `VERDANDI_PICKER_SELECT=owner/name,owner/name`: the picker checks
 ///   these once it suggests them.
-/// - `VERDANDI_SIDEBAR=shown`: an iPad shows the sidebar beside the list,
-///   also in portrait.
+/// - `VERDANDI_SIDEBAR=shown`: the sidebar shows, also on an iPad in
+///   portrait and on an iPhone that would show a list.
 enum SidebarLaunchOptions {
     private static var environment: [String: String] { ProcessInfo.processInfo.environment }
 
@@ -37,30 +37,17 @@ enum SidebarLaunchOptions {
         return (String(draft[..<bar]), String(draft[draft.index(after: bar)...]))
     }
 
-    /// Shows the sidebar beside the list as the launch asks, as the
-    /// sidebar button would: an iPad in portrait hides it at first.
-    @MainActor
-    static func showSidebar() async {
-        guard environment["VERDANDI_SIDEBAR"] == "shown" else { return }
-        try? await Task.sleep(for: .seconds(1))
-        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-            for window in scene.windows {
-                guard let split = splitView(in: window.rootViewController) else { continue }
-                split.preferredDisplayMode = .twoBesideSecondary
-                split.show(.primary)
-            }
-        }
-    }
+    /// Whether the launch asks for the sidebar to show: an iPad in portrait
+    /// hides it at first, and an iPhone shows the chosen entry's list over it.
+    static var showsSidebar: Bool { environment["VERDANDI_SIDEBAR"] == "shown" }
 
-    /// The split view that holds the sidebar, somewhere under a view controller.
+    /// Goes back to the sidebar on an iPhone as the launch asks, as its Back
+    /// button would.
     @MainActor
-    private static func splitView(in controller: UIViewController?) -> UISplitViewController? {
-        guard let controller else { return nil }
-        if let split = controller as? UISplitViewController { return split }
-        for child in controller.children {
-            if let split = splitView(in: child) { return split }
-        }
-        return nil
+    static func showSidebar(_ model: AppModel) async {
+        guard showsSidebar, UIDevice.current.userInterfaceIdiom == .phone else { return }
+        try? await Task.sleep(for: .seconds(1))
+        model.select(nil)
     }
 
     /// The entry whose removal the launch asks to confirm, once the sidebar

@@ -3,11 +3,11 @@ import VerdandiKit
 
 /// The sidebar: All, then the Repositories and Views sections, each with a
 /// button that adds to it, and the account at its foot. Entries move by
-/// dragging or by Move Up and Move Down in their context menu, go by
-/// swiping or Remove… once confirmed, and are chosen by ⌘1…9 on a
-/// keyboard, in the order they show. While the settings file cannot be
-/// written, a banner says why and nothing changes. On the first launch the
-/// repository picker opens on its own.
+/// dragging or by Move Up and Move Down in their context menu, and go by
+/// swiping or Remove… once confirmed; ⌘1…9 choose them on a keyboard
+/// (`SidebarCommands`). While the settings file cannot be written, a banner
+/// says why and nothing changes. On the first launch the repository picker
+/// opens on its own.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.palette) private var palette
@@ -45,13 +45,12 @@ struct SidebarView: View {
             ToolbarItem(placement: .primaryAction) { addMenu }
         }
         .safeAreaBar(edge: .bottom) { SidebarFooter() }
-        .background { EntryShortcuts(entries: shortcutEntries) { model.select($0) } }
         .animation(.smooth, value: model.sidebar)
         .sensoryFeedback(.impact(flexibility: .soft), trigger: moves)
         .sensoryFeedback(.success, trigger: removals)
         .onChange(of: firstLaunch, initial: true) { _, first in offerPicker(first) }
         .onChange(of: model.sidebar, initial: true) { applyLaunchOptions() }
-        .task { await SidebarLaunchOptions.showSidebar() }
+        .task { await SidebarLaunchOptions.showSidebar(model) }
     }
 
     // MARK: Entries
@@ -252,17 +251,6 @@ struct SidebarView: View {
         return false
     }
 
-    /// The entries ⌘1…9 choose: All, then the repositories, then the views.
-    private var shortcutEntries: [EntryShortcuts.Entry] {
-        guard case .read(let entries) = model.sidebar else { return [] }
-        let all = [EntryShortcuts.Entry(item: .all, title: "All")]
-        let repositories = entries.repositories.map {
-            EntryShortcuts.Entry(item: .repository($0.repository.address), title: $0.repository.name)
-        }
-        let views = entries.views.map { EntryShortcuts.Entry(item: .view(id: $0.view.id), title: $0.view.name) }
-        return Array((all + repositories + views).prefix(9))
-    }
-
     /// Opens the repository picker on the first launch, once: Skip or
     /// adding a repository creates the settings file, so that it does not
     /// open again; closed any other way, it opens again on the next launch.
@@ -355,29 +343,5 @@ private struct RemovalConfirmation: ViewModifier {
         } message: {
             Text(entry.removalMessage)
         }
-    }
-}
-
-/// Buttons out of sight that give ⌘1…9 to the entries in the order they
-/// show, named as their entries, as a keyboard lists them.
-private struct EntryShortcuts: View {
-    struct Entry {
-        var item: SidebarItem
-        var title: String
-    }
-
-    var entries: [Entry]
-    var select: (SidebarItem) -> Void
-
-    var body: some View {
-        ZStack {
-            ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                Button(entry.title) { select(entry.item) }
-                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
-            }
-        }
-        .frame(width: 0, height: 0)
-        .opacity(0)
-        .accessibilityHidden(true)
     }
 }
