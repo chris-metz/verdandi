@@ -13,6 +13,8 @@ Verdandi is a personal project, shared in the open. There is no support or roadm
 
 It runs on macOS, Windows and Linux, in TypeScript and Electron. It reads GitHub only through the [GitHub CLI](https://cli.github.com/) (`gh`) 2.81.0 or later, signed in to github.com (`gh auth login`).
 
+An app for iPhone and iPad, in SwiftUI, runs the same core: see [`apps/ios`](apps/ios/README.md) ([ADR 0010](docs/adr/0010-an-ios-app-on-the-same-core.md)). It is built from source with Xcode, and not released yet.
+
 ## Install
 
 On a Mac with Apple Silicon and macOS 13 or later:
@@ -159,3 +161,4 @@ It runs typecheck, lint, format check and tests. `pnpm format` fixes formatting.
 
 - `packages/core`: all domain behaviour, as plain TypeScript for Node. It never depends on Electron, React or the DOM, so a later terminal UI can reuse it.
 - `apps/desktop`: the Electron app. The main process runs the core in-process and only wires it to IPC; preload exposes it to the React renderer, which reaches the core only through the typed contract in `packages/core/src/contract.ts`.
+- `apps/ios`: the iPhone and iPad app. It runs the core on JavaScriptCore, with `gh` answered over HTTPS, and its SwiftUI interface reaches the core through the same contract.

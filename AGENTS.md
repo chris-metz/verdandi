@@ -1,6 +1,6 @@
 ## The app
 
-The repository is a pnpm workspace: the Electron app in `apps/desktop`, its TypeScript core in `packages/core`.
+The repository is a pnpm workspace: the Electron app in `apps/desktop`, its TypeScript core in `packages/core`, and the iPhone and iPad app in `apps/ios`, which runs the same core on JavaScriptCore (see `apps/ios/README.md`).
 
 ## Git workflow
 
@@ -22,4 +22,4 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### Running the app
 
-After changing the renderer, drive the app with the `run-desktop` skill (`.agents/skills/run-desktop/SKILL.md`) before committing, and look at its screenshots.
+After changing the renderer, drive the app with the `run-desktop` skill (`.agents/skills/run-desktop/SKILL.md`) before committing, and look at its screenshots. After changing the iOS app, run it with `apps/ios/scripts/run-simulator.sh` and look at it with `apps/ios/scripts/snap.sh`; after changing the core, also run `apps/ios/scripts/test-kit.sh`, which runs the core on JavaScriptCore.
