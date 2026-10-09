@@ -21,7 +21,8 @@ fi
 xcrun simctl boot "$device" 2>/dev/null || true
 derived="build/DerivedData"
 if [ "$build" = 1 ]; then
-  [ -d Verdandi.xcodeproj ] || scripts/generate.sh
+  # New files join the project only as it is generated again.
+  scripts/generate.sh >/dev/null
   xcodebuild -project Verdandi.xcodeproj -scheme Verdandi \
     -destination "platform=iOS Simulator,id=$(xcrun simctl list devices | grep -F "$device" | grep -o '[0-9A-F]\{8\}-[0-9A-F-]*' | head -n 1)" \
     -derivedDataPath "$derived" build -quiet

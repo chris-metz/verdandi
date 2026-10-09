@@ -12,11 +12,8 @@ struct IssueListScreen: View {
             if let route { model.openIssue(route) } else { model.selectedIssue = nil }
         })) {
             ForEach(Self.rows(list?.trees ?? [])) { row in
-                HStack {
-                    Image(systemName: row.node.issue.state == .open ? "circle.circle" : "checkmark.circle")
-                    Text(row.node.issue.title)
-                }
-                .padding(.leading, CGFloat(row.depth) * 16)
+                IssueRowContent(issue: row.node.issue, showsRepository: scope == .all, unread: row.node.unread)
+                    .padding(.leading, CGFloat(row.depth) * 16)
                 .tag(IssueRoute(row.node.issue))
             }
         }

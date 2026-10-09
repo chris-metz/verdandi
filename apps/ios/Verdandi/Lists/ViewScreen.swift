@@ -12,7 +12,7 @@ struct ViewScreen: View {
             if let route { model.openIssue(route) } else { model.selectedIssue = nil }
         })) {
             ForEach(IssueListScreen.rows(list?.trees ?? [])) { row in
-                Text(row.node.issue.title)
+                IssueRowContent(issue: row.node.issue, showsRepository: true, unread: row.node.unread)
                     .padding(.leading, CGFloat(row.depth) * 16)
                     .tag(IssueRoute(row.node.issue))
             }
