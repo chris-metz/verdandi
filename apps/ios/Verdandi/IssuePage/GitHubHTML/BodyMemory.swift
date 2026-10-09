@@ -50,9 +50,19 @@ enum BodyMemory {
     private static var requested: [String: Set<String>] = [:]
     private static var openDetails: [String: [Int]] = [:]
 
+    /// Each HTML's key, by the HTML's own hash, so that a page with dozens
+    /// of comments drops no signatures again as it shows anew.
+    private static var keys: [Int: Int] = [:]
+
     /// A body's HTML as heights are kept for it: without the signatures of
     /// its media links, which change on every read.
-    static func key(_ html: String) -> Int { SignedLinks.withoutSignatures(html).hashValue }
+    static func key(_ html: String) -> Int {
+        let hash = html.hashValue
+        if let key = keys[hash] { return key }
+        let key = SignedLinks.withoutSignatures(html).hashValue
+        keys[hash] = key
+        return key
+    }
 
     private static func heightKey(_ bodyId: String, _ html: Int, _ width: CGFloat, _ textSize: CGFloat) -> String {
         "\(bodyId) \(html) \(Int(width.rounded())) \(Int((textSize * 10).rounded()))"

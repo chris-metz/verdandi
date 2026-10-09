@@ -187,8 +187,7 @@ struct BodyWebView: UIViewRepresentable {
             switch problem {
             case .unreachable: "GitHub could not be reached"
             case .unavailable: "GitHub no longer shows it"
-            case .interrupted: "Could not be read again"
-            case .error: "Could not be read again"
+            case .interrupted, .error: "Could not be read again"
             }
         }
 
