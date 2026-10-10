@@ -65,7 +65,7 @@ public final class GitHubAPI: GitHubTransport {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 60
         configuration.waitsForConnectivity = false
-        session = URLSession(configuration: configuration)
+        session = URLSession(configuration: configuration, delegate: RedirectsWithinAPI(), delegateQueue: nil)
     }
 
     public func tokenSource() -> TokenSource? {
@@ -120,5 +120,22 @@ public final class GitHubAPI: GitHubTransport {
 
     static func encode(_ text: String) -> String {
         text.addingPercentEncoding(withAllowedCharacters: unreserved) ?? text
+    }
+}
+
+/// Follows a redirect only within GitHub's API over HTTPS, as a renamed
+/// repository's `repositories/{id}` leads: the request carries the token,
+/// which must never go to another host. Any other redirect is answered as
+/// it came, which the core reads as GitHub's answer.
+final class RedirectsWithinAPI: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        Self.allows(request.url) ? request : nil
+    }
+
+    static func allows(_ url: URL?) -> Bool {
+        url?.scheme == "https" && url?.host()?.lowercased() == "api.github.com"
     }
 }
