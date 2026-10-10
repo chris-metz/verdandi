@@ -256,6 +256,8 @@ private struct DeviceFlowSection: View {
 
     @State private var step = Step.idle
     @State private var task: Task<Void, Never>?
+    /// Which attempt is the latest, so that an older one says nothing.
+    @State private var attempt = 0
     @State private var copied = false
     /// The code, large enough to read across a desk, and larger with the
     /// text size.
@@ -397,22 +399,32 @@ private struct DeviceFlowSection: View {
     /// entered it, then signs in with it.
     private func begin() {
         task?.cancel()
+        attempt += 1
+        let current = attempt
         step = .requesting
         copied = false
         task = Task {
+            // A cancelled attempt, or one a newer replaced, says nothing:
+            // its last request fails as it is cancelled, not as GitHub
+            // failed it.
+            @MainActor func show(_ next: Step) {
+                guard !Task.isCancelled, current == attempt else { return }
+                step = next
+            }
             do {
                 let code = try await flow.requestCode()
-                step = .waiting(code)
+                show(.waiting(code))
                 let token = try await flow.token(for: code)
-                step = .signingIn
+                guard !Task.isCancelled, current == attempt else { return }
+                show(.signingIn)
                 try await model.signIn(token: token)
                 if case .blocked = model.setup {
-                    step = .failed("GitHub did not accept the token it handed out. Try again.")
+                    show(.failed("GitHub did not accept the token it handed out. Try again."))
                 }
             } catch is CancellationError {
                 // Cancelled, or the screen went: nothing to say.
             } catch {
-                step = .failed(error.localizedDescription)
+                show(.failed(error.localizedDescription))
             }
         }
     }

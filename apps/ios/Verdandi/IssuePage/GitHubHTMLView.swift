@@ -242,9 +242,14 @@ struct BodyHTMLView: View {
     private func open(_ link: IssueLink) async -> URL? {
         failure = nil
         guard let core = model.core else { return nil }
+        // Where the user was as they tapped: once they moved on, the issue
+        // found opens nowhere, rather than over a page no longer shown.
+        let selected = model.selectedIssue
+        let path = model.issuePath
         do {
             switch try await core.lookUpIssue(link.repository, number: link.number) {
             case .found(let issue):
+                guard model.selectedIssue == selected, model.issuePath == path else { return nil }
                 model.openIssue(
                     IssueRoute(id: issue.id, reference: issue.reference, title: issue.title, url: issue.url),
                     fromPage: true)

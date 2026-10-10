@@ -36,8 +36,19 @@ app="$derived/Build/Products/Debug-iphonesimulator/Verdandi.app"
 xcrun simctl install "$device" "$app"
 xcrun simctl terminate "$device" io.github.chris-metz.verdandi 2>/dev/null || true
 GH_TOKEN="$token" scripts/dev-token.sh "$device" put
-for name in $(env | sed -n 's/^\(VERDANDI_[A-Z_]*\)=.*/\1/p'); do
+# Not these: the Simulator logs a launch's environment, and the first
+# would carry a token, the second keep the token's file for good.
+for name in $(env | sed -n 's/^\(VERDANDI_[A-Z_]*\)=.*/\1/p' | grep -v -e '^VERDANDI_SIGN_IN$' -e '^VERDANDI_KEEP_DEV_TOKEN$'); do
   eval "export SIMCTL_CHILD_$name=\"\$$name\""
 done
 xcrun simctl launch "$device" io.github.chris-metz.verdandi >/dev/null
 echo "Launched Verdandi on $device"
+# The app deletes the token's file as it reads it at launch; one it did
+# not read, as it crashed first, goes too, rather than wait for a launch
+# from Xcode.
+container=$(xcrun simctl get_app_container "$device" io.github.chris-metz.verdandi data)
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -e "$container/tmp/verdandi-dev-token" ] || exit 0
+  sleep 1
+done
+scripts/dev-token.sh "$device" remove
