@@ -50,7 +50,10 @@ struct RepositoryPickerView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.asciiCapable)
-            .onSubmit(of: .search) { add() }
+            .onSubmit(of: .search) {
+                picker.selectTyped(in: suggestions.repositories)
+                add()
+            }
             .safeAreaBar(edge: .top) {
                 if suggestions.owners.count > 1 {
                     OwnerFilter(owners: suggestions.owners, owner: $picker.owner)

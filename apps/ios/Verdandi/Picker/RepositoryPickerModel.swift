@@ -195,6 +195,17 @@ final class RepositoryPickerModel {
         }
     }
 
+    /// Return with nothing checked adds the repository typed exactly, as
+    /// one types an address to add it: the suggestion of that name, or the
+    /// one GitHub found by it.
+    func selectTyped(in suggestions: [PickerRepository]) {
+        guard selected.isEmpty, let typed = typedAddress else { return }
+        var found = suggestions.first { $0.repository.sameRepository(as: typed) }
+        if found == nil, case .done(_, .found(let checked))? = checks[Self.key(typed)] { found = checked }
+        guard let found, !found.tracked, found.unavailable == nil else { return }
+        selected.append(found)
+    }
+
     // MARK: Adding
 
     /// Adds the repositories checked. Those added leave the selection; the

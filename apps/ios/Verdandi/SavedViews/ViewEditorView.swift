@@ -58,6 +58,7 @@ struct ViewEditorView: View {
                 }
                 Section("Name") {
                     TextField("Name", text: $name, selection: $nameSelection, prompt: Text("Open bugs"))
+                        .accessibilityLabel("Name")
                         .focused($focus, equals: .name)
                         .submitLabel(.next)
                         .onSubmit { focus = .search }
@@ -67,6 +68,7 @@ struct ViewEditorView: View {
                         "GitHub search", text: $query, selection: $querySelection,
                         prompt: Text("is:open label:bug"), axis: .vertical
                     )
+                    .accessibilityLabel("GitHub search")
                     .font(.body.monospaced())
                     .lineLimit(3...8)
                     .textInputAutocapitalization(.never)
