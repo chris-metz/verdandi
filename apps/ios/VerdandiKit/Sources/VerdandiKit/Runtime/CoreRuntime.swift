@@ -34,6 +34,16 @@ public final class CoreRuntime: @unchecked Sendable {
 
     public typealias EventHandler = @Sendable (_ name: String, _ payload: Data) -> Void
 
+    /// The last exception nothing caught, until it is taken: only touched
+    /// on the runtime's queue.
+    private final class Uncaught: @unchecked Sendable {
+        var last: String?
+        func take() -> String? {
+            defer { last = nil }
+            return last
+        }
+    }
+
     static let log = Logger(subsystem: "io.github.chris-metz.verdandi", category: "core")
 
     private let queue = DispatchQueue(label: "io.github.chris-metz.verdandi.core", qos: .userInitiated)
@@ -55,13 +65,19 @@ public final class CoreRuntime: @unchecked Sendable {
         try queue.sync {
             guard let context = JSContext() else { throw Failure(message: "JavaScriptCore could not start.") }
             context.name = "Verdandi core"
+            // A handler of its own keeps JavaScriptCore from setting
+            // `context.exception`, so it keeps the last one itself, for
+            // loading and starting to tell.
+            let uncaught = Uncaught()
             context.exceptionHandler = { _, exception in
-                Self.log.error("Uncaught: \(exception?.toString() ?? "?", privacy: .public)")
+                let text = exception?.toString() ?? "?"
+                uncaught.last = text
+                Self.log.error("Uncaught: \(text, privacy: .public)")
             }
             context.setObject(self.natives(in: context), forKeyedSubscript: "__native" as NSString)
             context.evaluateScript(script, withSourceURL: URL(string: "verdandi://core.js"))
-            if let exception = context.exception {
-                throw Failure(message: "The core could not load: \(exception.toString() ?? "?")")
+            if let exception = uncaught.take() {
+                throw Failure(message: "The core could not load: \(exception)")
             }
             guard let host = context.objectForKeyedSubscript("__host"), host.isObject else {
                 throw Failure(message: "The core's bundle has no host.")
@@ -69,8 +85,8 @@ public final class CoreRuntime: @unchecked Sendable {
             self.context = context
             self.host = host
             host.invokeMethod("start", withArguments: [optionsJSON])
-            if let exception = context.exception {
-                throw Failure(message: "The core could not start: \(exception.toString() ?? "?")")
+            if let exception = uncaught.take() {
+                throw Failure(message: "The core could not start: \(exception)")
             }
         }
     }

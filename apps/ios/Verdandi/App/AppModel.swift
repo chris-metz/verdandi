@@ -163,7 +163,14 @@ final class AppModel {
         }
         themes = await core.themes()
         await attempt { self.config = try await core.getConfig() }
-        await attempt { self.setup = try await core.getSetup() }
+        // Without its setup, nothing else could show: a core that answers
+        // nothing is a core that did not start.
+        do {
+            setup = try await core.getSetup()
+        } catch {
+            phase = .failed("The core does not answer: \(error.localizedDescription)")
+            return
+        }
         await attempt { self.sidebar = try await core.getSidebar() }
         await attempt { self.recentIssues = try await core.getRecentIssues() }
         await attempt { self.rateLimits = try await core.getRateLimits() }
@@ -195,11 +202,18 @@ final class AppModel {
         switch event {
         case .setupChanged(let setup): self.setup = setup
         case .notice(let notice): show(notice)
-        case .listChanged(let list): lists[list.scope] = list
+        case .listChanged(let list):
+            let wasBusy = lists[list.scope]?.loading.state.isBusy ?? true
+            lists[list.scope] = list
+            if wasBusy, !list.loading.state.isBusy { resumePageBeside() }
         case .issuePageChanged(let page):
+            let wasBusy = pages[page.issueId].map(Self.busy) ?? true
             pages[page.issueId] = page
-            resumeListBeside(page)
-        case .viewChanged(let list): views[list.view.id] = list
+            if wasBusy, !Self.busy(page) { resumeListBeside(page) }
+        case .viewChanged(let list):
+            let wasBusy = views[list.view.id].map(Self.busy) ?? true
+            views[list.view.id] = list
+            if wasBusy, !Self.busy(list) { resumePageBeside() }
         case .sidebarChanged(let sidebar):
             self.sidebar = sidebar
             dropGoneSelection()
@@ -356,13 +370,38 @@ final class AppModel {
     /// On an iPad, the list stays beside the issue page; but the core reads
     /// only the screen shown, and stops reading the list as the page opens.
     /// Once the page has loaded, the list is shown to the core again, so that
-    /// it finishes loading too.
+    /// it finishes loading too; once only, as the page stops being read, and
+    /// never while its blocking map explores, which showing the list stops.
     private func resumeListBeside(_ page: IssuePage) {
-        guard listBesideIssue, case .issue(let id) = coreScreen, id == page.issueId,
-            !page.loading.isBusy, let selection, !settled(selection)
+        guard listBesideIssue, coreScreen == .issue(id: page.issueId), let selection, !settled(selection)
         else { return }
         let screen = selection.screen
         Task { await show(screen) }
+    }
+
+    /// The other way round: a list the user changed beside the issue page,
+    /// such as one whose issue they expanded, became the core's screen and
+    /// left the page's last reads undone. Once the list has loaded, the page
+    /// is shown to the core again.
+    private func resumePageBeside() {
+        guard listBesideIssue, let selection, coreScreen == selection.screen,
+            case .issue(let id)? = shownScreen, pages[id].map(Self.busy) ?? true
+        else { return }
+        Task { await show(.issue(id: id)) }
+    }
+
+    /// Whether a page is still being read: itself, or its blocking map.
+    private static func busy(_ page: IssuePage) -> Bool {
+        if page.loading.isBusy { return true }
+        guard let ends = page.blockingMap?.ends else { return false }
+        return BlockingSide.allCases.contains { side in
+            if case .loading = ends[side] { return true }
+            return false
+        }
+    }
+
+    private static func busy(_ view: ViewList) -> Bool {
+        view.loading.isBusy || view.readingContext
     }
 
     /// Whether a sidebar entry's list has loaded all it shows.
@@ -370,9 +409,10 @@ final class AppModel {
         switch item {
         case .view(let id):
             guard let view = views[id] else { return false }
-            return !view.loading.isBusy && !view.readingContext
+            return !Self.busy(view)
         default:
-            guard let scope = item.scope, let list = lists[scope] else { return false }
+            // The core may spell the repository's name in another case.
+            guard let scope = item.scope, let list = list(for: scope) else { return false }
             return !list.loading.state.isBusy
         }
     }

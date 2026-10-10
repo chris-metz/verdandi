@@ -151,10 +151,38 @@ let signedIn: @Sendable (GitHubRequest) -> GitHubOutcome = { request in
         #expect(url?.absoluteString == "https://api.github.com/search/issues?q=label%3A%22c%2B%2B%22%20is%3Aopen&page=2")
     }
 
+    @Test func followsRedirectsOnlyWithinTheAPI() {
+        #expect(RedirectsWithinAPI.allows(URL(string: "https://api.github.com/repositories/42")))
+        #expect(!RedirectsWithinAPI.allows(URL(string: "https://example.com/repositories/42")))
+        #expect(!RedirectsWithinAPI.allows(URL(string: "http://api.github.com/repositories/42")))
+        #expect(!RedirectsWithinAPI.allows(URL(string: "https://api.github.com.evil.example/")))
+    }
+
     @Test func readsRepositoryAddresses() {
         #expect(RepositoryAddress(parsing: "chris-metz/verdandi") == .init(owner: "chris-metz", name: "verdandi"))
         #expect(RepositoryAddress(parsing: "https://github.com/chris-metz/verdandi/issues") == .init(owner: "chris-metz", name: "verdandi"))
         #expect(RepositoryAddress(parsing: "chris-metz") == nil)
         #expect(RepositoryAddress(parsing: "a/b/c") == nil)
+    }
+}
+
+@Suite struct StartingTheCore {
+    @Test func failsWhenTheBundleThrows() {
+        #expect(throws: CoreRuntime.Failure.self) {
+            try Core(
+                script: "throw new Error('broken bundle')",
+                options: .init(home: "/tmp", interfaceFont: "SF Pro", codeFont: "SF Mono", installedFonts: []),
+                github: FakeGitHub(answer: signedIn))
+        }
+    }
+
+    @Test func failsWhenTheHostCannotStart() {
+        let script = "globalThis.__host = { start() { throw new Error('no core') } };"
+        #expect(throws: CoreRuntime.Failure.self) {
+            try Core(
+                script: script,
+                options: .init(home: "/tmp", interfaceFont: "SF Pro", codeFont: "SF Mono", installedFonts: []),
+                github: FakeGitHub(answer: signedIn))
+        }
     }
 }
