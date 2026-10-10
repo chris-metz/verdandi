@@ -78,8 +78,10 @@ struct BlockingMapView: View {
 
     // MARK: - Layout
 
-    /// On a narrow screen, each swipe comes to rest on a column.
-    private var compact: Bool { sizeClass == .compact }
+    /// On a narrow screen, each swipe comes to rest on a column: an
+    /// iPhone's, or an iPad's column as narrow as one, as the issue page is
+    /// beside the sidebar and the list in portrait.
+    private var compact: Bool { sizeClass == .compact || (width > 0 && width < 560) }
 
     private var layout: BlockingMapLayout {
         let metrics = BlockingMapMetrics(
@@ -359,7 +361,17 @@ private struct BlockingMapCanvas: View {
         else { return }
         let lowest = -margin
         let highest = max(lowest, scrolled.contentWidth + margin - visible.width)
-        let target = min(max(rootCentre - (anchor ?? visible.width / 2), lowest), highest)
+        // At first, a map with one side only opens on that side, from the
+        // issue; one with both opens with the issue in the middle.
+        let opening: CGFloat =
+            if !layout.nodes.contains(where: { $0.step < 0 }) {
+                lowest
+            } else if !layout.nodes.contains(where: { $0.step > 0 }) {
+                highest
+            } else {
+                rootCentre - visible.width / 2
+            }
+        let target = min(max(anchor.map { rootCentre - $0 } ?? opening, lowest), highest)
         // While a scroll of its own animates, only a new target counts.
         let heading = phase == .animating ? requested ?? visible.minX : visible.minX
         guard abs(target - heading) > 0.5 else { return }
