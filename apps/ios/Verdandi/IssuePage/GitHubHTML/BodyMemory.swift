@@ -3,9 +3,10 @@ import VerdandiKit
 
 /// The images bodies show from elsewhere than GitHub's media hosts, each
 /// loaded once the user asked, by its address (ADR 0003), as a `data:`
-/// address that the bodies' policy lets show. One loaded stays so for the
-/// session, so that asking for it again, in another body or when a page
-/// shows again, reads nothing again.
+/// address that the bodies' policy lets show. One loaded stays so while
+/// they fit `budget`, so that asking for it again, in another body or when
+/// a page shows again, reads nothing again; past it, the ones loaded first
+/// go, and show as placeholders again.
 @MainActor
 final class ThirdPartyImages {
     static let shared = ThirdPartyImages()
@@ -15,13 +16,22 @@ final class ThirdPartyImages {
         case failed(String)
     }
 
+    /// The characters of `data:` addresses kept at most: about 48 MB of
+    /// images, a few of the largest an image may be.
+    private let budget = 64 * 1024 * 1024
+
+    /// The loads under way, which a second ask for the same image waits for.
     private var loads: [URL: Task<Outcome, Never>] = [:]
 
     /// The images loaded, as `data:` addresses by their own.
     private(set) var loaded: [String: String] = [:]
+    /// Their addresses, loaded first first.
+    private var order: [String] = []
+    private var size = 0
 
     /// Loads the image at `url`, unless it is loaded or loading already.
     func load(_ url: URL) async -> Outcome {
+        if let dataURL = loaded[url.absoluteString] { return .loaded(dataURL: dataURL) }
         let task =
             loads[url]
             ?? Task.detached {
@@ -32,11 +42,20 @@ final class ThirdPartyImages {
             }
         loads[url] = task
         let outcome = await task.value
-        switch outcome {
-        case .loaded(let dataURL): loaded[url.absoluteString] = dataURL
-        case .failed: loads[url] = nil
-        }
+        loads[url] = nil
+        if case .loaded(let dataURL) = outcome { keep(dataURL, for: url.absoluteString) }
         return outcome
+    }
+
+    private func keep(_ dataURL: String, for address: String) {
+        guard loaded[address] == nil else { return }
+        loaded[address] = dataURL
+        order.append(address)
+        size += dataURL.utf8.count
+        while size > budget, order.count > 1 {
+            let oldest = order.removeFirst()
+            size -= loaded.removeValue(forKey: oldest)?.utf8.count ?? 0
+        }
     }
 }
 

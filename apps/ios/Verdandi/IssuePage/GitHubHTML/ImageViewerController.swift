@@ -300,22 +300,53 @@ extension ImageViewerController: UIGestureRecognizerDelegate {
 
 extension UIImage {
     /// An image from its bytes, moving as a GIF or animated PNG does: the
-    /// viewer shows it at its own pixels, which it zooms from.
+    /// viewer shows it at its own pixels, which it zooms from. Decoded, an
+    /// image can take far more memory than its file: a 10 MB GIF of 300
+    /// frames at 2560×1600 would take 5 GB. So each frame is decoded at
+    /// most so large that all of them fit `budget` bytes, and a long
+    /// animation shows every other frame, or fewer, rather than shrink to
+    /// a blur.
     nonisolated static func decoded(from data: Data) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return UIImage(data: data) }
+        let budget = 160 * 1024 * 1024
+        let largest = 4096
+        let smallest = 360
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
         let count = CGImageSourceGetCount(source)
-        guard count > 1 else { return UIImage(data: data) }
+        guard count > 0 else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? largest
+        let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? largest
+        let own = max(width, height, 1)
+        let aspect = Double(min(width, height, own)) / Double(own)
+        // The longest side that lets `frames` frames fit the budget.
+        func side(for frames: Int) -> Int {
+            let pixels = Double(budget) / 4 / Double(max(frames, 1))
+            return min(own, largest, Int((pixels / max(aspect, 0.01)).squareRoot()))
+        }
+        var step = 1
+        while count / step > 1, side(for: (count + step - 1) / step) < min(smallest, own) { step += 1 }
+        let maxSide = side(for: (count + step - 1) / step)
+        let options =
+            [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxSide,
+            ] as CFDictionary
+        guard count > 1 else {
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
+        }
         var frames: [UIImage] = []
         var duration: Double = 0
-        // A few hundred frames at most, so that a long GIF does not fill
-        // the memory.
-        for index in 0..<min(count, 300) {
-            guard let frame = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+        for index in stride(from: 0, to: count, by: step) {
+            // The frames left out still take their time.
+            for skipped in index..<min(index + step, count) { duration += frameDuration(source, at: skipped) }
+            guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, options) else { continue }
             frames.append(UIImage(cgImage: frame))
-            duration += frameDuration(source, at: index)
         }
-        guard !frames.isEmpty else { return UIImage(data: data) }
-        return UIImage.animatedImage(with: frames, duration: duration)
+        guard !frames.isEmpty else { return nil }
+        return frames.count == 1 ? frames[0] : UIImage.animatedImage(with: frames, duration: duration)
     }
 
     private nonisolated static func frameDuration(_ source: CGImageSource, at index: Int) -> Double {
