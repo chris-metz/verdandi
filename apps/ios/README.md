@@ -45,6 +45,12 @@ The UI tests (`VerdandiUITests/`) tap through the ways every user takes, on the 
 
 To run it on an iPhone or iPad, open the project, choose the device and Run. It is signed for the team in `project.yml`.
 
+## Getting it onto devices
+
+For now, the app goes onto an iPhone or iPad from Xcode, as above. Next comes TestFlight, so that updates arrive without a cable and a few others can try it ([#84](https://github.com/chris-metz/verdandi/issues/84)); later, the App Store ([#85](https://github.com/chris-metz/verdandi/issues/85)).
+
+What else is open for the iOS app is in issues [#86](https://github.com/chris-metz/verdandi/issues/86) to [#90](https://github.com/chris-metz/verdandi/issues/90): keeping its Swift contract in step with the core's, signing in with GitHub, sharing tracked repositories between devices, a blocking-map bug in the core, and trying it on a real device.
+
 ## Signing in
 
 iOS has no `gh`, so the app signs in itself: with a personal access token, kept in the Keychain. A classic token needs the `repo` and `read:org` scopes; a fine-grained one needs read access to Issues and Metadata of the repositories to track. With a GitHub OAuth App's client ID in `VerdandiGitHubClientID` (`project.yml`), it also offers **Sign in with GitHub**, GitHub's device flow (`VerdandiKit/…/GitHub/DeviceFlow.swift`): the OAuth App needs **Enable Device Flow** ticked, and no secret, as the app keeps none.
