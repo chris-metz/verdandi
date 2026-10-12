@@ -1,8 +1,10 @@
 // Bundles the core with its iOS host into one script for JavaScriptCore:
 // `Verdandi/Resources/core.js`, which the app loads at launch. Node's
-// modules are replaced by the host's stand-ins in `host/shims/`.
+// modules are replaced by the host's stand-ins in `host/shims/`. With
+// `--contract`, it bundles the host on the core's GitHub in memory instead,
+// into `build/contract-core.js`, for VerdandiKit's `ContractTests`.
 //
-//   node scripts/bundle.mjs [output]
+//   node scripts/bundle.mjs [--contract] [output]
 
 import { build } from "esbuild";
 import { dirname, join, resolve } from "node:path";
@@ -10,12 +12,21 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shims = join(root, "host/shims");
+const args = process.argv.slice(2);
+const contract = args[0] === "--contract";
+if (contract) args.shift();
 const output = resolve(
-  process.argv[2] ?? join(root, "Verdandi/Resources/core.js"),
+  args[0] ??
+    join(
+      root,
+      contract ? "build/contract-core.js" : "Verdandi/Resources/core.js",
+    ),
 );
 
 await build({
-  entryPoints: [join(root, "host/entry.ts")],
+  entryPoints: [
+    join(root, contract ? "host/testing/contract-entry.ts" : "host/entry.ts"),
+  ],
   outfile: output,
   bundle: true,
   format: "iife",
@@ -36,4 +47,6 @@ await build({
   sourcemap: "inline",
   logLevel: "warning",
 });
-console.log(`Bundled the core for iOS into ${output}`);
+console.log(
+  `Bundled the core for ${contract ? "the contract tests" : "iOS"} into ${output}`,
+);

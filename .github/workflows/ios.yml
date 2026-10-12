@@ -1,0 +1,31 @@
+# Builds the iOS app and runs VerdandiKit's tests on every push. The app's
+# Swift types mirror the core's contract by hand, which the desktop's
+# typecheck cannot see; the contract tests among VerdandiKit's catch them
+# drifting apart (apps/ios/README.md).
+name: iOS
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    # VerdandiKit's tests run on the Mac itself, which needs macOS 26 as the
+    # app needs iOS 26.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      # Node and pnpm in the versions pinned in mise.toml.
+      - uses: jdx/mise-action@v5
+      - run: pnpm install --frozen-lockfile
+      - run: brew install xcodegen
+      - name: Build the app for the Simulator
+        working-directory: apps/ios
+        run: |
+          scripts/generate.sh
+          xcodebuild -project Verdandi.xcodeproj -scheme Verdandi \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build -quiet
+      - run: apps/ios/scripts/test-kit.sh

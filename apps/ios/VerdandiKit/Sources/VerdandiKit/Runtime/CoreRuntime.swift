@@ -108,11 +108,12 @@ public final class CoreRuntime: @unchecked Sendable {
         }
     }
 
-    /// Calls a function of the host that answers at once, such as `themes`.
-    public func call(_ function: String) async -> String? {
+    /// Calls a function of the host that answers at once, such as `themes`,
+    /// with its arguments as strings.
+    public func call(_ function: String, _ arguments: [String] = []) async -> String? {
         await withCheckedContinuation { continuation in
             queue.async { [self] in
-                continuation.resume(returning: host?.invokeMethod(function, withArguments: [])?.toString())
+                continuation.resume(returning: host?.invokeMethod(function, withArguments: arguments)?.toString())
             }
         }
     }

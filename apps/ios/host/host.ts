@@ -11,6 +11,7 @@ import {
   createGhAdapter,
   createLocalStateFile,
   createSettingsFile,
+  type GitHubAccess,
   type HostEnvironment,
   type TokenSource,
 } from "@verdandi/core";
@@ -92,8 +93,14 @@ function nativeGitHub(): GitHubHttp & {
   };
 }
 
-/** Creates the host; the app must have set the native functions first. */
-export function createHost(): Host {
+/**
+ * Creates the host; the app must have set the native functions first.
+ * `ContractTests` gives the core GitHub of its own, in memory, in place of
+ * the app's.
+ */
+export function createHost({
+  access,
+}: { access?: (gh: string) => GitHubAccess } = {}): Host {
   const github = nativeGitHub();
   let core: (Contract & { dispose(): void }) | undefined;
 
@@ -109,7 +116,7 @@ export function createHost(): Host {
       };
       const runCommand = createHttpGh(github);
       const started = createCore({
-        github: (gh) => createGhAdapter({ runCommand, gh }),
+        github: access ?? ((gh) => createGhAdapter({ runCommand, gh })),
         runCommand,
         host,
         settings: createSettingsFile(host),

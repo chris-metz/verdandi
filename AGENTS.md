@@ -2,6 +2,8 @@
 
 The repository is a pnpm workspace: the Electron app in `apps/desktop`, its TypeScript core in `packages/core`, and the iPhone and iPad app in `apps/ios`, which runs the same core on JavaScriptCore (see `apps/ios/README.md`).
 
+The iOS app reads the core's contract (`packages/core/src/contract.ts`) through Swift types that mirror it by hand, in `apps/ios/VerdandiKit/Sources/VerdandiKit/Contract/`. After a change to the contract, update the Swift types in the same commit; the contract tests (`ContractTests.swift`, which `apps/ios/scripts/test-kit.sh` runs) fail on any payload Swift cannot read.
+
 ## Git workflow
 
 For now, commit and push directly to `main`. Before every push to `main`, run `pnpm check` (typecheck, lint, format check and tests), and push only when it passes.

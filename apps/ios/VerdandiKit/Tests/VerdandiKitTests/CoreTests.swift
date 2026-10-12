@@ -27,13 +27,23 @@ func json(_ object: Any) -> String {
     String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
 
-/// The bundle, as `scripts/test-kit.sh` builds it before the tests run.
-func coreScript() throws -> String {
+/// A bundle `scripts/test-kit.sh` builds before the tests run, at a path
+/// below `apps/ios`, unless the environment names another.
+func bundledScript(_ path: String, unless variable: String) throws -> String {
     let path =
-        ProcessInfo.processInfo.environment["VERDANDI_CORE_JS"]
-        ?? URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../Verdandi/Resources/core.js")
-        .standardized.path()
+        ProcessInfo.processInfo.environment[variable]
+        ?? URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../\(path)").standardized.path()
     return try String(contentsOfFile: path, encoding: .utf8)
+}
+
+/// The bundle, as the app runs it.
+func coreScript() throws -> String {
+    try bundledScript("Verdandi/Resources/core.js", unless: "VERDANDI_CORE_JS")
+}
+
+/// What the tests start the core with, in a home of its own.
+func testOptions(home: URL) -> CoreRuntime.Options {
+    .init(home: home.path(), interfaceFont: "SF Pro", codeFont: "SF Mono", installedFonts: ["SF Pro", "SF Mono"])
 }
 
 func temporaryHome() throws -> URL {
@@ -43,10 +53,7 @@ func temporaryHome() throws -> URL {
 }
 
 func startCore(home: URL, github: FakeGitHub) throws -> Core {
-    try Core(
-        script: try coreScript(),
-        options: .init(home: home.path(), interfaceFont: "SF Pro", codeFont: "SF Mono", installedFonts: ["SF Pro", "SF Mono"]),
-        github: github)
+    try Core(script: try coreScript(), options: testOptions(home: home), github: github)
 }
 
 let signedIn: @Sendable (GitHubRequest) -> GitHubOutcome = { request in

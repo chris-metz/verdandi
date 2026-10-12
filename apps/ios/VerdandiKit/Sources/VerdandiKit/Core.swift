@@ -48,21 +48,33 @@ public struct Theme: Decodable, Hashable, Sendable, Identifiable {
 /// The core, as the app uses it: the contract's requests as typed async
 /// functions, and its events as one stream, in the order pushed.
 public final class Core: Sendable {
-    private let runtime: CoreRuntime
+    let runtime: CoreRuntime
     /// The core's events. Read it from one place only.
     public let events: AsyncStream<CoreEvent>
 
     static let log = Logger(subsystem: "io.github.chris-metz.verdandi", category: "events")
 
     /// Starts the core from its bundle.
-    public init(script: String, options: CoreRuntime.Options, github: any GitHubTransport) throws {
+    public convenience init(script: String, options: CoreRuntime.Options, github: any GitHubTransport) throws {
+        try self.init(script: script, options: options, github: github) { _, _ in }
+    }
+
+    /// Starts the core, telling `read` of each event as it is read, or why
+    /// it could not be: `ContractTests` fails on that.
+    init(
+        script: String, options: CoreRuntime.Options, github: any GitHubTransport,
+        read: @escaping @Sendable (_ name: String, _ event: Result<CoreEvent?, any Error>) -> Void
+    ) throws {
         let (events, continuation) = AsyncStream.makeStream(of: CoreEvent.self, bufferingPolicy: .unbounded)
         self.events = events
         runtime = try CoreRuntime(script: script, options: options, github: github) { name, payload in
             // Read on the core's queue, so the main actor only takes it.
-            do {
-                if let event = try CoreEvent.decode(name: name, payload: payload) { continuation.yield(event) }
-            } catch {
+            let event = Result { try CoreEvent.decode(name: name, payload: payload) }
+            read(name, event)
+            switch event {
+            case .success(let event?): continuation.yield(event)
+            case .success(nil): break
+            case .failure(let error):
                 Self.log.error("Cannot read \(name, privacy: .public): \(String(describing: error), privacy: .public)")
             }
         }

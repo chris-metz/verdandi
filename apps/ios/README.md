@@ -20,7 +20,7 @@ GitHubAPI (Swift): HTTPS to api.github.com with the token from the Keychain
 ```
 
 - `host/` (TypeScript) bundles the core for JavaScriptCore. The core still runs `gh`; `http-gh.ts` answers `gh --version`, `gh auth status` and `gh api` over HTTPS instead, so the core's `gh` adapter reads its answers as it reads gh's. Node's file system, paths, hashing and timers are stand-ins in `host/shims/` and `host/polyfills.ts`, answered by the app through `globalThis.__native`. `scripts/bundle.mjs` bundles it into `Verdandi/Resources/core.js`; Xcode runs it before each build.
-- `VerdandiKit/` (Swift package): `CoreRuntime` runs `core.js` on one queue and answers the host; `Core` is the contract (`packages/core/src/contract.ts`) as typed async functions and a stream of `CoreEvent`s; `Contract/` holds the contract's types under the same names (`Label` is `IssueLabel`). `BlockingMap/` lays out the issue page's blocking map: where its cards, ends and arrows go, pure logic with its tests. `GitHubAPI` sends the core's requests with the token; the core never sees it. `Credentials` keeps the token in the Keychain, on this device only, or takes `GH_TOKEN` from the environment for development.
+- `VerdandiKit/` (Swift package): `CoreRuntime` runs `core.js` on one queue and answers the host; `Core` is the contract (`packages/core/src/contract.ts`) as typed async functions and a stream of `CoreEvent`s; `Contract/` holds the contract's types under the same names (`Label` is `IssueLabel`), by hand. A tag of a union the contract does not have fails to decode rather than pass for another case, so that `ContractTests` catches the two drifting apart: it runs the core on JavaScriptCore with the core's GitHub in memory (`FakeGitHub`, in the world `host/testing/contract-entry.ts` declares, bundled into `build/contract-core.js`), makes every request the app makes and reads every answer and event. `BlockingMap/` lays out the issue page's blocking map: where its cards, ends and arrows go, pure logic with its tests. `GitHubAPI` sends the core's requests with the token; the core never sees it. `Credentials` keeps the token in the Keychain, on this device only, or takes `GH_TOKEN` from the environment for development.
 - `Verdandi/` (the app): `App/AppModel.swift` keeps what the core pushed (lists, views, pages, sidebar, setup, rate limits, config) and where the user is, and tells the core what is on screen as the user moves (`openShown`). Each feature has its folder: `Sidebar/`, `Lists/`, `IssuePage/`, `Picker/`, `SavedViews/`, `Settings/`, `Setup/`, `Shell/`. `Design/` holds the palette and the small views every feature shares.
 
 The core's files (`settings.json`, `config.toml`, `desktop/state.json`) live in the app's Application Support folder, as `VERDANDI_HOME` keeps them on the desktop.
@@ -33,11 +33,13 @@ Needs Xcode 26 or later, XcodeGen (`brew install xcodegen`), and `pnpm install` 
 apps/ios/scripts/generate.sh                    # Verdandi.xcodeproj, then open it in Xcode
 apps/ios/scripts/run-simulator.sh "iPhone 18 Pro Max"   # build, install, launch, signed in as gh is
 apps/ios/scripts/snap.sh /tmp/shot.png "iPhone 18 Pro Max" 3
-apps/ios/scripts/test-kit.sh                    # VerdandiKit's tests, on this Mac
+apps/ios/scripts/test-kit.sh                    # VerdandiKit's tests, the contract tests among them, on this Mac
 VERDANDI_LIVE=1 GH_TOKEN="$(gh auth token)" apps/ios/scripts/test-kit.sh --filter Live
 pnpm vitest run --project ios-host              # the host's tests
 apps/ios/scripts/ui-test.sh <device UDID> [SmokeTests]   # tap through the app, screenshots in build/
 ```
+
+GitHub Actions builds the app and runs `test-kit.sh` on macOS on every push (`.github/workflows/ios.yml`).
 
 The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` hands the app gh's token through a file in the app's own folder, which the app deletes once read (`scripts/dev-token.sh`): never through the launch's environment, which the Simulator writes to its logs. It passes any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>`, `VERDANDI_GO_TO=owner/name#12`, `VERDANDI_NOTICE=<text>`, `VERDANDI_MAP_END=blocking` (see `Verdandi/App/LaunchOptions.swift`, and for the lists and the sidebar `Lists/ListLaunchOptions.swift` and `Sidebar/SidebarLaunchOptions.swift`).
 
@@ -49,7 +51,7 @@ To run it on an iPhone or iPad, open the project, choose the device and Run. It 
 
 For now, the app goes onto an iPhone or iPad from Xcode, as above. Next comes TestFlight, so that updates arrive without a cable and a few others can try it ([#84](https://github.com/chris-metz/verdandi/issues/84)); later, the App Store ([#85](https://github.com/chris-metz/verdandi/issues/85)).
 
-What else is open for the iOS app is in issues [#86](https://github.com/chris-metz/verdandi/issues/86) to [#90](https://github.com/chris-metz/verdandi/issues/90): keeping its Swift contract in step with the core's, signing in with GitHub, sharing tracked repositories between devices, a blocking-map bug in the core, and trying it on a real device.
+What else is open for the iOS app is in issues [#87](https://github.com/chris-metz/verdandi/issues/87) to [#90](https://github.com/chris-metz/verdandi/issues/90): signing in with GitHub, sharing tracked repositories between devices, a blocking-map bug in the core, and trying it on a real device.
 
 ## Signing in
 

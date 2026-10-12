@@ -4,9 +4,22 @@ import Foundation
 // the types of `packages/core/src/contract.ts`, under the same names, which
 // the core sends as JSON. A value TypeScript leaves `undefined` is missing
 // from that JSON, so it is optional here. Unions are enums, told apart by
-// the field the core tells them apart by (`kind` or `status`).
+// the field the core tells them apart by (`kind` or `status`); a value of it
+// the contract does not have fails to decode, rather than pass for another
+// case, so that `ContractTests` catches the two drifting apart.
 //
 // `Label` is `IssueLabel` here, as SwiftUI has a `Label` of its own.
+
+extension KeyedDecodingContainer {
+    /// Reads the field a union is told apart by.
+    func tag(_ key: Key) throws -> String { try decode(String.self, forKey: key) }
+
+    /// The error for a union's tag the contract does not have.
+    func unknownTag(_ tag: String, _ key: Key) -> DecodingError {
+        DecodingError.dataCorruptedError(
+            forKey: key, in: self, debugDescription: "The contract has no \(key.stringValue) \"\(tag)\".")
+    }
+}
 
 // MARK: - Accounts and setup
 
@@ -32,13 +45,14 @@ public enum AccountStatus: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
         case "known":
             self = .known(
                 account: try c.decode(Account.self, forKey: .account),
                 tokenSource: try c.decode(TokenSource.self, forKey: .tokenSource))
-        default:
+        case "unconfirmed":
             self = .unconfirmed(message: try c.decode(String.self, forKey: .message))
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 }
@@ -64,10 +78,11 @@ public enum Setup: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
+        case "checking": self = .checking
         case "ready": self = .ready(account: try c.decode(AccountStatus.self, forKey: .account))
         case "blocked": self = .blocked(try c.decode(SetupProblem.self, forKey: .problem))
-        default: self = .checking
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 
@@ -87,14 +102,14 @@ public enum SetupProblem: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
+        case "no-usable-gh": self = .noUsableGh(notUsable: try c.decode([UnusableGh].self, forKey: .notUsable))
         case "signed-out": self = .signedOut
         case "credentials-rejected":
             self = .credentialsRejected(
                 login: try c.decodeIfPresent(String.self, forKey: .login),
                 tokenSource: try c.decode(TokenSource.self, forKey: .tokenSource))
-        default:
-            self = .noUsableGh(notUsable: try c.decodeIfPresent([UnusableGh].self, forKey: .notUsable) ?? [])
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 }
@@ -115,7 +130,8 @@ public enum Notice: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
+        case "gh-replaced": self = .ghReplaced(previous: try c.decode(String.self, forKey: .previous))
         case "account-changed":
             self = .accountChanged(
                 previous: try c.decode(Account.self, forKey: .previous),
@@ -124,8 +140,7 @@ public enum Notice: Decodable, Hashable, Sendable {
             self = .repositoriesRenamed(try c.decode([RepositoryRename].self, forKey: .renamed))
         case "duplicate-repositories-removed":
             self = .duplicateRepositoriesRemoved(try c.decode([RemovedDuplicate].self, forKey: .removed))
-        default:
-            self = .ghReplaced(previous: (try? c.decode(String.self, forKey: .previous)) ?? "")
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 }
@@ -146,9 +161,10 @@ public enum AccessEvidence: Decodable, Hashable, Sendable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let message = try c.decode(String.self, forKey: .message)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
         case "sso": self = .sso(message: message, url: try c.decodeIfPresent(String.self, forKey: .url))
-        default: self = .organizationApproval(message: message)
+        case "organization-approval": self = .organizationApproval(message: message)
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 
@@ -197,7 +213,7 @@ public enum Problem: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
         case "unreachable": self = .unreachable(message: try c.decode(String.self, forKey: .message))
         case "unavailable":
             self = .unavailable(
@@ -205,7 +221,8 @@ public enum Problem: Decodable, Hashable, Sendable {
                 issuesDisabled: try c.decodeIfPresent(Bool.self, forKey: .issuesDisabled) ?? false,
                 nameTakenOver: try c.decodeIfPresent(Bool.self, forKey: .nameTakenOver) ?? false)
         case "interrupted": self = .interrupted
-        default: self = .error(message: try c.decodeIfPresent(String.self, forKey: .message) ?? "Something went wrong.")
+        case "error": self = .error(message: try c.decode(String.self, forKey: .message))
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 
@@ -295,9 +312,10 @@ public enum SidebarEntries: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
         case "read": self = .read(try Read(from: decoder))
-        default: self = .failed(message: try c.decode(String.self, forKey: .message))
+        case "failed": self = .failed(message: try c.decode(String.self, forKey: .message))
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 }
@@ -311,10 +329,11 @@ public enum SettingsStatus: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
         case "writable": self = .writable
+        case "invalid": self = .invalid(message: try c.decode(String.self, forKey: .message))
         case "newer-version": self = .newerVersion(message: try c.decode(String.self, forKey: .message))
-        default: self = .invalid(message: try c.decode(String.self, forKey: .message))
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 
@@ -341,10 +360,11 @@ public enum OpenIssueCount: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
+        case "loading": self = .loading
         case "known": self = .known(try c.decode(Int.self, forKey: .count))
         case "failed": self = .failed(message: try c.decode(String.self, forKey: .message))
-        default: self = .loading
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 
@@ -450,10 +470,11 @@ public enum ViewMatchCount: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
+        case "unknown": self = .unknown
         case "known": self = .known(try c.decode(Int.self, forKey: .count))
         case "rejected": self = .rejected(message: try c.decode(String.self, forKey: .message))
-        default: self = .unknown
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 }
@@ -483,11 +504,12 @@ public enum ViewSave: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .status) {
+        switch try c.tag(.status) {
         case "saved": self = .saved(try c.decode(SavedView.self, forKey: .view))
         case "rejected": self = .rejected(message: try c.decode(String.self, forKey: .message))
         case "unchecked": self = .unchecked(try c.decode(Problem.self, forKey: .problem))
-        default: self = .failed(message: try c.decode(String.self, forKey: .message))
+        case "failed": self = .failed(message: try c.decode(String.self, forKey: .message))
+        case let tag: throw c.unknownTag(tag, .status)
         }
     }
 }
@@ -501,9 +523,10 @@ public enum SidebarEntryKey: Codable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
         case "repository": self = .repository(try c.decode(RepositoryAddress.self, forKey: .repository))
-        default: self = .view(id: try c.decode(String.self, forKey: .id))
+        case "view": self = .view(id: try c.decode(String.self, forKey: .id))
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 
@@ -550,9 +573,10 @@ public enum Scope: Codable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
+        case "all": self = .all
         case "repository": self = .repository(try c.decode(RepositoryAddress.self, forKey: .repository))
-        default: self = .all
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 
@@ -691,10 +715,11 @@ public enum SidebarSelection: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
+        case "all": self = .all
         case "repository": self = .repository(try c.decode(RepositoryAddress.self, forKey: .repository))
         case "view": self = .view(try c.decode(SavedView.self, forKey: .view))
-        default: self = .all
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 }
@@ -707,12 +732,13 @@ public enum RestoredTab: Decodable, Hashable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .kind) {
+        switch try c.tag(.kind) {
         case "entry":
             self = .entry(
                 try c.decode(SidebarSelection.self, forKey: .entry),
                 issues: try c.decode([TabIssue].self, forKey: .issues))
-        default: self = .new
+        case "new": self = .new
+        case let tag: throw c.unknownTag(tag, .kind)
         }
     }
 }
