@@ -6529,7 +6529,7 @@ describe("looking up issues by number", () => {
 });
 
 describe("blocking maps through the contract", () => {
-  it("marks omitted unreadable relationships with a lock even when GitHub reports why it omitted them", async () => {
+  it("marks omitted unreadable relationships with a lock even when GitHub reports why it omitted them, and offers no More for them", async () => {
     const github = createFakeGitHub({ login: "octo" });
     github.addRepository("acme/api", [
       { number: 1, title: "Centre", blockers: ["acme/api#2", "acme/api#3"] },
@@ -6545,7 +6545,7 @@ describe("blocking maps through the contract", () => {
       kind: "inaccessible",
       count: 1,
     });
-    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "none" });
   });
 
   it("shows no edge card while a chain that fits loads, and keeps each end through a refresh", async () => {
@@ -6553,10 +6553,10 @@ describe("blocking maps through the contract", () => {
     github.addRepository("acme/api", [
       { number: 1, title: "Centre", blockers: ["acme/api#2"] },
       { number: 2, title: "Near", blockers: ["acme/api#3"] },
-      { number: 3, title: "Unreadable end" },
+      { number: 3, title: "Two back", blockers: ["acme/api#5"] },
       { number: 4, title: "Waiting", blockers: ["acme/api#1"] },
+      { number: 5, title: "Beyond what is read" },
     ]);
-    github.hide("acme/api#3");
     const core = createTestCore(github);
     const ends: unknown[] = [];
     core.on("issuePageChanged", (page) => {
@@ -6584,7 +6584,7 @@ describe("blocking maps through the contract", () => {
     for (const end of ends) expect(end).toEqual(settled);
   });
 
-  it("keeps an expanded chain unfolded when More reaches an inaccessible branch", async () => {
+  it("ends an expanded chain, without More, when More reaches an inaccessible branch", async () => {
     const github = createFakeGitHub({ login: "octo" });
     github.addRepository("acme/api", [
       { number: 1, title: "Centre", blockers: ["acme/api#2"] },
@@ -6608,9 +6608,9 @@ describe("blocking maps through the contract", () => {
         count: 1,
       });
     });
-    await core.activateBlockingEnd("I_acme/api#1", "blockedBy");
     expect(page.blockingMap?.cards).toHaveLength(4);
-    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+    // What is left cannot be read: Fewer, rather than a More that reads nothing.
+    expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "expanded" });
   });
 
   it("moves a direct blocker outward when exploration finds its longer route and relays out each refreshed list", async () => {
@@ -6719,8 +6719,8 @@ describe("blocking maps through the contract", () => {
       blocking: { kind: "inaccessible", count: 2 },
     });
     expect(pages.at(-1)?.blockingMap?.ends).toEqual({
-      blockedBy: { kind: "unknown" },
-      blocking: { kind: "unknown" },
+      blockedBy: { kind: "none" },
+      blocking: { kind: "none" },
     });
   });
 
@@ -7068,7 +7068,11 @@ it("refreshes all loaded map cards even when a failed relationship list retains 
     "Centre",
     "Blocker",
   ]);
-  expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "unknown" });
+  expect(page.blockingMap?.cards[1]?.badges.blockedBy).toEqual({
+    kind: "inaccessible",
+    count: 1,
+  });
+  expect(page.blockingMap?.ends.blockedBy).toEqual({ kind: "none" });
   expect(page.blockingMap?.problems).not.toEqual([]);
 });
 

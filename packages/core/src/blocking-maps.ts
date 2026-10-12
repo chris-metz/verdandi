@@ -184,16 +184,19 @@ export function createBlockingMaps(
             (!relationships.problem ||
               relationships.problem.kind === "unavailable") &&
             missing > 0;
+          // Relationships GitHub would not show this account stay so when
+          // read again: they leave the side known as far as it can be, with
+          // no More that would read nothing.
           if (missing > 0) {
             badge[side] = {
               kind: inaccessible ? "inaccessible" : "unloaded",
               count: missing,
             };
-            incomplete.add(id);
+            if (!inaccessible) incomplete.add(id);
           }
           if (relationships?.problem) {
             map.problems.push(relationships.problem);
-            incomplete.add(id);
+            if (!inaccessible) incomplete.add(id);
             if (relationships.problem.kind !== "interrupted" && !inaccessible)
               badge[side] = { kind: "failed", problem: relationships.problem };
           }
