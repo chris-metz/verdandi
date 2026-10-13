@@ -17,6 +17,7 @@ import {
 import { issueLocatorOf } from "./go-to-issue";
 import { repositoryChipCell } from "./row-cells";
 import { presentScope, type SidebarScope as Scope } from "./scope";
+import { emptyFind, type FindState } from "./find";
 
 /**
  * A tab over the main area: a sidebar entry's list with the issue pages
@@ -24,6 +25,7 @@ import { presentScope, type SidebarScope as Scope } from "./scope";
  * it yet.
  */
 export interface Tab {
+  find?: FindState;
   /** Tells the tab apart from the others while the window is open. */
   id: number;
   /** Its sidebar entry; none for a new tab. */
@@ -51,6 +53,7 @@ export interface TabState {
 }
 
 export type TabAction =
+  | { kind: "find"; find: FindState }
   /**
    * Shows an entry chosen in the sidebar in the tab shown, its list in
    * place of what the tab showed, also of the entry's own issue pages.
@@ -168,12 +171,15 @@ function stackOf(issues: readonly IssueDestination[]): IssueVisit[] {
 export function updateTabs(state: TabState, action: TabAction): TabState {
   const shown = shownTab(state);
   switch (action.kind) {
+    case "find":
+      return updateShown(state, (tab) => ({ ...tab, find: action.find }));
     case "choose":
       return updateShown(state, (tab) => ({
         ...tab,
         entry: action.entry,
         stack: [],
         from: undefined,
+        ...closeFind(tab),
       }));
     case "choose-in-new-tab":
       return openInBackground(state, action.entry, []);
@@ -236,7 +242,20 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
     case "navigate":
       return updateShown(state, (tab) =>
         tab.entry
-          ? { ...tab, stack: navigateIssues(tab.stack, action.navigation) }
+          ? {
+              ...tab,
+              stack: navigateIssues(tab.stack, action.navigation),
+              ...(action.navigation.kind === "remember"
+                ? {}
+                : action.navigation.kind === "open" && action.navigation.find
+                  ? {
+                      find: {
+                        ...(tab.find ?? emptyFind),
+                        transfer: action.navigation.find,
+                      },
+                    }
+                  : closeFind(tab)),
+            }
           : tab,
       );
     case "open-in-new-tab":
@@ -249,6 +268,7 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
         entry: action.entry,
         stack: navigateIssues([], { kind: "open", issue: action.issue }),
         from: undefined,
+        ...closeFind(tab),
       }));
     case "follow-entries": {
       const follow = (tab: Tab) => followEntry(tab, action.follow);
@@ -263,6 +283,13 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
         : { ...state, tabs, closed };
     }
   }
+}
+
+function closeFind(tab: Tab): Pick<Tab, "find"> {
+  if (!tab.find) return {};
+  const find = { ...tab.find, open: false };
+  delete find.transfer;
+  return { find };
 }
 
 function newTab(id: number, from: RepositoryAddress | undefined): Tab {

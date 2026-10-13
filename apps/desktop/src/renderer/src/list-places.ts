@@ -1,4 +1,5 @@
 import { scopeLabel, type SidebarScope as Scope } from "./scope";
+import { findReveals } from "./find-reveals";
 
 /** Where the user is in a list: its selection and scroll position. */
 export interface ListPlace {
@@ -39,6 +40,7 @@ export function copyPlace(from: number, to: number, scope: Scope): void {
 
 /** A renamed repository's entry keeps its places under its new name. */
 export function movePlace(from: Scope, to: Scope): void {
+  findReveals.moveScope(scopeLabel(from), scopeLabel(to));
   for (const tabPlaces of places.values()) {
     const place = tabPlaces.get(scopeLabel(from));
     if (!place) continue;
@@ -49,5 +51,6 @@ export function movePlace(from: Scope, to: Scope): void {
 
 /** Removing an entry discards its cursors and scroll positions. */
 export function forgetPlace(scope: Scope): void {
+  findReveals.forgetScope(scopeLabel(scope));
   for (const tabPlaces of places.values()) tabPlaces.delete(scopeLabel(scope));
 }

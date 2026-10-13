@@ -50,6 +50,7 @@ export function IssueConversation({
       <section aria-label="Description" className="border-t px-6 py-5">
         <article
           data-scroll-anchor="body"
+          data-find-scope="description"
           className="rounded-md border px-4 py-3"
         >
           {issue.bodyHTML === "" ? (
@@ -159,15 +160,18 @@ const Comment = memo(function Comment({
   return (
     <li
       data-scroll-anchor={`comment:${comment.id}`}
+      data-find-scope={`comment:${comment.id}`}
       className="rounded-md border"
     >
       <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
         {author && <Avatar actor={author} className="size-5" />}
-        <span className="font-medium text-foreground">
+        <span data-find-field="author" className="font-medium text-foreground">
           {author ? `@${author.login}` : "Deleted user"}
         </span>
         <button
           type="button"
+          data-find-field="created"
+          data-find-alternative={new Date(comment.createdAt).toLocaleString()}
           title={new Date(comment.createdAt).toLocaleString()}
           className={linkButtonClass}
           onClick={() => {

@@ -1,4 +1,5 @@
 import type { ParentIssue } from "@verdandi/core/contract";
+import type { FindState } from "./find";
 
 /**
  * Enough to name a destination before its page has loaded, and its page on
@@ -23,7 +24,7 @@ export interface IssueVisit {
 }
 
 export type IssueNavigation =
-  | { kind: "open"; issue: IssueDestination }
+  | { kind: "open"; issue: IssueDestination; find?: FindState["transfer"] }
   | { kind: "back" }
   | { kind: "list" }
   | { kind: "remember"; place: IssuePlace };

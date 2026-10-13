@@ -46,6 +46,8 @@ import { RefreshControl } from "./RefreshControl";
 import { incompleteTitle, unreadCell } from "./row-cells";
 import type { LinkToIssue } from "./link-target";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
+import { useFindSurface } from "./FindDialog";
+import { pathToTextMatch } from "./find-reveals";
 
 const buttonClass =
   "rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring";
@@ -164,6 +166,17 @@ export function IssuePagePane({
       },
     });
   }
+  const finding = useFindSurface({
+    reveal: (id) => {
+      const path = pathToTextMatch(trees, id);
+      if (path.some((ancestor) => !visit.place.expanded.includes(ancestor)))
+        remember({
+          expanded: [...new Set([...visit.place.expanded, ...path])],
+        });
+    },
+  });
+  const renderRows = finding ? visibleRows(trees, true) : rows;
+  const visibleIds = new Set(rows.map(({ node }) => node.issue.id));
   function open(issue: IssueDestination) {
     if (!mapTargets.some((target) => target.issue?.id === issue.id))
       remember({ cursor: issue.id });
@@ -406,6 +419,9 @@ export function IssuePagePane({
       <IssueContextMenu targetAt={menuTarget}>
         <div
           ref={scroller}
+          data-find-page={
+            page?.issue || failure ? `issue:${visit.issue.id}` : undefined
+          }
           tabIndex={0}
           data-pane-focus
           aria-label={`Issue page: ${visit.issue.title}`}
@@ -430,6 +446,7 @@ export function IssuePagePane({
                   return (
                     <span
                       key={ancestor.id}
+                      data-find-scope={`ancestor:${ancestor.id}`}
                       className="flex min-w-0 items-center gap-1"
                     >
                       {index > 0 && <span aria-hidden>/</span>}
@@ -459,7 +476,7 @@ export function IssuePagePane({
                         }}
                       >
                         {unread?.failed && <WarningIcon title={unread.text} />}
-                        <span className="truncate">
+                        <span data-find-field="title" className="truncate">
                           {ancestor.reference} · {ancestor.title}
                         </span>
                       </button>
@@ -490,6 +507,8 @@ export function IssuePagePane({
             )}
             <div
               data-issue-id={visit.issue.id}
+              data-find-scope={`issue:${visit.issue.id}`}
+              data-find-primary
               data-page-cursor={!page?.blockingMap && cursor === visit.issue.id}
               className={cn(
                 "rounded border-l-2 border-transparent pl-3",
@@ -498,7 +517,10 @@ export function IssuePagePane({
                   "group-focus:border-selection-edge",
               )}
             >
-              <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <p
+                data-find-field="reference"
+                className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"
+              >
                 {page?.issue
                   ? `${page.issue.repository.owner}/${page.issue.repository.name}${page.issue.reference.startsWith("#") ? page.issue.reference : ""}`
                   : visit.issue.reference}
@@ -508,16 +530,24 @@ export function IssuePagePane({
                 )}
               </p>
               {shownTitle !== undefined && (
-                <h1 className="text-2xl font-semibold tracking-tight">
+                <h1
+                  data-find-field="title"
+                  className="text-2xl font-semibold tracking-tight"
+                >
                   {shownTitle}
                 </h1>
               )}
             </div>
             {page?.issue && (
-              <IssueMetadataLine
-                issue={page.issue}
-                onFilterLabel={onFilterLabel}
-              />
+              <div
+                data-find-scope={`metadata:${visit.issue.id}`}
+                data-find-primary
+              >
+                <IssueMetadataLine
+                  issue={page.issue}
+                  onFilterLabel={onFilterLabel}
+                />
+              </div>
             )}
             {!page?.issue && !failure && (
               <p role="status" className="text-muted-foreground">
@@ -572,10 +602,11 @@ export function IssuePagePane({
               {rows.length > 0 ? (
                 <div role="tree" aria-label="Sub-issues">
                   <IssueColumnHeader />
-                  {rows.map((row) => (
+                  {renderRows.map((row) => (
                     <IssueRow
                       key={row.node.issue.id}
                       row={row}
+                      hidden={!visibleIds.has(row.node.issue.id)}
                       withRepository={false}
                       selected={row.node.issue.id === cursor}
                       login={login}

@@ -6,11 +6,15 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type UIEvent,
 } from "react";
 import type { IssueMenuTarget } from "./IssueContextMenu";
 import type { IssueDestination } from "./issue-navigation";
+import type { FindState } from "./find";
+import { useFindSurface } from "./FindDialog";
+import { findReveals, pathToTextMatch, withFindReveals } from "./find-reveals";
 import {
   commandForKey,
   followSelection,
@@ -19,7 +23,7 @@ import {
 } from "./list-navigation";
 import { rememberedPlace, rememberPlace } from "./list-places";
 import { isNewTabKey, useOpenInNewTab } from "./open-in-new-tab";
-import type { SidebarScope } from "./scope";
+import { scopeLabel, type SidebarScope } from "./scope";
 import { keepAnchored, noteAnchor, type ScrollAnchor } from "./scroll-anchor";
 
 /** The row the selection is on. */
@@ -39,7 +43,8 @@ export function useListPane({
   tab,
   scope,
   list,
-  trees,
+  trees: sharedTrees,
+  listState = "view",
   hasKeyboard,
   onOpen,
   onSetExpanded,
@@ -52,12 +57,13 @@ export function useListPane({
   /** The list as last pushed, or none before it arrives. */
   list: object | undefined;
   trees: readonly IssueTree[];
+  listState?: string | undefined;
   /**
    * Whether the main area has the keyboard. The list then holds it, also
    * when it opens in place of another list.
    */
   hasKeyboard: boolean;
-  onOpen: (issue: IssueDestination) => void;
+  onOpen: (issue: IssueDestination, find?: FindState["transfer"]) => void;
   onSetExpanded?: (issueId: string, expanded: boolean) => void;
   onSetAllExpanded?: (expanded: boolean) => void;
   /** Clears the list's label filter, while it has one. */
@@ -68,6 +74,34 @@ export function useListPane({
   const [selectedId, setSelectedId] = useState(place.selectedId);
   const scroller = useRef<HTMLDivElement>(null);
   const revealSelection = useRef(false);
+
+  const listKey = `${scopeLabel(scope)}:${listState}`;
+  const opened = useSyncExternalStore(findReveals.subscribe, () =>
+    findReveals.get(tab, listKey),
+  );
+  const trees = useMemo(
+    () => withFindReveals(sharedTrees, opened),
+    [sharedTrees, opened],
+  );
+  const finding = useFindSurface({
+    reveal: (id) => {
+      findReveals.open(tab, listKey, pathToTextMatch(trees, id));
+    },
+    open: (id, find) => {
+      const row = visibleRows(trees, true).find(
+        ({ node }) => node.issue.id === id,
+      );
+      if (row) onOpen(row.node.issue, find);
+    },
+  });
+  const setExpanded = (id: string, expanded: boolean) => {
+    findReveals.manual(listKey, sharedTrees, id);
+    onSetExpanded?.(id, expanded);
+  };
+  const setAllExpanded = (expanded: boolean) => {
+    findReveals.manual(listKey, sharedTrees);
+    onSetAllExpanded?.(expanded);
+  };
 
   const rows = useMemo(() => visibleRows(trees), [trees]);
   // The selection follows its issue as the list changes under it.
@@ -109,11 +143,11 @@ export function useListPane({
         select(command.issueId);
         break;
       case "setExpanded":
-        onSetExpanded?.(command.issueId, command.expanded);
+        setExpanded(command.issueId, command.expanded);
         break;
       case "setAllExpanded":
         revealSelection.current = true;
-        onSetAllExpanded?.(command.expanded);
+        setAllExpanded(command.expanded);
         break;
       case "openOnGitHub":
         window.desktop.openExternal(command.url);
@@ -198,6 +232,9 @@ export function useListPane({
 
   return {
     rows,
+    renderRows: finding ? visibleRows(trees, true) : rows,
+    visibleIds: new Set(rows.map(({ node }) => node.issue.id)),
+    setExpanded,
     /** The index of the selected row. */
     selected,
     menuTarget,

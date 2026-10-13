@@ -611,3 +611,66 @@ describe("naming a tab", () => {
     });
   });
 });
+
+describe("Find belongs to its tab", () => {
+  it("keeps independent queries and occurrences, closes on navigation, and is not restored on startup", () => {
+    const find = {
+      open: true,
+      query: "contract",
+      focus: 1,
+      page: "list:api",
+      active: { field: "91:title", start: 0, end: 8 },
+    };
+    const state = apply(
+      tabsOn(api, api),
+      { kind: "find", find },
+      { kind: "show", id: 1 },
+    );
+    expect(shownTab(state)?.find?.open).not.toBe(true);
+    const returned = updateTabs(state, { kind: "show", id: 0 });
+    expect(shownTab(returned)?.find).toEqual(find);
+    const navigated = updateTabs(returned, {
+      kind: "navigate",
+      navigation: { kind: "open", issue: issue(91) },
+    });
+    expect(shownTab(navigated)?.find).toEqual({ ...find, open: false });
+    expect(
+      shownTab(updateTabs(returned, { kind: "choose", entry: api }))?.find
+        ?.open,
+    ).toBe(false);
+    expect(savedTabs(returned).tabs[0]).not.toHaveProperty("find");
+    expect(
+      shownTab(updateTabs(returned, { kind: "new" }))?.find?.query,
+    ).toBeUndefined();
+  });
+
+  it("continues only a Find-driven issue opening and does not close on scroll updates", () => {
+    const find = { open: true, query: "bug", focus: 1 };
+    const transfer = { field: "label:bug", occurrence: 0 };
+    const state = apply(
+      tabsOn(api),
+      { kind: "find", find },
+      {
+        kind: "navigate",
+        navigation: { kind: "open", issue: issue(91), find: transfer },
+      },
+    );
+    expect(shownTab(state)?.find).toEqual({ ...find, transfer });
+    const remembered = updateTabs(state, {
+      kind: "navigate",
+      navigation: {
+        kind: "remember",
+        place: { cursor: "I_91", expanded: [], scrollTop: 120 },
+      },
+    });
+    expect(shownTab(remembered)?.find?.open).toBe(true);
+    expect(
+      shownTab(
+        updateTabs(remembered, {
+          kind: "navigate",
+          navigation: { kind: "back" },
+        }),
+      )?.find?.open,
+    ).toBe(false);
+  });
+});

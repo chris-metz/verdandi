@@ -31,6 +31,7 @@ export function IssueMetadataLine({
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
       <span
+        data-find-field="state"
         className={cn(
           "rounded-full px-2 py-1 font-medium",
           issue.state === "open"
@@ -48,6 +49,7 @@ export function IssueMetadataLine({
           cell && (
             <span
               key={kind}
+              data-find-field={kind}
               title={`${String(issue[kind].open)} open of ${String(issue[kind].total)} total`}
               className={cn(
                 "rounded-full border px-2 py-1",
@@ -73,26 +75,40 @@ export function IssueMetadataLine({
       {issue.assignees.length > 0 && (
         <span className="flex -space-x-1" aria-label="Assignees">
           {issue.assignees.map((assignee) => (
-            <Avatar
+            <span
               key={assignee.login}
-              actor={assignee}
-              title={`Assigned to @${assignee.login}`}
-              className="size-6 border-2 border-background"
-            />
+              data-find-field={`assignee:${assignee.login}`}
+              data-find-text={`@${assignee.login}`}
+            >
+              <Avatar
+                actor={assignee}
+                title={`Assigned to @${assignee.login}`}
+                className="size-6 border-2 border-background"
+              />
+            </span>
           ))}
         </span>
       )}
-      {issue.milestone && <span title="Milestone">◇ {issue.milestone}</span>}
+      {issue.milestone && (
+        <span data-find-field="milestone" title="Milestone">
+          ◇ {issue.milestone}
+        </span>
+      )}
       <span>
-        {issue.author ? `@${issue.author.login}` : "Deleted user"} opened{" "}
+        <span data-find-field="author">
+          {issue.author ? `@${issue.author.login}` : "Deleted user"}
+        </span>{" "}
+        opened{" "}
         <time
+          data-find-field="created"
+          data-find-alternative={new Date(issue.createdAt).toLocaleString()}
           dateTime={issue.createdAt}
           title={new Date(issue.createdAt).toLocaleString()}
         >
           {ageOf(issue.createdAt)}
         </time>
       </span>
-      <span>
+      <span data-find-field="comments">
         {issue.commentCount} {issue.commentCount === 1 ? "comment" : "comments"}
       </span>
     </div>

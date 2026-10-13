@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { viewFreshness } from "./freshness";
 import { GoToIssueButton } from "./GoToIssueDialog";
 import { IssueContextMenu } from "./IssueContextMenu";
+import type { FindState } from "./find";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow, MissingParentRow } from "./IssueRow";
 import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
@@ -59,7 +60,7 @@ export function ViewPane({
   view: SavedView;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
-  onOpen: (issue: IssueDestination) => void;
+  onOpen: (issue: IssueDestination, find?: FindState["transfer"]) => void;
   /** Opens the view dialog for this view. */
   onEdit: () => void;
   /** Opens the Go to Issue dialog. */
@@ -78,28 +79,32 @@ export function ViewPane({
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(screen);
   }, [screen]);
-  const { rows, selected, select, menuTarget, scroller, onKeyDown, onScroll } =
-    useListPane({
-      tab,
-      scope,
-      list,
-      trees,
-      hasKeyboard,
-      onOpen,
-      onSetExpanded: (issueId, expanded) => {
-        void window.verdandi.setExpanded(screen, issueId, expanded);
-      },
-      onSetAllExpanded: (expanded) => {
-        void window.verdandi.setAllExpanded(screen, expanded);
-      },
-      onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
-    });
-  const toggle = useCallback(
-    (issueId: string, expanded: boolean) => {
+  const {
+    rows,
+    renderRows,
+    visibleIds,
+    setExpanded: toggle,
+    selected,
+    select,
+    menuTarget,
+    scroller,
+    onKeyDown,
+    onScroll,
+  } = useListPane({
+    tab,
+    scope,
+    list,
+    trees,
+    hasKeyboard,
+    onOpen,
+    onSetExpanded: (issueId, expanded) => {
       void window.verdandi.setExpanded(screen, issueId, expanded);
     },
-    [screen],
-  );
+    onSetAllExpanded: (expanded) => {
+      void window.verdandi.setAllExpanded(screen, expanded);
+    },
+    onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
+  });
   const retry = useCallback(() => {
     void window.verdandi.retry(screen);
   }, [screen]);
@@ -180,6 +185,11 @@ export function ViewPane({
       <IssueContextMenu targetAt={menuTarget}>
         <div
           ref={scroller}
+          data-find-page={
+            list
+              ? `view:${view.id}:${view.query}:${JSON.stringify(labelFilter)}`
+              : undefined
+          }
           role="tree"
           aria-label={`Matches of ${view.name}`}
           tabIndex={0}
@@ -209,7 +219,7 @@ export function ViewPane({
             list && (
               <>
                 {rows.length > 0 && <IssueColumnHeader sticky />}
-                {rows.map((row, index) => (
+                {renderRows.map((row) => (
                   <Fragment key={row.node.issue.id}>
                     {row.missingParent?.status === "failed" && (
                       <MissingParentRow
@@ -223,7 +233,10 @@ export function ViewPane({
                         labelFilter.length > 0 ? "search and labels" : "search"
                       }
                       withRepository
-                      selected={index === selected}
+                      hidden={!visibleIds.has(row.node.issue.id)}
+                      selected={
+                        row.node.issue.id === rows[selected]?.node.issue.id
+                      }
                       login={login}
                       onOpen={onOpen}
                       onSelect={select}

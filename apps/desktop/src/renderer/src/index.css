@@ -168,3 +168,22 @@
     transition: none;
   }
 }
+
+/* Find paints ranges without replacing rich HTML or React-owned text nodes. */
+::highlight(find-text) {
+  background-color: #ffe08a;
+  color: #332600;
+}
+::highlight(find-active) {
+  background-color: #b94a00;
+  color: #ffffff;
+  text-decoration: underline;
+}
+.find-active-mark {
+  background-color: #b94a00;
+  color: #ffffff;
+}
+/* Tailwind's display utilities otherwise override the user-agent hidden rule. */
+[role="treeitem"][hidden] {
+  display: none;
+}

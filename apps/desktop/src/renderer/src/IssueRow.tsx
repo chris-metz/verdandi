@@ -136,6 +136,7 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
  */
 export const IssueRow = memo(function IssueRow({
   row,
+  hidden = false,
   listState = "open",
   matchedBy,
   withRepository,
@@ -148,6 +149,8 @@ export const IssueRow = memo(function IssueRow({
   onFilterLabel,
 }: {
   row: ListRow;
+  /** Loaded collapsed descendants remain searchable while Find is open. */
+  hidden?: boolean;
   /**
    * The state of the list it stands in outside views, whose issues are its
    * matches: open unless said otherwise.
@@ -182,6 +185,8 @@ export const IssueRow = memo(function IssueRow({
   return (
     <div
       role="treeitem"
+      hidden={hidden}
+      data-find-scope={`row:${issue.id}`}
       aria-level={depth + 1}
       aria-selected={selected}
       aria-expanded={hasSubIssues ? node.expanded : undefined}
@@ -235,19 +240,34 @@ export const IssueRow = memo(function IssueRow({
       >
         <IssueStateIcon state={issue.state} />
         {withRepository && <RepositoryChip issue={issue} />}
-        <span className="shrink-0 text-muted-foreground tabular-nums">
+        <span
+          data-find-field="reference"
+          data-find-text={
+            withRepository
+              ? undefined
+              : `${issue.repository.owner}/${issue.repository.name}#${issue.reference.split("#").at(-1) ?? ""}`
+          }
+          className="shrink-0 text-muted-foreground tabular-nums"
+        >
           {issue.reference}
           {mark?.mayMatch && (
-            <span aria-label="may match" className="ml-0.5 font-medium">
+            <span
+              data-find-ignore
+              aria-label="may match"
+              className="ml-0.5 font-medium"
+            >
               ?
             </span>
           )}
         </span>
         {/* It takes the room left beside the labels, which give way only after it. */}
-        <span className="min-w-0 grow basis-0 truncate">{issue.title}</span>
+        <span data-find-field="title" className="min-w-0 grow basis-0 truncate">
+          {issue.title}
+        </span>
         {read && <Labels labels={read.labels} onFilter={onFilterLabel} />}
         {issue.external && (
           <span
+            data-find-field="external"
             title="Not in a tracked repository"
             className="shrink-0 rounded-full border border-dashed border-muted-foreground px-1.5 text-3xs text-muted-foreground"
           >
@@ -268,6 +288,7 @@ export const IssueRow = memo(function IssueRow({
       {missingParent?.status === "loading" && <LoadingParentChip />}
       {inside > 0 && (
         <span
+          data-find-field="matches-inside"
           title={`${countMatches(inside)} below this issue`}
           className={cn(
             "shrink-0 rounded-full bg-muted px-1.5 text-2xs text-muted-foreground",
@@ -290,6 +311,19 @@ export const IssueRow = memo(function IssueRow({
       {issueColumns.map((column) => (
         <span
           key={column.key}
+          data-find-field={read ? column.key : undefined}
+          data-find-text={
+            read && column.key === "author"
+              ? read.author
+                ? `@${read.author.login}`
+                : "Deleted user"
+              : undefined
+          }
+          data-find-alternative={
+            read && column.key === "created"
+              ? new Date(read.createdAt).toLocaleString()
+              : undefined
+          }
           className={cn(
             "flex shrink-0 items-center",
             column.className,
@@ -470,6 +504,8 @@ function RepositoryChip({ issue }: { issue: IssueIdentity }) {
   return (
     <span
       title={title}
+      data-find-field="repository"
+      data-find-text={`${issue.repository.owner}/${issue.repository.name}`}
       style={colors && colorStyle(colors)}
       className={cn(
         "shrink-0 rounded px-1.5 text-2xs leading-[calc(18/11)] font-medium",
@@ -512,6 +548,8 @@ function ParentChip({
       }}
       title={`Sub-issue of ${parent.reference}: ${parent.title}${why ?? ""}`}
       data-parent-issue-id={parent.id}
+      data-find-field="parent"
+      data-find-text={`${parent.reference}: ${parent.title}`}
       className={cn(
         "flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-2xs text-muted-foreground",
         failed && "border-dashed border-warning",

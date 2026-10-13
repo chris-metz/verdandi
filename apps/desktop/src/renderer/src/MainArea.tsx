@@ -54,8 +54,8 @@ export function MainArea({
         hasKeyboard={hasKeyboard}
         onEdit={onEditView}
         onGoToIssue={onGoToIssue}
-        onOpen={(issue) => {
-          onNavigate({ kind: "open", issue });
+        onOpen={(issue, find) => {
+          onNavigate({ kind: "open", issue, find });
         }}
       />
     ) : (
@@ -68,8 +68,8 @@ export function MainArea({
         onTrackNewRepository={onTrackNewRepository}
         login={login}
         hasKeyboard={hasKeyboard}
-        onOpen={(issue) => {
-          onNavigate({ kind: "open", issue });
+        onOpen={(issue, find) => {
+          onNavigate({ kind: "open", issue, find });
         }}
         onGoToIssue={onGoToIssue}
       />

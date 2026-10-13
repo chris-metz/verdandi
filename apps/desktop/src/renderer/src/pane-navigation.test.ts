@@ -2,6 +2,7 @@ import type { Scope } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
   commandForWindowKey,
+  isFindKey,
   entryShortcut,
   shortcutModifier,
   tabStepForKey,
@@ -655,5 +656,17 @@ describe("views", () => {
     });
     expect(onView(key("Backspace"), "main")).toBeUndefined();
     expect(onView(key("Backspace", { metaKey: true }))).toBeUndefined();
+  });
+});
+
+describe("Find shortcut", () => {
+  it("uses the platform modifier, including while the input is focused", () => {
+    expect(isFindKey(key("f", { metaKey: true }), macOS)).toBe(true);
+    expect(isFindKey(key("f", { ctrlKey: true }), linux)).toBe(true);
+    expect(isFindKey(key("f", { ctrlKey: true }), macOS)).toBe(false);
+    expect(isFindKey(key("f", { metaKey: true, shiftKey: true }), macOS)).toBe(
+      false,
+    );
+    expect(isFindKey(key("f"), macOS)).toBe(false);
   });
 });

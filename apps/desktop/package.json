@@ -25,6 +25,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
+    "diff": "^9.0.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

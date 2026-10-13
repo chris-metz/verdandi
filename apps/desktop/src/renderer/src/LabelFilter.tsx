@@ -30,6 +30,7 @@ export function LabelPill({
       type="button"
       tabIndex={-1}
       title={`Filter the list by ${label.name}`}
+      data-find-field={`label:${label.name}`}
       style={colorStyle(labelColors(label.color))}
       onMouseDown={keepFocus}
       onClick={(event) => {
@@ -69,6 +70,7 @@ export function MoreLabels({
         ref={trigger}
         tabIndex={-1}
         title={more.names}
+        data-find-anchor
         onMouseDown={keepFocus}
         onClick={(event) => {
           event.stopPropagation();
@@ -76,6 +78,14 @@ export function MoreLabels({
         className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-[calc(18/11)] font-medium text-muted-foreground hover:text-foreground data-popup-open:text-foreground"
       >
         +{more.count}
+        {labels.slice(labels.length - more.count).map((label) => (
+          <span
+            key={label.name}
+            className="hidden"
+            data-find-field={`label:${label.name}`}
+            data-find-text={label.name}
+          />
+        ))}
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner

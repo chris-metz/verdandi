@@ -67,6 +67,19 @@ export function shortcutModifier(platform: Platform): ShortcutModifier {
     : { isHeld: ({ ctrlKey }) => ctrlKey, label: (key) => `Ctrl+${key}` };
 }
 
+/** Find remains available in its own input, before ordinary field key handling. */
+export function isFindKey(
+  press: KeyPress,
+  modifier: ShortcutModifier,
+): boolean {
+  return (
+    press.key.toLowerCase() === "f" &&
+    modifier.isHeld(press) &&
+    [press.metaKey, press.ctrlKey, press.altKey, press.shiftKey].filter(Boolean)
+      .length === 1
+  );
+}
+
 /**
  * What a key does in the window before the focused pane gets it: Tab moves
  * the keyboard to the other pane, `r` refreshes what is on screen, `s`

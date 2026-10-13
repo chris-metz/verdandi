@@ -38,11 +38,12 @@ export type ListCommand =
  */
 export function visibleRows(
   trees: readonly (IssueTree & { missingParent?: UnreadIssue | undefined })[],
+  includeCollapsed = false,
 ): ListRow[] {
   const rows: ListRow[] = [];
   function add(node: IssueNode, depth: number, parentId: string | undefined) {
     rows.push({ node, depth, parentId, parent: undefined });
-    if (!node.expanded) return;
+    if (!node.expanded && !includeCollapsed) return;
     for (const subIssue of node.subIssues) {
       add(subIssue, depth + 1, node.issue.id);
     }

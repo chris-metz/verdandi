@@ -256,6 +256,7 @@ export function BlockingMapBand({
                 <div
                   key={position.id}
                   data-map-card={position.id}
+                  data-find-scope={`map:${position.id}`}
                   data-issue-id={issue?.id}
                   data-page-cursor={selected}
                   className={cn("absolute", issue && "map-card")}
@@ -314,15 +315,22 @@ export function BlockingMapBand({
                                 external ? "border" : "bg-muted",
                               )}
                               title={`${issue.repository.owner}/${issue.repository.name}`}
+                              data-find-field="repository"
                             >
                               {issue.repository.owner}/{issue.repository.name}
                             </span>
                           )}
-                          <span className="ml-auto shrink-0 tabular-nums">
+                          <span
+                            data-find-field="reference"
+                            className="ml-auto shrink-0 tabular-nums"
+                          >
                             #{issue.reference.split("#").at(-1)}
                           </span>
                         </span>
-                        <span className="line-clamp-2 font-medium">
+                        <span
+                          data-find-field="title"
+                          className="line-clamp-2 font-medium"
+                        >
                           {issue.title}
                         </span>
                         <span className="mt-auto flex gap-1 pt-2">
@@ -330,6 +338,8 @@ export function BlockingMapBand({
                             <span
                               key={label.name}
                               title={label.name}
+                              data-find-field={`label:${label.name}`}
+                              data-find-text={label.name}
                               aria-label={label.name}
                               className="size-2 rounded-full ring-1 ring-foreground/10"
                               style={{ backgroundColor: `#${label.color}` }}

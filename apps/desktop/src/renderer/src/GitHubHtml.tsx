@@ -123,6 +123,7 @@ export function GitHubHtml({
       <IssueContextMenu targetAt={menuTarget}>
         <div
           ref={container}
+          data-find-field="body"
           className="markdown-body"
           onClick={(event) => {
             // Media's own buttons, e.g. Retry, have been followed.

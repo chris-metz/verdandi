@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { listFreshness } from "./freshness";
 import { GoToIssueButton } from "./GoToIssueDialog";
 import { IssueContextMenu } from "./IssueContextMenu";
+import type { FindState } from "./find";
 import type { IssueDestination } from "./issue-navigation";
 import { IssueColumnHeader, IssueRow } from "./IssueRow";
 import { LabelFilterChips, NoLabelMatches } from "./LabelFilter";
@@ -57,7 +58,7 @@ export function IssueListPane({
   onTrackNewRepository: (repository: TrackedRepository) => void;
   /** The account GitHub is read as, if known, to name it when unavailable. */
   login: string | undefined;
-  onOpen: (issue: IssueDestination) => void;
+  onOpen: (issue: IssueDestination, find?: FindState["transfer"]) => void;
   /**
    * Whether the main area has the keyboard. The list then holds it, also
    * when it opens in place of another list.
@@ -72,28 +73,33 @@ export function IssueListPane({
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(scope);
   }, [scope]);
-  const { rows, selected, select, menuTarget, scroller, onKeyDown, onScroll } =
-    useListPane({
-      tab,
-      scope,
-      list,
-      trees,
-      hasKeyboard,
-      onOpen,
-      onSetExpanded: (issueId, expanded) => {
-        void window.verdandi.setExpanded(scope, issueId, expanded);
-      },
-      onSetAllExpanded: (expanded) => {
-        void window.verdandi.setAllExpanded(scope, expanded);
-      },
-      onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
-    });
-  const toggle = useCallback(
-    (issueId: string, expanded: boolean) => {
+  const {
+    rows,
+    renderRows,
+    visibleIds,
+    setExpanded: toggle,
+    selected,
+    select,
+    menuTarget,
+    scroller,
+    onKeyDown,
+    onScroll,
+  } = useListPane({
+    tab,
+    scope,
+    list,
+    trees,
+    listState: list?.state,
+    hasKeyboard,
+    onOpen,
+    onSetExpanded: (issueId, expanded) => {
       void window.verdandi.setExpanded(scope, issueId, expanded);
     },
-    [scope],
-  );
+    onSetAllExpanded: (expanded) => {
+      void window.verdandi.setAllExpanded(scope, expanded);
+    },
+    onClearLabelFilter: labelFilter.length > 0 ? clearLabelFilter : undefined,
+  });
   const retry = useCallback(() => {
     void window.verdandi.retry({ kind: "list", scope });
   }, [scope]);
@@ -165,6 +171,11 @@ export function IssueListPane({
       <IssueContextMenu targetAt={menuTarget}>
         <div
           ref={scroller}
+          data-find-page={
+            list
+              ? `list:${JSON.stringify(scope)}:${list.state}:${JSON.stringify(labelFilter)}`
+              : undefined
+          }
           role="tree"
           aria-label={`Issues of ${label}`}
           tabIndex={0}
@@ -216,14 +227,17 @@ export function IssueListPane({
                   onRetry={retry}
                 />
                 <IssueColumnHeader sticky />
-                {rows.map((row, index) => (
+                {renderRows.map((row) => (
                   <IssueRow
                     key={row.node.issue.id}
                     row={row}
                     listState={list.state}
                     matchedBy={labelFilter.length > 0 ? "labels" : undefined}
                     withRepository={repositoryChips}
-                    selected={index === selected}
+                    hidden={!visibleIds.has(row.node.issue.id)}
+                    selected={
+                      row.node.issue.id === rows[selected]?.node.issue.id
+                    }
                     login={login}
                     onOpen={onOpen}
                     onSelect={select}

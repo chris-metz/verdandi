@@ -23,12 +23,15 @@ import { useConfig } from "./config";
 import { openedIssue, recentIssueOf, tabEntryOf } from "./go-to-issue";
 import { GoToIssueDialog } from "./GoToIssueDialog";
 import type { IssueDestination, IssueNavigation } from "./issue-navigation";
+import { Find } from "./FindDialog";
+import { emptyFind } from "./find";
 import { MainArea } from "./MainArea";
 import { NewTabPane } from "./NewTabPane";
 import { Notices } from "./Notices";
 import { OpenInNewTab } from "./open-in-new-tab";
 import {
   commandForWindowKey,
+  isFindKey,
   shortcutModifier,
   tabStepForKey,
   type Pane,
@@ -527,6 +530,21 @@ export function App() {
         dispatch({ kind: "step", by: step });
         return;
       }
+      if (selected && isFindKey(event, modifier)) {
+        event.preventDefault();
+        const find = tab.find ?? emptyFind;
+        dispatch({
+          kind: "find",
+          find: {
+            ...find,
+            open: true,
+            focus: find.focus + 1,
+            revealed: find.open ? find.revealed : undefined,
+          },
+        });
+        setFocusedPane("main");
+        return;
+      }
       const field =
         event.target instanceof Element
           ? event.target.closest(
@@ -706,34 +724,46 @@ export function App() {
           {tab?.entry ? (
             // Another tab or scope starts from a fresh list, never the
             // previous one's.
-            <MainArea
+            <Find
               key={`${String(tab.id)}:${scopeLabel(tab.entry)}`}
-              tab={tab.id}
-              scope={tab.entry}
-              repositories={
-                sidebar?.status === "read" ? sidebar.repositories : []
-              }
-              onSelectRepository={(repository) => {
-                select({ kind: "repository", repository });
+              state={tab.find}
+              onChange={(find) => {
+                dispatch({ kind: "find", find });
               }}
-              onRemoveRepository={
-                sidebar?.status === "read" &&
-                sidebar.settings.status === "writable"
-                  ? confirmRepositoryRemoval
-                  : undefined
-              }
-              onTrackNewRepository={(repository) => {
-                void trackNewRepository(repository);
-              }}
-              onEditView={() => {
-                if (tab.entry?.kind === "view") editView(tab.entry.view);
-              }}
-              onGoToIssue={openGoToIssue}
-              stack={stack}
-              login={login}
-              onNavigate={navigate}
-              hasKeyboard={focused === "main" && !dialogOpen && !blocked}
-            />
+            >
+              <MainArea
+                tab={tab.id}
+                scope={tab.entry}
+                repositories={
+                  sidebar?.status === "read" ? sidebar.repositories : []
+                }
+                onSelectRepository={(repository) => {
+                  select({ kind: "repository", repository });
+                }}
+                onRemoveRepository={
+                  sidebar?.status === "read" &&
+                  sidebar.settings.status === "writable"
+                    ? confirmRepositoryRemoval
+                    : undefined
+                }
+                onTrackNewRepository={(repository) => {
+                  void trackNewRepository(repository);
+                }}
+                onEditView={() => {
+                  if (tab.entry?.kind === "view") editView(tab.entry.view);
+                }}
+                onGoToIssue={openGoToIssue}
+                stack={stack}
+                login={login}
+                onNavigate={navigate}
+                hasKeyboard={
+                  focused === "main" &&
+                  !dialogOpen &&
+                  !blocked &&
+                  !tab.find?.open
+                }
+              />
+            </Find>
           ) : (
             tab && (
               <NewTabPane
@@ -830,7 +860,10 @@ function recordRecent(issue: IssueDestination, entry: Scope | undefined) {
  * as a list, or else the pane itself.
  */
 function focusPane(pane: HTMLElement | null) {
-  const target = pane?.querySelector<HTMLElement>("[data-pane-focus]") ?? pane;
+  const target =
+    pane?.querySelector<HTMLElement>("[aria-label='Find text']") ??
+    pane?.querySelector<HTMLElement>("[data-pane-focus]") ??
+    pane;
   target?.focus({ preventScroll: true });
 }
 
