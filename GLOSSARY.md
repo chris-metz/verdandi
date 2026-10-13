@@ -86,6 +86,14 @@ _Avoid_: nonmatch, filler issue
 What the main area shows for a sidebar entry: its matches, each under its parent issue, together with the context issues needed to place them.
 _Avoid_: tree view, feed, board
 
+**Find**:
+A text search belonging to one tab, within the current list's issue rows or across the content of the open issue page, including the sub-issues and relationships shown there. It includes titles, references, repository names, authors and labels without changing the list's scope, state or label filter.
+_Avoid_: global search, view search
+
+**Text match**:
+A single occurrence found by Find in an issue row or the open issue page. One issue can contain several text matches.
+_Avoid_: match (without "text"), matching issue
+
 ### Tabs
 
 **Tab**:
