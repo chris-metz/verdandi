@@ -66,6 +66,7 @@ import {
 } from "./tabs";
 import { ViewDialog } from "./ViewDialog";
 import type { ViewDialogPurpose } from "./view-dialog";
+import { PrototypeSwitcher } from "./PROTOTYPE-list-sort";
 
 /** Shortcuts use ⌘ on macOS and Ctrl elsewhere. */
 const modifier = shortcutModifier(window.desktop.platform);
@@ -841,6 +842,8 @@ export function App() {
       )}
       {setup?.status === "blocked" && <SetupDialog problem={setup.problem} />}
       <Notices onOpenView={openNoticeView} />
+      {/* PROTOTYPE (list sort) */}
+      <PrototypeSwitcher />
     </OpenInNewTab.Provider>
   );
 }

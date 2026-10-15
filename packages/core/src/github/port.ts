@@ -213,6 +213,8 @@ export interface Issue {
   author: IssueActor | undefined;
   /** When it was opened, as an ISO 8601 timestamp. */
   createdAt: string;
+  /** PROTOTYPE (list sort): when GitHub last updated it. */
+  updatedAt?: string | undefined;
   /** When it was last closed, as an ISO 8601 timestamp, unless it is open. */
   closedAt: string | undefined;
   labels: Label[];

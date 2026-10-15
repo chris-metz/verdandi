@@ -23,6 +23,13 @@ import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { presentScope, repositoryLabel, sameScope } from "./scope";
 import { useListPane } from "./use-list-pane";
+import {
+  SortMenu,
+  SortSwitch,
+  sortTrees,
+  useSortOrder,
+  useVariant,
+} from "./PROTOTYPE-list-sort";
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
@@ -68,7 +75,19 @@ export function IssueListPane({
   onGoToIssue: () => void;
 }) {
   const list = useList(scope);
-  const trees = useMemo(() => list?.trees ?? [], [list]);
+  // PROTOTYPE (list sort)
+  const variant = useVariant();
+  const [order, setOrder] = useSortOrder(scope);
+  const trees = useMemo(
+    () => sortTrees(list?.trees ?? [], order, list?.state),
+    [list, order],
+  );
+  const dates =
+    variant === "A" ? "both" : order === "newest" ? "created" : "updated";
+  const headerSort =
+    variant === "A" || variant === "D"
+      ? { order, onSort: setOrder, toggle: variant === "D" }
+      : undefined;
   const labelFilter = list?.labelFilter ?? [];
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(scope);
@@ -136,6 +155,12 @@ export function IssueListPane({
                 void window.verdandi.switchState(scope, state);
               }}
             />
+          )}
+          {list && variant === "B" && (
+            <SortSwitch order={order} onSort={setOrder} />
+          )}
+          {list && variant === "C" && (
+            <SortMenu order={order} onSort={setOrder} />
           )}
           <LabelFilterChips
             labels={labelFilter}
@@ -226,10 +251,11 @@ export function IssueListPane({
                   login={login}
                   onRetry={retry}
                 />
-                <IssueColumnHeader sticky />
+                <IssueColumnHeader sticky dates={dates} sort={headerSort} />
                 {renderRows.map((row) => (
                   <IssueRow
                     key={row.node.issue.id}
+                    dates={dates}
                     row={row}
                     listState={list.state}
                     matchedBy={labelFilter.length > 0 ? "labels" : undefined}

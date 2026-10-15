@@ -89,26 +89,103 @@ const issueColumns: readonly IssueColumn[] = [
   },
 ];
 
+// PROTOTYPE (list sort): the date columns a list shows.
+export type DateColumns = "created" | "updated" | "both";
+const updatedColumn: IssueColumn = {
+  key: "updated",
+  header: "Updated",
+  className: "w-text-16 justify-end",
+  dimsContext: true,
+  cell: (issue) => <Updated issue={issue} />,
+};
+function columnsWith(dates: DateColumns): readonly IssueColumn[] {
+  if (dates === "created") return issueColumns;
+  return issueColumns.flatMap((column) =>
+    column.key !== "created"
+      ? [column]
+      : dates === "updated"
+        ? [updatedColumn]
+        : [column, updatedColumn],
+  );
+}
+
+/** PROTOTYPE (list sort): how the header sorts, if it does. */
+export interface HeaderSort {
+  order: "newest" | "updated";
+  onSort: (order: "newest" | "updated") => void;
+  /** D: the one date column's header flips between the two. */
+  toggle?: boolean;
+}
+
 /** The same columns above both a scope's list and a page's sub-issues. */
-export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
+export function IssueColumnHeader({
+  sticky = false,
+  dates = "created",
+  sort,
+}: {
+  sticky?: boolean;
+  dates?: DateColumns;
+  sort?: HeaderSort | undefined;
+}) {
   return (
     <div
-      aria-hidden
       className={cn(
         "flex h-(--column-header-height) items-center gap-1.5 border-b bg-background pr-4 pl-3 text-2xs font-medium tracking-wide text-muted-foreground uppercase",
         sticky && "sticky top-0 z-10",
       )}
     >
       <span className="flex-1">Issue</span>
-      {issueColumns.map((column) => (
-        <span
-          key={column.key}
-          title={column.headerTitle}
-          className={cn("flex shrink-0", column.className)}
-        >
-          {column.header}
-        </span>
-      ))}
+      {columnsWith(dates).map((column) => {
+        const order =
+          column.key === "created"
+            ? "newest"
+            : column.key === "updated"
+              ? "updated"
+              : undefined;
+        if (!sort || !order) {
+          return (
+            <span
+              key={column.key}
+              title={column.headerTitle}
+              className={cn("flex shrink-0", column.className)}
+            >
+              {column.header}
+            </span>
+          );
+        }
+        const active = sort.order === order;
+        const next = sort.toggle
+          ? order === "newest"
+            ? "updated"
+            : "newest"
+          : order;
+        return (
+          <button
+            key={column.key}
+            type="button"
+            title={
+              sort.toggle
+                ? `Sorted by ${order === "newest" ? "when opened" : "when last updated"}; click to sort by ${next === "newest" ? "when opened" : "when last updated"}`
+                : `Sort by ${order === "newest" ? "when opened" : "when last updated"}`
+            }
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              sort.onSort(next);
+            }}
+            className={cn(
+              "flex shrink-0 items-center gap-0.5 uppercase hover:text-foreground",
+              column.className,
+              active && "text-foreground",
+            )}
+          >
+            {sort.toggle && <span aria-hidden>⇅</span>}
+            {column.header}
+            {active && <span aria-hidden>↓</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -147,7 +224,10 @@ export const IssueRow = memo(function IssueRow({
   onOpen,
   onRetry,
   onFilterLabel,
+  dates = "created",
 }: {
+  /** PROTOTYPE (list sort): which date columns show. */
+  dates?: DateColumns;
   row: ListRow;
   /** Loaded collapsed descendants remain searchable while Find is open. */
   hidden?: boolean;
@@ -308,7 +388,7 @@ export const IssueRow = memo(function IssueRow({
         />
       )}
       <span className="flex-1" />
-      {issueColumns.map((column) => (
+      {columnsWith(dates).map((column) => (
         <span
           key={column.key}
           data-find-field={read ? column.key : undefined}
@@ -601,6 +681,20 @@ function Created({ issue: { createdAt } }: { issue: IssueSummary }) {
       className="text-xs text-muted-foreground tabular-nums"
     >
       {createdCell(createdAt, useNow())}
+    </time>
+  );
+}
+
+function Updated({ issue: { updatedAt } }: { issue: IssueSummary }) {
+  const now = useNow();
+  if (!updatedAt) return null;
+  return (
+    <time
+      dateTime={updatedAt}
+      title={`Updated ${new Date(updatedAt).toLocaleString()}`}
+      className="text-xs text-muted-foreground tabular-nums"
+    >
+      {createdCell(updatedAt, now)}
     </time>
   );
 }

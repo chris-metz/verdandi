@@ -89,7 +89,7 @@ const listAvatarSize = 40;
  * sub-issues, and an issue at most 100 labels, so one page of each is all.
  */
 const issueFields = `
-  id number title state url createdAt closedAt
+  id number title state url createdAt updatedAt closedAt
   author { login avatarUrl }
   repository { nameWithOwner }
   labels(first: 100) { nodes { name color } }
@@ -1037,7 +1037,7 @@ function readIssue(
 ): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
-  const { url, createdAt, closedAt, author, labels, parent, subIssues } = node;
+  const { url, createdAt, updatedAt, closedAt, author, labels, parent, subIssues } = node;
   const subIssuesSummary = readCounts(node.subIssuesSummary, [
     "total",
     "completed",
@@ -1071,6 +1071,8 @@ function readIssue(
     url,
     author: readAuthor ?? undefined,
     createdAt,
+    // PROTOTYPE (list sort): read for the "Updated" order.
+    updatedAt: typeof updatedAt === "string" ? updatedAt : undefined,
     closedAt: closedAt ?? undefined,
     labels: labelList,
     parent: parentReference ?? undefined,
@@ -1474,6 +1476,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     repository_url,
     user,
     created_at,
+    updated_at,
     closed_at,
     labels,
     sub_issues_summary,
@@ -1519,6 +1522,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     url: html_url,
     author: author ?? undefined,
     createdAt: created_at,
+    updatedAt: typeof updated_at === "string" ? updated_at : undefined,
     closedAt: closed_at ?? undefined,
     labels: labelList as Label[],
     // GitHub leaves the pointer out of an issue without a parent issue.

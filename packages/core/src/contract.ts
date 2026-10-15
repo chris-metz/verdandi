@@ -560,6 +560,8 @@ export interface IssueSummary extends IssueIdentity {
   author: IssueActor | undefined;
   /** When it was opened, as an ISO 8601 timestamp. */
   createdAt: string;
+  /** PROTOTYPE (list sort): when GitHub last updated it. */
+  updatedAt?: string | undefined;
   /** Its labels, in GitHub's order. */
   labels: Label[];
   /** Sub-issue progress, from GitHub's `subIssuesSummary`. */
