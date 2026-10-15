@@ -43,6 +43,8 @@ export function summarizeIssue(
     url: issue.url,
     author: issue.author,
     createdAt: issue.createdAt,
+    closedAt: issue.closedAt,
+    updatedAt: issue.updatedAt,
     labels: issue.labels,
     subIssueProgress: {
       closed: issue.subIssuesSummary.completed,

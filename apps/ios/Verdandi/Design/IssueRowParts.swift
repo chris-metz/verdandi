@@ -7,8 +7,9 @@ import VerdandiKit
 // it says of an issue that has not been read. They follow the desktop's row
 // (`row-cells.ts`), so that an issue reads the same on every device.
 
-/// How long ago an issue was opened, in the largest whole unit, as `now`,
-/// `5m`, `3h`, `2d`, `4mo` or `1y`, as the desktop's Created column says it.
+/// How long ago an issue was opened, closed or last updated, in the largest
+/// whole unit, as `now`, `5m`, `3h`, `2d`, `4mo` or `1y`, as the desktop's
+/// date column says it.
 enum IssueAge {
     static func short(since date: Date, now: Date = .now) -> String {
         let seconds = now.timeIntervalSince(date)
@@ -19,6 +20,48 @@ enum IssueAge {
             return "\(Int(seconds / size))\(unit)"
         }
         return "now"
+    }
+}
+
+/// Which date of an issue a row says how long ago it was: the one its list
+/// goes by in its sort order, as the desktop's date column does.
+enum IssueDate: Equatable {
+    case created, closed, updated
+
+    /// What a list in a state goes by in a sort order: when each issue was
+    /// opened, or in a closed list closed, or last updated.
+    init(_ order: ListSortOrder, in state: IssueState) {
+        switch order {
+        case .newest: self = state == .closed ? .closed : .created
+        case .updated: self = .updated
+        }
+    }
+
+    /// The date of an issue, if it has one: an open issue was never closed.
+    func of(_ issue: IssueInfo) -> Date? {
+        switch self {
+        case .created: issue.created
+        case .closed: issue.closed
+        case .updated: issue.updated
+        }
+    }
+
+    /// What happened then, as VoiceOver says it.
+    var verb: String {
+        switch self {
+        case .created: "Opened"
+        case .closed: "Closed"
+        case .updated: "Updated"
+        }
+    }
+
+    /// The name of the sort order that goes by it.
+    var sortOrderName: String {
+        switch self {
+        case .created: "Newest"
+        case .closed: "Recently closed"
+        case .updated: "Recently updated"
+        }
     }
 }
 

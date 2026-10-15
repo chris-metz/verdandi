@@ -148,6 +148,9 @@ public final class Core: Sendable {
     public func switchState(_ scope: Scope, to state: IssueState) async throws {
         try await perform("switchState", scope, state)
     }
+    public func setSortOrder(_ scope: Scope, to sortOrder: ListSortOrder) async throws {
+        try await perform("setSortOrder", scope, sortOrder)
+    }
     public func setExpanded(_ list: ExpandableList, issueId: String, expanded: Bool) async throws {
         try await perform("setExpanded", list, issueId, expanded)
     }

@@ -12,6 +12,7 @@ import type {
   RepositoryLoading,
   Scope,
   Screen,
+  SortOrder,
   UnreadIssue,
 } from "./contract.ts";
 import { buildForest, type Forest } from "./forest.ts";
@@ -58,7 +59,7 @@ import type { SettingsStorage } from "./settings/port.ts";
  * A list left before it has loaded keeps what it has, marked interrupted
  * where it lacks something, until it shows again. Each scope has a label
  * filter for the session, which narrows its list in either state to what
- * has been read.
+ * has been read, and a sort order, which orders it in either state.
  */
 export interface IssueLists {
   /** Updates lists when the startup count query learns repository availability. */
@@ -67,8 +68,8 @@ export interface IssueLists {
   settingsChanged(): Promise<void>;
   /**
    * Keeps a repository's lists, what was read of its issues, their
-   * expansion, its state and its label filter, under its new address, as it
-   * was renamed or transferred.
+   * expansion, its state, its label filter and its sort order, under its new
+   * address, as it was renamed or transferred.
    */
   renameRepository(from: RepositoryAddress, to: RepositoryAddress): void;
   /**
@@ -108,6 +109,8 @@ export interface IssueLists {
     scope: Scope,
     apply: (labelFilter: Label[]) => Label[],
   ): void;
+  /** Orders a scope's list by a sort order, and pushes it if it has been opened. */
+  setSortOrder(scope: Scope, sortOrder: SortOrder): void;
 }
 
 export interface IssueListsOptions {
@@ -215,6 +218,8 @@ export function createIssueLists({
   const states = new Map<string, IssueState>();
   /** Each scope's label filter, by `scopeKey`, unless it has none. */
   const labelFilters = new Map<string, Label[]>();
+  /** Each scope's sort order, by `scopeKey`, unless it is Newest. */
+  const sortOrders = new Map<string, SortOrder>();
   const loader = createIssueLoader({
     store,
     request,
@@ -245,6 +250,11 @@ export function createIssueLists({
   /** A scope's label filter, empty without one. */
   function labelFilterOf(scope: Scope): Label[] {
     return labelFilters.get(scopeKey(scope)) ?? [];
+  }
+
+  /** A scope's sort order. */
+  function sortOrderOf(scope: Scope): SortOrder {
+    return sortOrders.get(scopeKey(scope)) ?? "newest";
   }
 
   /**
@@ -364,6 +374,7 @@ export function createIssueLists({
     return buildForest({
       scope: list.scope,
       state: list.state,
+      sortOrder: sortOrderOf(list.scope),
       scopeIds: repositoriesOf(list).flatMap((repository) => [
         ...(issuesOf(repository, list.state)?.issueIds ?? []),
       ]),
@@ -394,6 +405,7 @@ export function createIssueLists({
       return {
         scope,
         state,
+        sortOrder: sortOrderOf(scope),
         labelFilter: labelFilterOf(scope),
         trees: [],
         loading: { status: "loading" },
@@ -430,6 +442,7 @@ export function createIssueLists({
     return {
       scope,
       state,
+      sortOrder: sortOrderOf(scope),
       labelFilter: labelFilterOf(scope),
       ...(scope.kind === "repository" &&
       repositoryStatus(scope.repository).archived
@@ -782,6 +795,7 @@ export function createIssueLists({
           lists.delete(key);
           states.delete(scopeKey(scope));
           labelFilters.delete(scopeKey(scope));
+          sortOrders.delete(scopeKey(scope));
           continue;
         }
         list.tracked = value.repositories;
@@ -795,6 +809,7 @@ export function createIssueLists({
       const scope: Scope = { kind: "repository", repository: { ...to } };
       moveScope(states, old, scope);
       moveScope(labelFilters, old, scope);
+      moveScope(sortOrders, old, scope);
       for (const state of issueStates) {
         const list = lists.get(listKey(old, state));
         if (!list || lists.has(listKey(scope, state))) continue;
@@ -844,6 +859,13 @@ export function createIssueLists({
       const labelFilter = apply(labelFilterOf(scope));
       if (labelFilter.length === 0) labelFilters.delete(scopeKey(scope));
       else labelFilters.set(scopeKey(scope), labelFilter);
+      change(scope, (list) => {
+        list.background = false;
+      });
+    },
+    setSortOrder(scope, sortOrder) {
+      if (sortOrder === "newest") sortOrders.delete(scopeKey(scope));
+      else sortOrders.set(scopeKey(scope), sortOrder);
       change(scope, (list) => {
         list.background = false;
       });

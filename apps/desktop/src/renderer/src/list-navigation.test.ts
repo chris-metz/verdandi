@@ -24,6 +24,8 @@ function issue(
       url: `https://github.com/acme/api/issues/${String(number)}`,
       author: undefined,
       createdAt: "2026-09-01T12:00:00Z",
+      closedAt: undefined,
+      updatedAt: "2026-09-01T12:00:00Z",
       labels: [],
       external: false,
       subIssueProgress: { closed: 0, total: subIssues.length },

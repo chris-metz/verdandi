@@ -703,6 +703,10 @@ export function createCore({
       session.lists.switchState(scope, state);
       return Promise.resolve();
     },
+    setSortOrder(scope, sortOrder) {
+      session.lists.setSortOrder(scope, sortOrder);
+      return Promise.resolve();
+    },
     setExpanded(list, issueId, expanded) {
       if (list.kind === "view") {
         session.views.setExpanded(list.viewId, issueId, expanded);

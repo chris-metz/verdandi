@@ -43,7 +43,7 @@ GitHub Actions builds the app and runs `test-kit.sh` on macOS on every push (`.g
 
 The project is generated: a new Swift file joins it only when `generate.sh` runs again (`run-simulator.sh` does). `run-simulator.sh` hands the app gh's token through a file in the app's own folder, which the app deletes once read (`scripts/dev-token.sh`): never through the launch's environment, which the Simulator writes to its logs. It passes any `VERDANDI_*` variable set for it: `VERDANDI_SELECT=repo:owner/name`, `VERDANDI_ISSUE=owner/name#12`, `VERDANDI_SHEET=settings`, `VERDANDI_APPEARANCE=dark`, `VERDANDI_HOME=<folder>`, `VERDANDI_GO_TO=owner/name#12`, `VERDANDI_NOTICE=<text>`, `VERDANDI_MAP_END=blocking` (see `Verdandi/App/LaunchOptions.swift`, and for the lists and the sidebar `Lists/ListLaunchOptions.swift` and `Sidebar/SidebarLaunchOptions.swift`).
 
-The UI tests (`VerdandiUITests/`) tap through the ways every user takes, on the real GitHub: a list, an issue, its blocking map, closed issues, a label filter, Go to Issue, Settings, adding a repository and saving a view. Each launch gets an empty profile (`VERDANDI_HOME=fresh`).
+The UI tests (`VerdandiUITests/`) tap through the ways every user takes, on the real GitHub: a list, an issue, its blocking map, closed issues, a list's sort order, a label filter, Go to Issue, Settings, adding a repository and saving a view. Each launch gets an empty profile (`VERDANDI_HOME=fresh`).
 
 To run it on an iPhone or iPad, open the project, choose the device and Run. It is signed for the team in `project.yml`.
 

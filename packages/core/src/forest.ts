@@ -6,6 +6,7 @@ import type {
   ParentIssue,
   RepositoryAddress,
   Scope,
+  SortOrder,
   UnreadIssue,
 } from "./contract.ts";
 import { identifyIssue, summarizeIssue } from "./issue-summary.ts";
@@ -31,6 +32,8 @@ export interface ForestOptions {
   scope: Scope;
   /** Which of the scope's issues match. */
   state: IssueState;
+  /** How the trees are ordered. */
+  sortOrder: SortOrder;
   /**
    * The issues of the scope's repositories in its state, as far as they have
    * loaded: its matches, unless a label filter narrows them.
@@ -59,10 +62,12 @@ export interface ForestOptions {
  * chip names a parent issue the list does not show. A sub-issue that has not
  * been read shows as its parent issue names it, with why.
  *
- * The newest stand first: each top-level issue by the newest match within
- * its tree, collapsed or not, or by itself if there is none. An open match
- * is as new as when it was opened, a closed one as when it was closed. Ties
- * go to the higher number. Sub-issues keep GitHub's order.
+ * The most recent stand first: each top-level issue by the most recent
+ * match within its tree, collapsed or not, or by itself if there is none.
+ * By Newest, an open match is as recent as when it was opened, a closed one
+ * as when it was closed; by Recently updated, any match as when GitHub last
+ * recorded a change to it. Ties go to the higher number. Sub-issues keep
+ * GitHub's order.
  *
  * With a label filter, every issue is marked a match or a context issue,
  * with how many matches lie below it.
@@ -70,6 +75,7 @@ export interface ForestOptions {
 export function buildForest({
   scope,
   state,
+  sortOrder,
   scopeIds,
   labelFilter,
   lookup,
@@ -207,8 +213,12 @@ export function buildForest({
     };
   }
 
-  /** How new an issue is: when it was opened, or closed in a closed list. */
+  /**
+   * How recent an issue is in the sort order: when it was opened, or closed
+   * in a closed list, or when it was last updated.
+   */
   function timeOf(issue: Issue): number {
+    if (sortOrder === "updated") return Date.parse(issue.updatedAt);
     return Date.parse(
       state === "closed"
         ? (issue.closedAt ?? issue.createdAt)
@@ -216,25 +226,25 @@ export function buildForest({
     );
   }
 
-  const newest = new Map<string, number>();
-  /** How new the newest match within an issue's tree is. */
-  function newestMatch(issue: Issue): number {
-    const known = newest.get(issue.id);
+  const latest = new Map<string, number>();
+  /** How recent the most recent match within an issue's tree is. */
+  function latestMatch(issue: Issue): number {
+    const known = latest.get(issue.id);
     if (known !== undefined) return known;
-    newest.set(issue.id, -Infinity);
+    latest.set(issue.id, -Infinity);
     let time = matches.has(issue.id) ? timeOf(issue) : -Infinity;
     for (const reference of issue.subIssues) {
       const subIssue = lookup(reference.id);
-      if (subIssue) time = Math.max(time, newestMatch(subIssue));
+      if (subIssue) time = Math.max(time, latestMatch(subIssue));
     }
-    newest.set(issue.id, time);
+    latest.set(issue.id, time);
     return time;
   }
 
   const trees = [...listed.values()]
     .filter((issue) => !nested.has(issue.id))
     .map((issue) => {
-      const time = newestMatch(issue);
+      const time = latestMatch(issue);
       return { issue, time: time === -Infinity ? timeOf(issue) : time };
     })
     .sort((a, b) => b.time - a.time || b.issue.number - a.issue.number)

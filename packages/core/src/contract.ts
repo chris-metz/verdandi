@@ -439,6 +439,18 @@ export type Scope =
 export type IssueState = "open" | "closed";
 
 /**
+ * How a scope's list orders its trees, in both its states:
+ *
+ * - `newest`: most recently opened, or in a closed list most recently
+ *   closed, which an interface calls Recently closed there.
+ * - `updated`: Recently updated, most recently changed in any way GitHub
+ *   records, as GitHub's own Recently updated does.
+ *
+ * A view has none: its search text orders it.
+ */
+export type SortOrder = "newest" | "updated";
+
+/**
  * A list whose issues expand and collapse, and which a label filter
  * narrows: a scope's, or a view's.
  */
@@ -560,6 +572,14 @@ export interface IssueSummary extends IssueIdentity {
   author: IssueActor | undefined;
   /** When it was opened, as an ISO 8601 timestamp. */
   createdAt: string;
+  /** When it was last closed, as an ISO 8601 timestamp, unless it is open. */
+  closedAt: string | undefined;
+  /**
+   * When GitHub last recorded a change to it, as an ISO 8601 timestamp: any
+   * change, such as a comment, an edit, a label or closing, by a person or a
+   * bot.
+   */
+  updatedAt: string;
   /** Its labels, in GitHub's order. */
   labels: Label[];
   /** Sub-issue progress, from GitHub's `subIssuesSummary`. */
@@ -801,25 +821,28 @@ export interface ListCounts {
  * forest. The repository's issues in that state, its matches, and their
  * ancestors in the same repository, open or closed, however many
  * repositories lie in between, form the top level; the sub-issues of each,
- * open or closed and from any repository, nest below it. The trees stand by
- * the newest match inside each, most recent first: by when it was opened in
- * an open list, and by when it was closed in a closed one. All does the same
- * with every tracked repository at once, so an issue nests below its parent
- * issue whichever tracked repository either lives in. Each issue appears
- * once. An interface dims the issues in the other state than the list's:
- * closed ones in an open list, open ones in a closed list.
+ * open or closed and from any repository, nest below it in GitHub's order.
+ * The trees stand by the match inside each that comes first in the sort
+ * order, most recent first: Newest by when it was opened in an open list,
+ * and by when it was closed in a closed one; Recently updated by when GitHub
+ * last recorded a change to it. Ties go to the higher number. All does the
+ * same with every tracked repository at once, so an issue nests below its
+ * parent issue whichever tracked repository either lives in. Each issue
+ * appears once. An interface dims the issues in the other state than the
+ * list's: closed ones in an open list, open ones in a closed list.
  *
  * A label filter narrows it to the matches that carry every label of it,
  * each under its ancestors with all its sub-issues below, as the trees stand
- * by the newest match inside each; every other issue shows as a context
- * issue, and trees without a match drop out. Each issue is marked a match
- * or a context issue then, and an interface dims the context issues
- * instead.
+ * by the matches inside each; every other issue shows as a context issue,
+ * and trees without a match drop out. Each issue is marked a match or a
+ * context issue then, and an interface dims the context issues instead.
  */
 export interface IssueList {
   scope: Scope;
   /** Which of the scope's issues it matches: open, unless switched. */
   state: IssueState;
+  /** The scope's sort order, in both its states: Newest, unless chosen. */
+  sortOrder: SortOrder;
   /**
    * The scope's label filter, in both its states: its labels in the order
    * they were added, each as it was clicked; none without one.
@@ -1440,6 +1463,13 @@ export interface CoreRequests {
    */
   switchState: (scope: Scope, state: IssueState) => Promise<void>;
   /**
+   * Orders a scope's list, in both its states, by a sort order, then pushes
+   * it if it has been opened. It sorts what has been read, and asks GitHub
+   * nothing; as the list is read again, it sorts again. It lasts for the
+   * session.
+   */
+  setSortOrder: (scope: Scope, sortOrder: SortOrder) => Promise<void>;
+  /**
    * Expands or collapses one issue's sub-issues in an opened scope's list or
    * view, then pushes it. Each keeps its expansion for the session.
    */
@@ -1606,6 +1636,7 @@ const requests: Record<keyof CoreRequests, true> = {
   reorderSidebar: true,
   openList: true,
   switchState: true,
+  setSortOrder: true,
   setExpanded: true,
   setAllExpanded: true,
   addLabelToFilter: true,

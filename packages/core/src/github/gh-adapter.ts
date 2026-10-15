@@ -89,7 +89,7 @@ const listAvatarSize = 40;
  * sub-issues, and an issue at most 100 labels, so one page of each is all.
  */
 const issueFields = `
-  id number title state url createdAt closedAt
+  id number title state url createdAt closedAt updatedAt
   author { login avatarUrl }
   repository { nameWithOwner }
   labels(first: 100) { nodes { name color } }
@@ -1037,7 +1037,16 @@ function readIssue(
 ): Issue | undefined {
   const reference = readReference(node);
   if (!reference || !isObject(node)) return undefined;
-  const { url, createdAt, closedAt, author, labels, parent, subIssues } = node;
+  const {
+    url,
+    createdAt,
+    closedAt,
+    updatedAt,
+    author,
+    labels,
+    parent,
+    subIssues,
+  } = node;
   const subIssuesSummary = readCounts(node.subIssuesSummary, [
     "total",
     "completed",
@@ -1057,6 +1066,7 @@ function readIssue(
     typeof url !== "string" ||
     typeof createdAt !== "string" ||
     (closedAt !== null && typeof closedAt !== "string") ||
+    typeof updatedAt !== "string" ||
     readAuthor === undefined ||
     !subIssuesSummary ||
     !issueDependenciesSummary ||
@@ -1072,6 +1082,7 @@ function readIssue(
     author: readAuthor ?? undefined,
     createdAt,
     closedAt: closedAt ?? undefined,
+    updatedAt,
     labels: labelList,
     parent: parentReference ?? undefined,
     subIssues: subIssueList,
@@ -1475,6 +1486,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     user,
     created_at,
     closed_at,
+    updated_at,
     labels,
     sub_issues_summary,
     issue_dependencies_summary,
@@ -1503,6 +1515,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     typeof html_url !== "string" ||
     typeof created_at !== "string" ||
     (closed_at !== null && typeof closed_at !== "string") ||
+    typeof updated_at !== "string" ||
     author === undefined ||
     !repository ||
     !labelList ||
@@ -1520,6 +1533,7 @@ function readSearchMatch(item: unknown): SearchMatch | undefined {
     author: author ?? undefined,
     createdAt: created_at,
     closedAt: closed_at ?? undefined,
+    updatedAt: updated_at,
     labels: labelList as Label[],
     // GitHub leaves the pointer out of an issue without a parent issue.
     hasParent: typeof parent_issue_url === "string",

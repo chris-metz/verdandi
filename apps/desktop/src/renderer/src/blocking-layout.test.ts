@@ -13,6 +13,8 @@ function issue(id: string): IssueSummary {
     external: false,
     author: undefined,
     createdAt: "2026-09-01T00:00:00Z",
+    closedAt: undefined,
+    updatedAt: "2026-09-01T00:00:00Z",
     labels: [],
     subIssueProgress: { closed: 0, total: 0 },
     blockedBy: { open: 0, total: 0 },

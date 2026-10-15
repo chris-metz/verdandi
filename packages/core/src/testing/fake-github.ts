@@ -54,6 +54,11 @@ export interface FakeIssue {
    * every closed issue unless said otherwise.
    */
   closedAt?: string;
+  /**
+   * When GitHub last recorded a change to it, as an ISO 8601 timestamp; when
+   * it was opened, or closed if it is closed, unless said otherwise.
+   */
+  updatedAt?: string;
   labels?: Label[];
   /**
    * Its sub-issues in GitHub's order, as `owner/name#number` of issues
@@ -237,7 +242,7 @@ export interface FakeGitHub extends GitHubAccess {
   requestsFor(nameWithOwner: string): number;
 }
 
-/** When every issue was updated, unless a test says otherwise. */
+/** When every issue was opened, unless a test says otherwise. */
 const defaultCreatedAt = "2026-09-01T12:00:00Z";
 
 /** When every closed issue was closed, unless a test says otherwise. */
@@ -587,6 +592,11 @@ export function createFakeGitHub({
     }
     const blockedBy = issue.blockedBy ?? relationshipCount(ref, "blockedBy");
     const blocking = issue.blocking ?? relationshipCount(ref, "blocking");
+    const createdAt = issue.createdAt ?? defaultCreatedAt;
+    const closedAt =
+      issue.state === "closed"
+        ? (issue.closedAt ?? defaultClosedAt)
+        : undefined;
     return {
       id: `I_${ref}`,
       repository: addressOf(nameWithOwner),
@@ -595,11 +605,9 @@ export function createFakeGitHub({
       state: issue.state ?? "open",
       url: `https://github.com/${nameWithOwner}/issues/${String(issue.number)}`,
       author: actorOf(issue.author),
-      createdAt: issue.createdAt ?? defaultCreatedAt,
-      closedAt:
-        issue.state === "closed"
-          ? (issue.closedAt ?? defaultClosedAt)
-          : undefined,
+      createdAt,
+      closedAt,
+      updatedAt: issue.updatedAt ?? closedAt ?? createdAt,
       labels: issue.labels ?? [],
       parent,
       subIssues: shownSubIssues,
@@ -1137,6 +1145,7 @@ export function createFakeGitHub({
                   author,
                   createdAt,
                   closedAt,
+                  updatedAt,
                   labels,
                   subIssuesSummary,
                   issueDependenciesSummary,
@@ -1158,6 +1167,7 @@ export function createFakeGitHub({
                     author,
                     createdAt,
                     closedAt,
+                    updatedAt,
                     labels,
                     hasParent,
                     subIssuesSummary,

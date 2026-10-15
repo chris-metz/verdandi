@@ -295,6 +295,18 @@ private let ghFailed = ["kind": "gh-failed", "message": "Could not connect to ap
         try await core.switchState(.repository(api), to: .open)
         _ = try await contract.settledList(since: mark, .repository(api))
 
+        mark = contract.reads.mark
+        try await core.setSortOrder(.repository(api), to: .updated)
+        let sorted = try await contract.reads.first(since: mark, "the list sorted by Recently updated") {
+            (event) -> IssueList? in
+            guard case .listChanged(let list) = event, list.scope == .repository(api), list.sortOrder == .updated
+            else { return nil }
+            return list
+        }
+        #expect(!sorted.trees.isEmpty)
+        #expect(sorted.trees.allSatisfy { $0.unread != nil || $0.issue.updated != nil })
+        try await core.setSortOrder(.repository(api), to: .newest)
+
         let list = ExpandableList.scope(.repository(api))
         mark = contract.reads.mark
         try await core.setExpanded(list, issueId: mapIssue, expanded: false)

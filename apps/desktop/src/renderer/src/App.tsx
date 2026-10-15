@@ -55,6 +55,7 @@ import { useSidebarHidden } from "./sidebar-hidden";
 import { SidebarPane } from "./SidebarPane";
 import { settingsProblem } from "./sidebar-warnings";
 import { entryOrder, followSelection } from "./sidebar-entries";
+import { openSortMenu } from "./SortMenu";
 import { TabBar } from "./TabBar";
 import {
   restoredTabs,
@@ -594,6 +595,9 @@ export function App() {
               shown === "closed" ? "open" : "closed",
             );
           }
+          break;
+        case "open-sort-menu":
+          if (screen?.kind === "list") openSortMenu();
           break;
         case "add-repository":
           openPicker();

@@ -77,6 +77,19 @@ final class SmokeTests: XCTestCase {
     }
 
     @MainActor
+    func testSortsAListByRecentlyUpdated() {
+        let app = launchOnVerdandi()
+        app.staticTexts["Sign the Windows app, so Windows doesn't warn before it starts"].await(60)
+        app.buttons["More"].firstMatch.await().tap()
+        app.buttons["Recently updated"].await().tap()
+        app.buttons["More"].firstMatch.await().tap()
+        app.buttons["Newest"].await()
+        snap("sort-menu")
+        app.buttons["Newest"].tap()
+        app.staticTexts["Sign the Windows app, so Windows doesn't warn before it starts"].await()
+    }
+
+    @MainActor
     func testFiltersAListByALabel() {
         let app = launchOnVerdandi()
         app.staticTexts["Sign the Windows app, so Windows doesn't warn before it starts"].await(60)

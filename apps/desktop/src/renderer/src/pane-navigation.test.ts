@@ -215,6 +215,59 @@ describe("s", () => {
   });
 });
 
+describe("⇧S", () => {
+  const sortMenu = { kind: "open-sort-menu" };
+
+  it("opens the sort menu of a repository's or All's list, whichever pane has the keyboard", () => {
+    expect(
+      press(key("S", { shiftKey: true }), {
+        focused: "sidebar",
+        selected: "api",
+      }),
+    ).toEqual(sortMenu);
+    expect(
+      press(key("S", { shiftKey: true }), { focused: "main", selected: "api" }),
+    ).toEqual(sortMenu);
+    expect(
+      commandForWindowKey(key("S", { shiftKey: true }), {
+        focused: "main",
+        entries,
+        selected: { kind: "all" },
+        modifier: macOS,
+        sidebarHidden: false,
+      }),
+    ).toEqual(sortMenu);
+  });
+
+  it("does nothing in a view, whose search text orders it", () => {
+    expect(
+      commandForWindowKey(key("S", { shiftKey: true }), {
+        focused: "main",
+        entries,
+        selected: {
+          kind: "view",
+          view: { id: "bugs", name: "Bugs", query: "label:bug" },
+        },
+        modifier: macOS,
+        sidebarHidden: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("is left alone with ⌘, Ctrl or Alt, or with nothing selected", () => {
+    expect(
+      press(key("S", { shiftKey: true, metaKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("S", { shiftKey: true, ctrlKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(
+      press(key("S", { shiftKey: true, altKey: true }), { selected: "api" }),
+    ).toBeUndefined();
+    expect(press(key("S", { shiftKey: true }))).toBeUndefined();
+  });
+});
+
 describe("a", () => {
   it("opens the repository picker, whichever pane has the keyboard", () => {
     expect(press(key("a"), { focused: "sidebar" })).toEqual({

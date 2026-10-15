@@ -272,7 +272,7 @@ describe("repository identity: renames and transfers", () => {
     });
     expect(pushed.notices).toMatchObject([{ kind: "repositories-renamed" }]);
   });
-  it("keeps a repository renamed during a session the same entry, its list keeping what it read, its expansion and its label filter", async () => {
+  it("keeps a repository renamed during a session the same entry, its list keeping what it read, its expansion, its label filter and its sort order", async () => {
     const bug = { name: "bug", color: "d73a4a" };
     const github = createFakeGitHub({ login: "octo-reader" });
     github.addRepository("acme/api", [
@@ -294,6 +294,7 @@ describe("repository identity: renames and transfers", () => {
     );
     await core.setExpanded(old, "I_acme/api#1", false);
     await core.addLabelToFilter(old, bug);
+    await core.setSortOrder(old, "updated");
 
     github.renameRepository("acme/api", "newco/api");
     await core.refresh(undefined);
@@ -315,6 +316,7 @@ describe("repository identity: renames and transfers", () => {
       ]),
     ).toEqual([["Parent", false, false]]);
     expect(list?.labelFilter).toEqual([bug]);
+    expect(list?.sortOrder).toBe("updated");
     expect(github.received.slice(received)).toEqual([]);
   });
 

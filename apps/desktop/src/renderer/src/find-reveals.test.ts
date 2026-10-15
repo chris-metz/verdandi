@@ -19,6 +19,8 @@ function node(id: string, subIssues: IssueNode[] = []): IssueTree {
       external: false,
       author: undefined,
       createdAt: "2026-10-01T12:00:00Z",
+      closedAt: undefined,
+      updatedAt: "2026-10-01T12:00:00Z",
       labels: [],
       subIssueProgress: { closed: 0, total: subIssues.length },
       blockedBy: { open: 0, total: 0 },

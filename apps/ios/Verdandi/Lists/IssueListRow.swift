@@ -8,6 +8,9 @@ struct RowStyle: Equatable {
     var listState: IssueState?
     /// Whether rows name their repository with a chip, as All and views do.
     var showsRepository: Bool
+    /// The date each row says how long ago it was: the one the list goes
+    /// by in its sort order, or in a view when each issue was opened.
+    var date: IssueDate = .created
 
     /// The width of the column the disclosure chevron stands in.
     nonisolated static let gutter: CGFloat = 28
@@ -86,7 +89,7 @@ struct IssueListRow: View, Equatable {
                     dimmed: context || otherState || row.unread != nil, unread: row.unread,
                     dimsRelationships: context, mayMatch: row.mark?.mayMatch == true,
                     matchesInside: row.hasSubIssues && !row.expanded ? row.mark?.matchesInside ?? 0 : 0,
-                    showsAge: true,
+                    date: style.date,
                     onFilterLabel: { label in controller.filter(by: label) })
             }
         }

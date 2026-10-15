@@ -6,8 +6,9 @@ import VerdandiKit
 /// issue whichever tracked repository either lives in.
 ///
 /// The navigation bar switches between open and closed, and its menu
-/// expands or collapses everything; the title counts the issues and says
-/// how current they are. Notices above the issues say what could not be
+/// chooses the sort order, whose date each row says, and expands or
+/// collapses everything; the title counts the issues and says how current
+/// they are. Notices above the issues say what could not be
 /// read, with Retry; pulling the list down reads it again.
 struct IssueListScreen: View {
     @Environment(AppModel.self) private var model
@@ -35,7 +36,9 @@ struct IssueListScreen: View {
             } else {
                 ForestList(
                     rows: rows,
-                    style: RowStyle(listState: list?.state, showsRepository: scope == .all),
+                    style: RowStyle(
+                        listState: list?.state, showsRepository: scope == .all,
+                        date: list.map { IssueDate($0.sortOrder, in: $0.state) } ?? .created),
                     controller: controller,
                     labelFilter: list?.labelFilter ?? []
                 ) {
@@ -103,6 +106,15 @@ struct IssueListScreen: View {
     private func toolbar(_ list: IssueList?) -> some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
+                if let list {
+                    // Toggles rather than an inline picker, which would hide
+                    // the section's title.
+                    Section("Sort") {
+                        ForEach(ListSortOrder.allCases, id: \.self) { order in
+                            Toggle(ListWording.name(of: order, in: list.state), isOn: sorted(list, by: order))
+                        }
+                    }
+                }
                 Section {
                     Button("Expand All", systemImage: "rectangle.expand.vertical") { controller.setAllExpanded(true) }
                     Button("Collapse All", systemImage: "rectangle.compress.vertical") {
@@ -126,6 +138,16 @@ struct IssueListScreen: View {
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
+        }
+    }
+
+    /// Whether the list goes by a sort order, which the core pushes at once
+    /// as it changes; checked, it does.
+    private func sorted(_ list: IssueList, by order: ListSortOrder) -> Binding<Bool> {
+        Binding {
+            list.sortOrder == order
+        } set: { checked in
+            if checked, order != list.sortOrder { controller.sort(by: order) }
         }
     }
 

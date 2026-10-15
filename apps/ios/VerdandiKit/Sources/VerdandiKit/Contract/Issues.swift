@@ -46,6 +46,9 @@ public struct IssueInfo: Decodable, Hashable, Sendable, Identifiable {
 
     public var author: IssueActor?
     public var createdAt: String?
+    /// Only on a closed issue.
+    public var closedAt: String?
+    public var updatedAt: String?
     public var labels: [IssueLabel]?
     public var subIssueProgress: SubIssueProgress?
     public var blockedBy: RelationshipCount?
@@ -72,6 +75,16 @@ public struct IssueInfo: Decodable, Hashable, Sendable, Identifiable {
     /// When it was opened.
     public var created: Date? {
         createdAt.flatMap { try? Date($0, strategy: .iso8601) }
+    }
+
+    /// When it was last closed, unless it is open.
+    public var closed: Date? {
+        closedAt.flatMap { try? Date($0, strategy: .iso8601) }
+    }
+
+    /// When GitHub last recorded a change to it.
+    public var updated: Date? {
+        updatedAt.flatMap { try? Date($0, strategy: .iso8601) }
     }
 }
 
@@ -223,6 +236,7 @@ public struct ListLoading: Decodable, Hashable, Sendable {
 public struct IssueList: Decodable, Hashable, Sendable {
     public var scope: Scope
     public var state: IssueState
+    public var sortOrder: ListSortOrder
     public var labelFilter: [IssueLabel]
     public var archived: Bool?
     public var trees: [IssueNode]

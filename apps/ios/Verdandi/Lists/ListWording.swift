@@ -65,6 +65,12 @@ enum ListWording {
         return "Loading closed issues… \(count(progress.read)) of \(count(total))"
     }
 
+    /// A sort order's name in a list in a state: Newest is Recently closed
+    /// in a closed list.
+    static func name(of order: ListSortOrder, in state: IssueState) -> String {
+        IssueDate(order, in: state).sortOrderName
+    }
+
     /// "No open issues", "1 open issue", "12 closed issues".
     private static func listed(_ matches: Int, state: IssueState) -> String {
         matches == 0

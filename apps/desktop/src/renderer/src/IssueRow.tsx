@@ -18,8 +18,8 @@ import type { ListRow } from "./list-navigation";
 import { preventAutoscroll, useOpenFrom } from "./open-in-new-tab";
 import { problemText } from "./problem-text";
 import {
+  ageCell,
   colorStyle,
-  createdCell,
   incompleteTitle,
   labelOverflow,
   markTitle,
@@ -29,6 +29,7 @@ import {
   unreadCell,
   type MatchedBy,
 } from "./row-cells";
+import type { ListDate } from "./sort-order";
 import { useNow } from "./use-now";
 
 /** A column right of the title, with its header and its cell of an issue. */
@@ -47,25 +48,45 @@ interface IssueColumn {
    */
   dimsContext: boolean;
   cell: (issue: IssueSummary) => ReactNode;
+  /** What Find matches in its cell besides what it shows. */
+  findAlternative?: (issue: IssueSummary) => string | undefined;
 }
 
-/** The columns right of the title, in order. */
-const issueColumns: readonly IssueColumn[] = [
-  {
-    key: "author",
-    header: "By",
-    headerTitle: "Author",
-    className: "w-text-7 justify-center",
-    dimsContext: true,
-    cell: (issue) => <AuthorAvatar issue={issue} />,
-  },
-  {
-    key: "created",
-    header: "Created",
+/**
+ * The date column, showing how long ago an issue was opened, closed or last
+ * updated: `verb` names the date in the tooltip, and `at` reads it.
+ */
+function dateColumn(
+  key: ListDate,
+  header: string,
+  verb: string,
+  at: (issue: IssueSummary) => string | undefined,
+): IssueColumn {
+  return {
+    key,
+    header,
     className: "w-text-16 justify-end",
     dimsContext: true,
-    cell: (issue) => <Created issue={issue} />,
-  },
+    cell: (issue) => <Age at={at(issue)} verb={verb} />,
+    findAlternative: (issue) => {
+      const time = at(issue);
+      return time && new Date(time).toLocaleString();
+    },
+  };
+}
+
+/** The column before the date column: who opened the issue. */
+const authorColumn: IssueColumn = {
+  key: "author",
+  header: "By",
+  headerTitle: "Author",
+  className: "w-text-7 justify-center",
+  dimsContext: true,
+  cell: (issue) => <AuthorAvatar issue={issue} />,
+};
+
+/** The columns after the date column, in order. */
+const countColumns: readonly IssueColumn[] = [
   {
     key: "progress",
     header: "Sub-issues",
@@ -89,8 +110,40 @@ const issueColumns: readonly IssueColumn[] = [
   },
 ];
 
-/** The same columns above both a scope's list and a page's sub-issues. */
-export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
+/** The date column, by the date it shows. */
+const dateColumns: Record<ListDate, IssueColumn> = {
+  created: dateColumn(
+    "created",
+    "Created",
+    "Opened",
+    (issue) => issue.createdAt,
+  ),
+  closed: dateColumn("closed", "Closed", "Closed", (issue) => issue.closedAt),
+  updated: dateColumn(
+    "updated",
+    "Updated",
+    "Updated",
+    (issue) => issue.updatedAt,
+  ),
+};
+
+/** The columns right of the title, in order, with the date they show. */
+function issueColumns(date: ListDate): readonly IssueColumn[] {
+  return [authorColumn, dateColumns[date], ...countColumns];
+}
+
+/**
+ * The same columns above both a scope's list and a page's sub-issues, with
+ * the date the list goes by: when each issue was opened, unless said
+ * otherwise.
+ */
+export function IssueColumnHeader({
+  sticky = false,
+  date = "created",
+}: {
+  sticky?: boolean;
+  date?: ListDate;
+}) {
   return (
     <div
       aria-hidden
@@ -100,7 +153,7 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
       )}
     >
       <span className="flex-1">Issue</span>
-      {issueColumns.map((column) => (
+      {issueColumns(date).map((column) => (
         <span
           key={column.key}
           title={column.headerTitle}
@@ -115,11 +168,12 @@ export function IssueColumnHeader({ sticky = false }: { sticky?: boolean }) {
 
 /**
  * One issue in a list: chevron, state, repository chip in All, reference,
- * title, labels and tags, then the author, when it was created, sub-issue
- * progress, "Blocked by"
- * and "Blocks" columns. An issue that has not been read shows as its parent issue
- * names it, with why, and Retry and Open on GitHub once it failed; its
- * columns stay empty, as nothing is known of them.
+ * title, labels and tags, then the author, how long ago it was opened,
+ * closed or last updated, as the list's date column says, sub-issue
+ * progress, "Blocked by" and "Blocks" columns. An issue that has not been
+ * read shows as its parent issue names it, with why, and Retry and Open on
+ * GitHub once it failed; its columns stay empty, as nothing is known of
+ * them.
  *
  * Outside views, the issues in the other state than the list's are dimmed:
  * closed issues in an open list, and open ones in a closed list.
@@ -138,6 +192,7 @@ export const IssueRow = memo(function IssueRow({
   row,
   hidden = false,
   listState = "open",
+  date = "created",
   matchedBy,
   withRepository,
   selected,
@@ -156,6 +211,11 @@ export const IssueRow = memo(function IssueRow({
    * matches: open unless said otherwise.
    */
   listState?: IssueState;
+  /**
+   * The date its list goes by, which its date column shows: when it was
+   * opened unless said otherwise.
+   */
+  date?: ListDate;
   /** What makes its issue a match, where it is marked one or not. */
   matchedBy?: MatchedBy | undefined;
   /** Whether the row names its repository with a chip, as in All. */
@@ -308,7 +368,7 @@ export const IssueRow = memo(function IssueRow({
         />
       )}
       <span className="flex-1" />
-      {issueColumns.map((column) => (
+      {issueColumns(date).map((column) => (
         <span
           key={column.key}
           data-find-field={read ? column.key : undefined}
@@ -319,11 +379,7 @@ export const IssueRow = memo(function IssueRow({
                 : "Deleted user"
               : undefined
           }
-          data-find-alternative={
-            read && column.key === "created"
-              ? new Date(read.createdAt).toLocaleString()
-              : undefined
-          }
+          data-find-alternative={read && column.findAlternative?.(read)}
           className={cn(
             "flex shrink-0 items-center",
             column.className,
@@ -592,15 +648,20 @@ function AuthorAvatar({ issue: { author } }: { issue: IssueSummary }) {
   );
 }
 
-/** How long ago an issue was opened, with the exact time in its tooltip. */
-function Created({ issue: { createdAt } }: { issue: IssueSummary }) {
+/**
+ * How long ago an issue was opened, closed or last updated, with the exact
+ * time in its tooltip; nothing for an open issue in the Closed column.
+ */
+function Age({ at, verb }: { at: string | undefined; verb: string }) {
+  const now = useNow();
+  if (at === undefined) return null;
   return (
     <time
-      dateTime={createdAt}
-      title={`Opened ${new Date(createdAt).toLocaleString()}`}
+      dateTime={at}
+      title={`${verb} ${new Date(at).toLocaleString()}`}
       className="text-xs text-muted-foreground tabular-nums"
     >
-      {createdCell(createdAt, useNow())}
+      {ageCell(at, now)}
     </time>
   );
 }

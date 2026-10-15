@@ -161,11 +161,12 @@ export function ownerColors(owner: string): ColorPair {
 }
 
 /**
- * The "Created" column: how long ago an issue was opened, in the largest
- * whole unit, as `now`, `5m`, `3h`, `2d`, `4mo` or `1y`.
+ * The date column: how long ago an issue was opened, closed or last
+ * updated, in the largest whole unit, as `now`, `5m`, `3h`, `2d`, `4mo` or
+ * `1y`.
  */
-export function createdCell(createdAt: string, now: number): string {
-  const seconds = (now - Date.parse(createdAt)) / 1000;
+export function ageCell(at: string, now: number): string {
+  const seconds = (now - Date.parse(at)) / 1000;
   const units = [
     [365 * 86400, "y"],
     [30 * 86400, "mo"],

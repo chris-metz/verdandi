@@ -22,16 +22,20 @@ import { ProblemNotice } from "./ProblemNotice";
 import { RateLimitStatus } from "./RateLimitStatus";
 import { RefreshControl } from "./RefreshControl";
 import { presentScope, repositoryLabel, sameScope } from "./scope";
+import { listDate } from "./sort-order";
+import { SortMenu } from "./SortMenu";
 import { useListPane } from "./use-list-pane";
 
 /**
  * The main area's list of the selected scope: its sub-issue forest, filled as
  * the core pushes it, driven by keyboard and mouse. A switch beside its name
- * shows its open or its closed issues, and chips after it the labels of its
- * label filter, which a label clicked in a row adds to and Esc clears. The
- * selection and scroll position are remembered per scope for the session.
- * When the list is read again, the selection stays on its issue, or moves to
- * a neighbour if the issue disappeared, and stays where it is on screen.
+ * shows its open or its closed issues, a menu after it chooses its sort
+ * order, whose date its date column shows, and chips after that the labels
+ * of its label filter, which a label clicked in a row adds to and Esc
+ * clears. The selection and scroll position are remembered per scope for the
+ * session. When the list is read again or sorted, the selection stays on its
+ * issue, or moves to a neighbour if the issue disappeared, and stays where
+ * it is on screen.
  */
 export function IssueListPane({
   tab,
@@ -70,6 +74,7 @@ export function IssueListPane({
   const list = useList(scope);
   const trees = useMemo(() => list?.trees ?? [], [list]);
   const labelFilter = list?.labelFilter ?? [];
+  const date = list ? listDate(list.sortOrder, list.state) : "created";
   const clearLabelFilter = useCallback(() => {
     void window.verdandi.clearLabelFilter(scope);
   }, [scope]);
@@ -134,6 +139,15 @@ export function IssueListPane({
               state={list.state}
               onSwitch={(state) => {
                 void window.verdandi.switchState(scope, state);
+              }}
+            />
+          )}
+          {list && (
+            <SortMenu
+              order={list.sortOrder}
+              state={list.state}
+              onSort={(order) => {
+                void window.verdandi.setSortOrder(scope, order);
               }}
             />
           )}
@@ -226,12 +240,13 @@ export function IssueListPane({
                   login={login}
                   onRetry={retry}
                 />
-                <IssueColumnHeader sticky />
+                <IssueColumnHeader sticky date={date} />
                 {renderRows.map((row) => (
                   <IssueRow
                     key={row.node.issue.id}
                     row={row}
                     listState={list.state}
+                    date={date}
                     matchedBy={labelFilter.length > 0 ? "labels" : undefined}
                     withRepository={repositoryChips}
                     hidden={!visibleIds.has(row.node.issue.id)}
@@ -440,6 +455,7 @@ function useList(scope: Scope): IssueList | undefined {
         setList((shown) => ({
           scope,
           state: shown?.state ?? "open",
+          sortOrder: shown?.sortOrder ?? "newest",
           labelFilter: shown?.labelFilter ?? [],
           trees: [],
           loading: { status: "failed", problem: { kind: "error", message } },

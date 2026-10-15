@@ -6,6 +6,7 @@ import VerdandiKit
 /// states can be photographed without tapping to them:
 ///
 /// - `VERDANDI_STATE`: `closed`, to switch the list to its closed issues.
+/// - `VERDANDI_SORT`: `updated`, to sort the list by Recently updated.
 /// - `VERDANDI_LABELS`: `bug,needs-triage`, labels of its issues to add to
 ///   its label filter, once they have loaded.
 /// - `VERDANDI_EXPAND`: `all` or `none`, to expand or collapse every issue.
@@ -22,7 +23,9 @@ enum ListLaunchOptions {
             $0.trimmingCharacters(in: .whitespaces).lowercased()
         }
         let expand = environment["VERDANDI_EXPAND"]
-        guard !applied, state != nil || !labels.isEmpty || expand != nil, model.core != nil else { return }
+        let sort = environment["VERDANDI_SORT"].flatMap(ListSortOrder.init(rawValue:))
+        guard !applied, state != nil || sort != nil || !labels.isEmpty || expand != nil, model.core != nil
+        else { return }
         // All may show for a moment before the launch selects its entry.
         if let selected = model.launch.select, selected.expandableList != controller.list { return }
         applied = true
@@ -30,6 +33,7 @@ enum ListLaunchOptions {
         if let state, case .scope(let scope) = controller.list {
             await model.switchState(scope, to: state)
         }
+        if let sort { controller.sort(by: sort) }
         guard !labels.isEmpty || expand != nil else { return }
         // Until the list has loaded in its state, its issues lack their labels.
         var trees: [IssueNode] = []

@@ -27,6 +27,7 @@ export type WindowCommand =
   | { kind: "select"; scope: Scope }
   | { kind: "refresh" }
   | { kind: "switch-state" }
+  | { kind: "open-sort-menu" }
   | { kind: "add-repository" }
   | { kind: "go-to-issue" }
   | { kind: "remove-repository"; repository: RepositoryAddress }
@@ -83,9 +84,10 @@ export function isFindKey(
 /**
  * What a key does in the window before the focused pane gets it: Tab moves
  * the keyboard to the other pane, `r` refreshes what is on screen, `s`
- * switches a repository's or All's list between open and closed issues, `a`
- * opens the repository picker, `#` the Go to Issue dialog over the tab
- * shown, or a new tab's field, `v` the dialog for a new view, `E` the one
+ * switches a repository's or All's list between open and closed issues and
+ * `S` opens its sort menu, `a` opens the repository picker, `#` the Go to
+ * Issue dialog over the tab shown, or a new tab's field, `v` the dialog for
+ * a new view, `E` the one
  * for the selected view and `V` one for a duplicate of it, ⌘/Ctrl+1…9
  * select the sidebar's entries in visual order, and in the sidebar ↑/↓ or
  * `j`/`k` select the entry above or below at once, F2 edits the view it has
@@ -146,6 +148,9 @@ export function commandForWindowKey(
   if (key === "r") return { kind: "refresh" };
   if (key === "s" && selected !== undefined && selected.kind !== "view") {
     return { kind: "switch-state" };
+  }
+  if (key === "S" && selected !== undefined && selected.kind !== "view") {
+    return { kind: "open-sort-menu" };
   }
   if (key === "a") return { kind: "add-repository" };
   // `#` is its own key on some layouts, and Shift+3 on others.

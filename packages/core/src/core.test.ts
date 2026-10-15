@@ -3003,6 +3003,7 @@ describe("repository list", () => {
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
       state: "open",
+      sortOrder: "newest",
       labelFilter: [],
       trees: [],
       repositories: [],
@@ -3420,6 +3421,7 @@ describe("sub-issue forest", () => {
         avatarUrl: "https://avatars.githubusercontent.com/octo-dev",
       },
       createdAt: "2026-09-01T12:00:00Z",
+      updatedAt: "2026-09-01T12:00:00Z",
       labels: [{ name: "roadmap", color: "3e4b9e" }],
       external: false,
       subIssueProgress: { closed: 1, total: 2 },
@@ -3434,6 +3436,7 @@ describe("sub-issue forest", () => {
       state: "open",
       url: "https://github.com/acme/api/issues/3",
       createdAt: "2026-09-01T12:00:00Z",
+      updatedAt: "2026-09-01T12:00:00Z",
       labels: [
         { name: "api", color: "0075ca" },
         { name: "good first issue", color: "7057ff" },
@@ -4042,6 +4045,246 @@ describe("label filter", () => {
   });
 });
 
+describe("sort order", () => {
+  it("lists the most recently updated first, each tree by the most recently updated match in it", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 7,
+        title: "Old parser",
+        state: "closed",
+        updatedAt: "2026-09-29T00:00:00Z",
+      },
+      { number: 6, title: "Typo in README", updatedAt: "2026-09-12T00:00:00Z" },
+      {
+        number: 5,
+        title: "Harden webhooks",
+        updatedAt: "2026-09-02T00:00:00Z",
+        subIssues: ["acme/api#1", "acme/api#7"],
+      },
+      { number: 4, title: "Flaky test", updatedAt: "2026-09-20T00:00:00Z" },
+      {
+        number: 3,
+        title: "Launch billing",
+        updatedAt: "2026-09-10T00:00:00Z",
+        subIssues: ["acme/api#2"],
+      },
+      { number: 2, title: "Rate cards", updatedAt: "2026-09-25T00:00:00Z" },
+      { number: 1, title: "Retry budget", updatedAt: "2026-09-12T00:00:00Z" },
+    ]);
+    const core = createTestCore(github);
+    const newest = await openUntilLoaded(core, acmeApi);
+    expect(newest.sortOrder).toBe("newest");
+    const asked = github.received.length;
+
+    const sorted = await nextList(core, acmeApi, () =>
+      core.setSortOrder(acmeApi, "updated"),
+    );
+
+    // A recently updated sub-issue lifts its parent issue; a closed one, a
+    // context issue in an open list, does not. Ties go to the higher number,
+    // and sub-issues keep GitHub's order.
+    expect(outline(sorted)).toEqual([
+      "#3 Launch billing",
+      "  #2 Rate cards",
+      "#4 Flaky test",
+      "#6 Typo in README",
+      "#5 Harden webhooks",
+      "  #1 Retry budget",
+      "  #7 Old parser · closed",
+    ]);
+    expect(sorted.sortOrder).toBe("updated");
+    // It sorts what was read, asking GitHub nothing.
+    expect(github.received).toHaveLength(asked);
+  });
+
+  it("says when each issue was opened, closed and last updated", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 2,
+        title: "Old crash",
+        state: "closed",
+        createdAt: "2026-08-01T00:00:00Z",
+        closedAt: "2026-09-10T00:00:00Z",
+        updatedAt: "2026-09-20T00:00:00Z",
+      },
+      {
+        number: 1,
+        title: "Launch billing",
+        createdAt: "2026-09-05T00:00:00Z",
+        updatedAt: "2026-09-26T00:00:00Z",
+        subIssues: ["acme/api#2"],
+      },
+    ]);
+    const core = createTestCore(github);
+
+    const [tree] = (await openUntilLoaded(core, acmeApi)).trees;
+
+    const parent = readSummary(tree);
+    expect(parent.createdAt).toBe("2026-09-05T00:00:00Z");
+    expect(parent.closedAt).toBeUndefined();
+    expect(parent.updatedAt).toBe("2026-09-26T00:00:00Z");
+    expect(readSummary(tree?.subIssues[0])).toMatchObject({
+      createdAt: "2026-08-01T00:00:00Z",
+      closedAt: "2026-09-10T00:00:00Z",
+      updatedAt: "2026-09-20T00:00:00Z",
+    });
+  });
+
+  it("stands each tree by its most recently updated match only, with a label filter", async () => {
+    const bug = { name: "bug", color: "d73a4a" };
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 4,
+        title: "Flaky test",
+        labels: [bug],
+        updatedAt: "2026-09-20T00:00:00Z",
+      },
+      { number: 3, title: "Retry flakes", updatedAt: "2026-09-26T00:00:00Z" },
+      {
+        number: 2,
+        title: "Rate cards",
+        labels: [bug],
+        updatedAt: "2026-09-10T00:00:00Z",
+        subIssues: ["acme/api#3"],
+      },
+      {
+        number: 1,
+        title: "Launch billing",
+        updatedAt: "2026-09-25T00:00:00Z",
+        subIssues: ["acme/api#2"],
+      },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    const sorted = await nextList(core, acmeApi, () =>
+      core.setSortOrder(acmeApi, "updated"),
+    );
+    expect(outline(sorted)).toEqual([
+      "#1 Launch billing",
+      "  #2 Rate cards",
+      "    #3 Retry flakes",
+      "#4 Flaky test",
+    ]);
+
+    const filtered = await nextList(core, acmeApi, () =>
+      core.addLabelToFilter(acmeApi, bug),
+    );
+
+    // The context issues around a match, however recently updated, do not
+    // lift its tree.
+    expect(outline(filtered)).toEqual([
+      "#4 Flaky test",
+      "#1 Launch billing · context",
+      "  #2 Rate cards",
+      "    #3 Retry flakes · context",
+    ]);
+  });
+
+  it("keeps a sidebar entry's sort order to its own list, in either state, until another is chosen", async () => {
+    await writeSettings({
+      version: 1,
+      repositories: [{ name: "acme/api" }, { name: "acme/web" }],
+    });
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      {
+        number: 4,
+        title: "Rate cards",
+        createdAt: "2026-09-20T00:00:00Z",
+        updatedAt: "2026-09-21T00:00:00Z",
+      },
+      {
+        number: 3,
+        title: "Old crash",
+        state: "closed",
+        closedAt: "2026-09-25T00:00:00Z",
+        updatedAt: "2026-09-26T00:00:00Z",
+      },
+      {
+        number: 2,
+        title: "Stale docs",
+        state: "closed",
+        closedAt: "2026-09-10T00:00:00Z",
+        updatedAt: "2026-09-27T00:00:00Z",
+      },
+      {
+        number: 1,
+        title: "Launch billing",
+        createdAt: "2026-09-02T00:00:00Z",
+        updatedAt: "2026-09-24T00:00:00Z",
+      },
+    ]);
+    github.addRepository("acme/web", [
+      {
+        number: 1,
+        title: "Dark mode",
+        createdAt: "2026-08-01T00:00:00Z",
+        updatedAt: "2026-09-27T00:00:00Z",
+      },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    const updated = await nextList(core, acmeApi, () =>
+      core.setSortOrder(acmeApi, "updated"),
+    );
+    expect(outline(updated)).toEqual(["#1 Launch billing", "#4 Rate cards"]);
+
+    const everything = await openUntilLoaded(core, all);
+    expect(everything.sortOrder).toBe("newest");
+    expect(outline(everything)).toEqual([
+      "acme/api #4 Rate cards",
+      "acme/api #1 Launch billing",
+      "acme/web #1 Dark mode",
+    ]);
+
+    const closed = await switchUntilLoaded(core, acmeApi, "closed");
+    expect(closed.sortOrder).toBe("updated");
+    expect(outline(closed)).toEqual([
+      "#2 Stale docs · closed",
+      "#3 Old crash · closed",
+    ]);
+
+    const recentlyClosed = await nextList(core, acmeApi, () =>
+      core.setSortOrder(acmeApi, "newest"),
+    );
+    expect(recentlyClosed.sortOrder).toBe("newest");
+    expect(outline(recentlyClosed)).toEqual([
+      "#3 Old crash · closed",
+      "#2 Stale docs · closed",
+    ]);
+
+    const open = await nextList(core, acmeApi, () =>
+      core.switchState(acmeApi, "open"),
+    );
+    expect(open.sortOrder).toBe("newest");
+    expect(outline(open)).toEqual(["#4 Rate cards", "#1 Launch billing"]);
+  });
+
+  it("sorts again as a refresh reads when issues were last updated", async () => {
+    const github = createFakeGitHub({ login: "octo-reader" });
+    github.addRepository("acme/api", [
+      { number: 2, title: "Rate cards", updatedAt: "2026-09-20T00:00:00Z" },
+      { number: 1, title: "Launch billing", updatedAt: "2026-09-10T00:00:00Z" },
+    ]);
+    const core = createTestCore(github);
+    await openUntilLoaded(core, acmeApi);
+    await core.setSortOrder(acmeApi, "updated");
+
+    github.addRepository("acme/api", [
+      { number: 2, title: "Rate cards", updatedAt: "2026-09-20T00:00:00Z" },
+      { number: 1, title: "Launch billing", updatedAt: "2026-09-27T11:00:00Z" },
+    ]);
+    const refreshed = await untilSettled(core, acmeApi, () =>
+      core.refresh({ kind: "list", scope: acmeApi }),
+    );
+
+    expect(outline(refreshed)).toEqual(["#1 Launch billing", "#2 Rate cards"]);
+  });
+});
+
 describe("All", () => {
   it("merges the open issues of every tracked repository into one forest", async () => {
     await writeSettings({
@@ -4523,6 +4766,7 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       state: "open",
+      sortOrder: "newest",
       labelFilter: [],
       trees: [],
       repositories: [],
@@ -4546,6 +4790,7 @@ describe("All", () => {
     expect(await openUntilLoaded(core, all)).toEqual({
       scope: all,
       state: "open",
+      sortOrder: "newest",
       labelFilter: [],
       trees: [],
       repositories: [],
@@ -5358,6 +5603,7 @@ describe("failed content", () => {
     expect(await openUntilLoaded(core, acmeApi)).toEqual({
       scope: acmeApi,
       state: "open",
+      sortOrder: "newest",
       labelFilter: [],
       trees: [],
       repositories: [],

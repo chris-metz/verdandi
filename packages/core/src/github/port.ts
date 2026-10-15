@@ -215,6 +215,12 @@ export interface Issue {
   createdAt: string;
   /** When it was last closed, as an ISO 8601 timestamp, unless it is open. */
   closedAt: string | undefined;
+  /**
+   * When GitHub last recorded a change to it, as an ISO 8601 timestamp: any
+   * change, such as a comment, an edit, a label or closing, by a person or a
+   * bot.
+   */
+  updatedAt: string;
   labels: Label[];
   /** Its parent issue, if it has one. */
   parent: IssueReference | undefined;

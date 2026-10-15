@@ -1,8 +1,8 @@
 import type { Label } from "@verdandi/core/contract";
 import { describe, expect, it } from "vitest";
 import {
+  ageCell,
   colorStyle,
-  createdCell,
   incompleteTitle,
   labelColors,
   labelOverflow,
@@ -258,12 +258,12 @@ describe("an issue GitHub showed only in part", () => {
   });
 });
 
-describe("the created column", () => {
+describe("the date column", () => {
   const now = Date.parse("2026-09-29T12:00:00Z");
   const ago = (seconds: number) =>
-    createdCell(new Date(now - seconds * 1000).toISOString(), now);
+    ageCell(new Date(now - seconds * 1000).toISOString(), now);
 
-  it("says how long ago an issue was opened, in its largest whole unit", () => {
+  it("says how long ago an issue was opened, closed or updated, in its largest whole unit", () => {
     expect(ago(59)).toBe("now");
     expect(ago(60)).toBe("1m");
     expect(ago(59 * 60)).toBe("59m");

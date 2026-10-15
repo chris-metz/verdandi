@@ -216,8 +216,9 @@ struct IssueRowContent: View {
     var mayMatch = false
     /// How many matches its collapsed sub-issues hold, said beside it.
     var matchesInside = 0
-    /// Whether it says how long ago it was opened, at the end of its title.
-    var showsAge = false
+    /// The date it says how long ago it was, at the end of its title, if
+    /// any: when it was opened, closed or last updated.
+    var date: IssueDate?
     /// Adds a label to the list's label filter: its labels are buttons then.
     var onFilterLabel: ((IssueLabel) -> Void)?
 
@@ -237,11 +238,11 @@ struct IssueRowContent: View {
                         .foregroundStyle(palette.foreground)
                         .lineLimit(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if showsAge, let created = issue.created {
-                        Text(IssueAge.short(since: created))
+                    if let date, let at = date.of(issue) {
+                        Text(IssueAge.short(since: at))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(palette.muted)
-                            .accessibilityLabel("Opened \(created.formatted(.relative(presentation: .named)))")
+                            .accessibilityLabel("\(date.verb) \(at.formatted(.relative(presentation: .named)))")
                     }
                 }
                 .opacity(faded)

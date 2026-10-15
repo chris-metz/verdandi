@@ -69,6 +69,14 @@ final class ListController {
         ask { core in try await core.clearLabelFilter(self.list) }
     }
 
+    // MARK: - Sort order
+
+    /// Orders a scope's list by a sort order; a view's search text orders it.
+    func sort(by order: ListSortOrder) {
+        guard case .scope(let scope) = list else { return }
+        ask { core in try await core.setSortOrder(scope, to: order) }
+    }
+
     // MARK: - Reading again
 
     /// Reads the list again now, and waits until it has been read, for pull

@@ -595,6 +595,13 @@ public enum IssueState: String, Codable, Hashable, Sendable {
     case open, closed
 }
 
+/// How a scope's list orders its trees, in both its states: Newest (in a
+/// closed list, Recently closed) or Recently updated (the contract's
+/// `SortOrder`, a name Foundation has).
+public enum ListSortOrder: String, Codable, Hashable, Sendable, CaseIterable {
+    case newest, updated
+}
+
 /// A list whose issues expand and collapse: a scope's, or a view's.
 public enum ExpandableList: Encodable, Hashable, Sendable {
     case scope(Scope)
