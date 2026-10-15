@@ -86,6 +86,10 @@ _Avoid_: nonmatch, filler issue
 What the main area shows for a sidebar entry: its matches, each under its parent issue, together with the context issues needed to place them.
 _Avoid_: tree view, feed, board
 
+**Sort order**:
+How a tracked repository's or All's list orders its trees: Newest or Recently updated. A tree stands where its newest, or most recently updated, match stands; sub-issues keep the order their parent issue gives them on GitHub. Newest means most recently opened; in a closed list it is called Recently closed and means most recently closed. Recently updated means most recently changed in any way GitHub records, such as a comment, an edit, a label or closing, by a person or a bot. Each sidebar entry has its own, Newest unless the user chooses otherwise, which lasts until they quit. A view has none: its search text orders it.
+_Avoid_: sorting, ranking
+
 **Find**:
 A text search belonging to one tab, within the current list's issue rows or across the content of the open issue page, including the sub-issues and relationships shown there. It includes titles, references, repository names, authors and labels without changing the list's scope, state or label filter.
 _Avoid_: global search, view search
