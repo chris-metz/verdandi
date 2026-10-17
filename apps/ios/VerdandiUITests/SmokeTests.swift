@@ -96,9 +96,9 @@ final class SmokeTests: XCTestCase {
         app.buttons["Filter by enhancement"].firstMatch.await().tap()
         app.buttons["Clear label filter"].await()
         snap("filtered")
-        XCTAssertFalse(app.staticTexts["search button"].exists, "an issue without the label still shows")
+        XCTAssertFalse(app.staticTexts["show repo names in the views instead of writing"].exists, "an issue without the label still shows")
         app.buttons["Clear label filter"].tap()
-        app.staticTexts["search button"].await()
+        app.staticTexts["show repo names in the views instead of writing"].await()
     }
 
     @MainActor
