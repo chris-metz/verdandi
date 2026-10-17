@@ -56,8 +56,14 @@ struct ViewScreen: View {
                 }
             }
         }
+        .safeAreaBar(edge: .top) {
+            ListStatus(text: status(list))
+                .padding(.bottom, 8)
+        }
         .navigationTitle(savedView?.name ?? "View")
-        .navigationSubtitle(subtitle(list))
+        // Small, as a large title opens no more once the list has scrolled
+        // with the line of counts pinned under it.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar(list) }
         .onAppear { controller.model = model }
         .task {
@@ -94,7 +100,7 @@ struct ViewScreen: View {
 
     // MARK: - Title and toolbar
 
-    private func subtitle(_ list: ViewList?) -> String {
+    private func status(_ list: ViewList?) -> String {
         guard let list else { return "Searching…" }
         var parts = [ListWording.counts(list)]
         if case .loading = list.loading {

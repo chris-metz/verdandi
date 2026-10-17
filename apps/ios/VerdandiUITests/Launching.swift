@@ -3,10 +3,12 @@ import XCTest
 /// Launches the app for a UI test, signed in with the token
 /// `scripts/ui-test.sh` left in the app's folder, which each launch keeps
 /// for the next; in a fresh profile unless the test names one; and with the
-/// launch options it asks for.
+/// launch options it asks for; on an iPad, in the layout it names, as a
+/// layout given at one launch stays for the next.
 @MainActor
-func launchVerdandi(_ options: [String: String] = [:]) -> XCUIApplication {
+func launchVerdandi(_ options: [String: String] = [:], layout: String = "besideIssue") -> XCUIApplication {
     let app = XCUIApplication()
+    app.launchArguments = ["-issueLayout", layout]
     app.launchEnvironment["VERDANDI_KEEP_DEV_TOKEN"] = "1"
     app.launchEnvironment["VERDANDI_HOME"] = "fresh"
     for (name, value) in options { app.launchEnvironment[name] = value }

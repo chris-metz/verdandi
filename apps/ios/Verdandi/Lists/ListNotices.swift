@@ -155,3 +155,19 @@ struct ListFooter: View {
         }
     }
 }
+
+/// The line under a list's title: what it counts and how current it is,
+/// pinned above the issues.
+struct ListStatus: View {
+    @Environment(\.palette) private var palette
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(palette.muted)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+    }
+}

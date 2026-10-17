@@ -7,8 +7,8 @@ import VerdandiKit
 ///
 /// The navigation bar switches between open and closed, and its menu
 /// chooses the sort order, whose date each row says, and expands or
-/// collapses everything; the title counts the issues and says how current
-/// they are. Notices above the issues say what could not be
+/// collapses everything; the line under the title counts the issues and
+/// says how current they are. Notices above the issues say what could not be
 /// read, with Retry; pulling the list down reads it again.
 struct IssueListScreen: View {
     @Environment(AppModel.self) private var model
@@ -53,22 +53,27 @@ struct IssueListScreen: View {
                     await controller.refresh { model.list(for: scope)?.loading.state.isBusy ?? false }
                 }
                 .safeAreaBar(edge: .top) {
-                    // Pinned under the title, as it says what the list shows;
-                    // in the navigation bar's middle, it would push the
-                    // counts below the title twice.
-                    Picker("Issues Shown", selection: stateBinding(list)) {
-                        Text("Open").tag(IssueState.open)
-                        Text("Closed").tag(IssueState.closed)
+                    // Pinned under the title, as they say what the list
+                    // shows; in the navigation bar's middle, the picker
+                    // would push the counts below the title twice.
+                    VStack(spacing: 8) {
+                        ListStatus(text: status(list))
+                        Picker("Issues Shown", selection: stateBinding(list)) {
+                            Text("Open").tag(IssueState.open)
+                            Text("Closed").tag(IssueState.closed)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 420)
+                        .padding(.horizontal, 16)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 420)
-                    .padding(.horizontal, 16)
                     .padding(.bottom, 8)
                 }
             }
         }
         .navigationTitle(scope.title)
-        .navigationSubtitle(subtitle(list))
+        // Small, as a large title opens no more once the list has scrolled
+        // with the bar of counts and states pinned under it.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar(list) }
         .onAppear { controller.model = model }
         .task {
@@ -96,7 +101,7 @@ struct IssueListScreen: View {
 
     // MARK: - Title and toolbar
 
-    private func subtitle(_ list: IssueList?) -> String {
+    private func status(_ list: IssueList?) -> String {
         guard let list else { return "Loading…" }
         let parts = [ListWording.counts(list), ListWording.freshness(list.loading.state, now: now) ?? ""]
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
