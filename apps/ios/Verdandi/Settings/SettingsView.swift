@@ -1,13 +1,14 @@
 import SwiftUI
 import VerdandiKit
 
-/// Settings: the account GitHub is read as, the appearance and the themes,
-/// what in `config.toml` Verdandi cannot use, and About. Each choice is
-/// written to `config.toml` at once, as on the desktop, and the sheet
-/// follows the file as the core pushes it.
+/// Settings: the account GitHub is read as, the appearance, an iPad's
+/// layout and the themes, what in `config.toml` Verdandi cannot use, and
+/// About. Each choice but the layout is written to `config.toml` at once,
+/// as on the desktop, and the sheet follows the file as the core pushes it.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(IssueLayout.key) private var layout = IssueLayout.besideIssue
     @State private var path: [Page] = []
     /// Why the last choice was not written, until another is made.
     @State private var error: String?
@@ -25,6 +26,7 @@ struct SettingsView: View {
                 }
                 AccountSection()
                 appearance
+                if UIDevice.current.userInterfaceIdiom == .pad { issueLayout }
                 themes(.light)
                 themes(.dark)
                 problems
@@ -78,6 +80,26 @@ struct SettingsView: View {
             Text(
                 "System follows this \(UIDevice.current.model)’s appearance. Text follows the size set in the Settings app, under Display & Brightness › Text Size."
             )
+        }
+    }
+
+    // MARK: Layout
+
+    /// Where an iPad shows the issue page, on this device only, so that it
+    /// does not wait for `config.toml`.
+    private var issueLayout: some View {
+        Section {
+            Picker("Layout", selection: $layout) {
+                Text("Beside Issue").tag(IssueLayout.besideIssue)
+                Text("List Only").tag(IssueLayout.listOnly)
+            }
+            .pickerStyle(.segmented)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+        } header: {
+            Text("Layout")
+        } footer: {
+            Text("List Only shows the list across the window; an issue opens in its place.")
         }
     }
 

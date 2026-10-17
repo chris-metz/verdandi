@@ -3,9 +3,9 @@ import VerdandiKit
 
 /// The issues of a scope's list or a view, as a forest of rows: tapping one
 /// opens its issue page, beside the list on an iPad, where the selection
-/// shows, or over it on an iPhone. Notices above the issues say what the
-/// list leaves out; the line below them counts it. The label filter floats
-/// at the bottom while the list has one.
+/// shows, or over it on an iPhone or with List Only. Notices above the
+/// issues say what the list leaves out; the line below them counts it. The
+/// label filter floats at the bottom while the list has one.
 struct ForestList<Notices: View, Footer: View>: View {
     @Environment(AppModel.self) private var model
     @Environment(\.palette) private var palette

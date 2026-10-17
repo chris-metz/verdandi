@@ -1,6 +1,6 @@
 # Verdandi for iPhone and iPad
 
-Verdandi as a native app for iPhone and iPad, in SwiftUI with Liquid Glass, for iOS 26 and later. One app serves both: three columns on an iPad (sidebar, list, issue page), one after another on an iPhone.
+Verdandi as a native app for iPhone and iPad, in SwiftUI with Liquid Glass, for iOS 26 and later. One app serves both: three columns on an iPad (sidebar, list, issue page), one after another on an iPhone. With List Only (Settings › Layout, on an iPad only, kept on the device), an iPad shows the list across the window and opens the issue page in its place, as the desktop app does.
 
 It runs the same core as the desktop app, `packages/core`, unchanged, on JavaScriptCore. There is no second core to keep in step (the reason [ADR 0008](../../docs/adr/0008-go-on-with-the-electron-app-only.md) dropped the native macOS app).
 

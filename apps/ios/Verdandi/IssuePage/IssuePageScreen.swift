@@ -212,13 +212,13 @@ struct IssuePageScreen: View {
     }
 
     /// Adds a label to the label filter of the list the page was opened
-    /// from. On an iPhone, the list then shows instead of the page, as on
-    /// the desktop app; on an iPad, it narrows beside the page.
+    /// from. On an iPhone, or with List Only, the list then shows instead of
+    /// the page, as on the desktop app; beside the page, it narrows there.
     private func filter(by label: IssueLabel) {
         Task {
             guard await model.addToLabelFilter(label) else { return }
             filtered += 1
-            if sizeClass == .compact {
+            if !model.listBesideIssue {
                 model.showList()
             } else {
                 model.post(

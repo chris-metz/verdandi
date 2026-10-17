@@ -2,12 +2,15 @@ import SwiftUI
 import VerdandiKit
 
 /// The window: the sidebar, a sidebar entry's list, and the issue page, in
-/// three columns on an iPad and one after another on an iPhone. Until
-/// GitHub can be read, signing in covers it.
+/// three columns on an iPad and one after another on an iPhone. With List
+/// Only, an iPad shows the list across the window, and the issue page in
+/// its place, as the desktop app does. Until GitHub can be read, signing in
+/// covers it.
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @AppStorage(IssueLayout.key) private var layout = IssueLayout.besideIssue
     @State private var columns = NavigationSplitViewVisibility.all
     /// Why signing in is needed, kept while GitHub checks a token, so that
     /// signing in holds still until GitHub has answered.
@@ -69,20 +72,28 @@ struct RootView: View {
     }
 
     private var split: some View {
-        @Bindable var model = model
-        return NavigationSplitView(columnVisibility: $columns) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
-        } content: {
-            ListColumn()
-                .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
-        } detail: {
-            IssueDetailColumn()
+        Group {
+            switch layout {
+            case .besideIssue:
+                NavigationSplitView(columnVisibility: $columns) {
+                    sidebar
+                } content: {
+                    ListColumn()
+                        .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
+                } detail: {
+                    IssueDetailColumn()
+                }
+            case .listOnly:
+                NavigationSplitView(columnVisibility: $columns) {
+                    sidebar
+                } detail: {
+                    ListOnlyColumn()
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: sizeClass, initial: true) { _, sizeClass in
-            // In columns, the list stays in sight beside the issue page.
-            model.listBesideIssue = sizeClass == .regular
+        .onChange(of: listBesideIssue, initial: true) { _, beside in
+            model.listBesideIssue = beside
         }
         .onChange(of: model.selectedIssue) { previous, issue in
             // Back from an issue on an iPhone: the list is on screen again.
@@ -97,6 +108,17 @@ struct RootView: View {
             try? await Task.sleep(for: .seconds(1))
             columns = .all
         }
+    }
+
+    private var sidebar: some View {
+        SidebarView()
+            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
+    }
+
+    /// Whether the list stays in sight beside the issue page: in columns,
+    /// unless the user chose List Only.
+    private var listBesideIssue: Bool {
+        sizeClass == .regular && layout == .besideIssue
     }
 
     /// The theme shown: the user's light or dark one, as the appearance says.
@@ -139,6 +161,42 @@ struct ListColumn: View {
         case .view(let id): ViewScreen(viewId: id).id(id)
         case nil:
             ContentUnavailableView("Choose a list", systemImage: "sidebar.left", description: Text("Choose All, a repository or a view."))
+        }
+    }
+}
+
+/// Where an iPad shows the issue page: beside the list, or in its place.
+/// Kept on this device only, as only an iPad offers the choice.
+enum IssueLayout: String {
+    case besideIssue, listOnly
+
+    static let key = "issueLayout"
+}
+
+/// The list across the window, with List Only: the issue chosen in it, and
+/// the issues opened from its page, open over it one after another.
+struct ListOnlyColumn: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        // Read here, not in the binding, so that the column follows them.
+        let routes = [model.selectedIssue].compactMap { $0 } + model.issuePath
+        NavigationStack(path: path(routes)) {
+            ListColumn()
+                .navigationDestination(for: IssueRoute.self) { route in
+                    IssuePageScreen(route: route).id(route.id)
+                }
+        }
+    }
+
+    /// The issue chosen in the list and the issues opened from its page, as
+    /// one path, so that going back leaves the list.
+    private func path(_ routes: [IssueRoute]) -> Binding<[IssueRoute]> {
+        Binding {
+            routes
+        } set: { path in
+            model.selectedIssue = path.first
+            model.issuePath = Array(path.dropFirst())
         }
     }
 }
