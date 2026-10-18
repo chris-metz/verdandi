@@ -22,11 +22,18 @@ jobs:
     defaults:
       run:
         working-directory: apps/ios
+        # pipefail, so that a command piped through the filter below still
+        # fails its step.
+        shell: bash --noprofile --norc -eo pipefail {0}
     env:
       BUNDLE_ID: io.github.chris-metz.verdandi
       # The app's Apple ID in App Store Connect (App Information), which
       # numbers its builds there. Not a secret.
       APP_APPLE_ID: "6824181168"
+      # Hides the certificate's holder, which the tools print as "Apple
+      # Distribution: <name> (<id>)", from the logs, which anyone can read in
+      # a public repository, as release.sh hides the Developer ID's holder.
+      HIDE_IDENTITY: 's/((Apple|iPhone) (Distribution|Development|Developer)): [^(]+\(/\1: <hidden> (/g'
     steps:
       - uses: actions/checkout@v7
       # Node and pnpm in the versions pinned in mise.toml.
@@ -49,12 +56,14 @@ jobs:
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
           CERTIFICATE_PRIVATE_KEY: ${{ secrets.CERTIFICATE_PRIVATE_KEY }}
         run: |
-          keychain initialize
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE --strict-match-identifier --create
-          keychain add-certificates
-          # Switches the generated project to manual signing with them.
-          xcode-project use-profiles --project Verdandi.xcodeproj
+          {
+            keychain initialize
+            app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE --strict-match-identifier --create
+            keychain add-certificates
+            # Switches the generated project to manual signing with them.
+            xcode-project use-profiles --project Verdandi.xcodeproj
+          } 2>&1 | sed -l -E "$HIDE_IDENTITY"
       - name: Number the build
         env:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -66,7 +75,8 @@ jobs:
       - name: Build the IPA
         run: |
           xcode-project build-ipa --project Verdandi.xcodeproj --scheme Verdandi --config Release \
-            --archive-xcargs "COMPILER_INDEX_STORE_ENABLE=NO CURRENT_PROJECT_VERSION=$BUILD"
+            --archive-xcargs "COMPILER_INDEX_STORE_ENABLE=NO CURRENT_PROJECT_VERSION=$BUILD" 2>&1 |
+            sed -l -E "$HIDE_IDENTITY"
           unzip -q -o build/ios/ipa/Verdandi.ipa 'Payload/Verdandi.app/Info.plist' -d build/ipa-check
           PLIST=build/ipa-check/Payload/Verdandi.app/Info.plist
           VERSION="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
@@ -80,4 +90,4 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
-        run: app-store-connect publish --path build/ios/ipa/Verdandi.ipa
+        run: app-store-connect publish --path build/ios/ipa/Verdandi.ipa 2>&1 | sed -l -E "$HIDE_IDENTITY"
