@@ -45,11 +45,38 @@ The project is generated: a new Swift file joins it only when `generate.sh` runs
 
 The UI tests (`VerdandiUITests/`) tap through the ways every user takes, on the real GitHub: a list, an issue, its blocking map, closed issues, a list's sort order, a label filter, Go to Issue, Settings, adding a repository and saving a view. Each launch gets an empty profile (`VERDANDI_HOME=fresh`).
 
-To run it on an iPhone or iPad, open the project, choose the device and Run. It is signed for the team in `project.yml`.
+The app is signed for the team in `project.yml`, an individual membership whose certificates only its Account Holder can use in Xcode. So an iPhone or iPad gets the app from TestFlight, below.
 
 ## Getting it onto devices
 
-For now, the app goes onto an iPhone or iPad from Xcode, as above. Next comes TestFlight, so that updates arrive without a cable and a few others can try it ([#84](https://github.com/chris-metz/verdandi/issues/84)); later, the App Store ([#85](https://github.com/chris-metz/verdandi/issues/85)).
+The app reaches iPhones and iPads through TestFlight, for the team's internal testers ([ADR 0012](../../docs/adr/0012-testflight-from-github-actions.md)); the App Store comes later ([#85](https://github.com/chris-metz/verdandi/issues/85)).
+
+```sh
+gh workflow run testflight.yml    # build main and upload it; testers get it once Apple has processed it
+gh run watch                      # follow the run
+```
+
+The workflow (`.github/workflows/testflight.yml`) runs only on `main`. It numbers each build one above the last in TestFlight; the version is `MARKETING_VERSION` in `project.yml`, changed by hand. A build expires after 90 days.
+
+It signs with four repository secrets. GitHub never shows a secret again, so each has its copy in the maintainer's password manager:
+
+| Secret                             | What it is                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `APP_STORE_CONNECT_KEY_IDENTIFIER` | the Key ID of the team API key "Verdandi" (App Store Connect › Users and Access › Integrations) |
+| `APP_STORE_CONNECT_ISSUER_ID`      | the Issuer ID, shown above the team keys                                                        |
+| `APP_STORE_CONNECT_PRIVATE_KEY`    | the key's `.p8` file, which Apple offers for download only once                                 |
+| `CERTIFICATE_PRIVATE_KEY`          | the Apple Distribution certificate's private key, RSA 2048 in PEM                               |
+
+To set them again from those copies:
+
+```sh
+gh secret set APP_STORE_CONNECT_KEY_IDENTIFIER   # asks for the value, hidden
+gh secret set APP_STORE_CONNECT_ISSUER_ID
+gh secret set APP_STORE_CONNECT_PRIVATE_KEY <AuthKey_KEYID.p8
+gh secret set CERTIFICATE_PRIVATE_KEY <ios_distribution_private_key
+```
+
+The workflow finds the certificate by its private key, so the same key signs with the same certificate on every run. A lost private key costs only a new certificate: with a new key in `CERTIFICATE_PRIVATE_KEY`, the next run makes one, and the Account Holder revokes the old one, as a team has three at most. A lost or revoked API key needs a new one from the Account Holder.
 
 What else is open for the iOS app is in issues [#87](https://github.com/chris-metz/verdandi/issues/87) to [#90](https://github.com/chris-metz/verdandi/issues/90): signing in with GitHub, sharing tracked repositories between devices, a blocking-map bug in the core, and trying it on a real device.
 

@@ -1,0 +1,83 @@
+# Uploads the iOS app to TestFlight for the team's internal testers, when
+# started by hand on main: `gh workflow run testflight.yml`
+# (docs/adr/0012-testflight-from-github-actions.md). It signs through the App
+# Store Connect API: Codemagic's CLI tools fetch the Apple Distribution
+# certificate and the App Store profile, and create them when there are none.
+# The secrets it needs, and how to set them again, are in apps/ios/README.md.
+name: TestFlight
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+# Two runs at once would take the same build number.
+concurrency: testflight
+
+jobs:
+  upload:
+    # Builds only what is on main, as release.sh releases only from main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: apps/ios
+    env:
+      BUNDLE_ID: io.github.chris-metz.verdandi
+      # The app's Apple ID in App Store Connect (App Information), which
+      # numbers its builds there. Not a secret.
+      APP_APPLE_ID: "6824181168"
+    steps:
+      - uses: actions/checkout@v7
+      # Node and pnpm in the versions pinned in mise.toml.
+      - uses: jdx/mise-action@v5
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - run: brew install xcodegen
+      - name: Install Codemagic's CLI tools
+        run: |
+          pipx install codemagic-cli-tools==0.70.0
+          pipx environment --value PIPX_BIN_DIR >>"$GITHUB_PATH"
+      - run: scripts/generate.sh
+      # The certificate is found by its private key, so every run signs with
+      # the same one, and a new one is made only when it has expired or been
+      # revoked: Apple allows a team three.
+      - name: Fetch the certificate and profile
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          CERTIFICATE_PRIVATE_KEY: ${{ secrets.CERTIFICATE_PRIVATE_KEY }}
+        run: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE --strict-match-identifier --create
+          keychain add-certificates
+          # Switches the generated project to manual signing with them.
+          xcode-project use-profiles --project Verdandi.xcodeproj
+      - name: Number the build
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          LATEST="$(app-store-connect get-latest-testflight-build-number "$APP_APPLE_ID")"
+          echo "BUILD=$((${LATEST:-0} + 1))" >>"$GITHUB_ENV"
+      - name: Build the IPA
+        run: |
+          xcode-project build-ipa --project Verdandi.xcodeproj --scheme Verdandi --config Release \
+            --archive-xcargs "COMPILER_INDEX_STORE_ENABLE=NO CURRENT_PROJECT_VERSION=$BUILD"
+          unzip -q -o build/ios/ipa/Verdandi.ipa 'Payload/Verdandi.app/Info.plist' -d build/ipa-check
+          PLIST=build/ipa-check/Payload/Verdandi.app/Info.plist
+          VERSION="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
+          [ "$(plutil -extract CFBundleVersion raw "$PLIST")" = "$BUILD" ] ||
+            { echo "The IPA isn't build $BUILD" >&2; exit 1; }
+          echo "Built Verdandi $VERSION ($BUILD)"
+      # Uploads only: the team's internal group gets the build once Apple has
+      # processed it. --testflight would send it to Beta App Review instead.
+      - name: Upload to TestFlight
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: app-store-connect publish --path build/ios/ipa/Verdandi.ipa
