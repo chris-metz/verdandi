@@ -16,13 +16,13 @@ import {
 } from "@verdandi/core/repository-address";
 import { issueLocatorOf } from "./go-to-issue";
 import { repositoryChipCell } from "./row-cells";
-import { presentScope, type SidebarScope as Scope } from "./scope";
+import { presentScope, sameScope, type SidebarScope as Scope } from "./scope";
 import { emptyFind, type FindState } from "./find";
 
 /**
  * A tab over the main area: a sidebar entry's list with the issue pages
  * opened from it one after another, or a new tab, with nothing chosen in
- * it yet.
+ * it yet. The pinned tabs stand first in the row.
  */
 export interface Tab {
   find?: FindState;
@@ -39,6 +39,11 @@ export interface Tab {
   from: RepositoryAddress | undefined;
   /** The tab it was opened from in the background, if it was. */
   opener: number | undefined;
+  /**
+   * Whether the user pinned it to keep it open: an entry chosen in the
+   * sidebar while it is shown opens in a new tab, leaving it as it was.
+   */
+  pinned: boolean;
 }
 
 /** The row of tabs, and the tabs closed while the window is open. */
@@ -56,7 +61,8 @@ export type TabAction =
   | { kind: "find"; find: FindState }
   /**
    * Shows an entry chosen in the sidebar in the tab shown, its list in
-   * place of what the tab showed, also of the entry's own issue pages.
+   * place of what the tab showed, also of the entry's own issue pages; or,
+   * while a pinned tab on another entry is shown, in a new tab, shown.
    */
   | { kind: "choose"; entry: Scope }
   /** Opens an entry chosen in the sidebar in a new tab, in the background. */
@@ -67,12 +73,21 @@ export type TabAction =
   /** Shows the next or the previous tab, around the ends. */
   | { kind: "step"; by: 1 | -1 }
   | { kind: "close"; id: number }
-  /** Closes every tab but this one, and shows it. */
+  /** Closes every tab but this one and the pinned ones, and shows it. */
   | { kind: "close-others"; id: number }
+  /** Closes the tabs to the right of this one, but the pinned ones. */
   | { kind: "close-right"; id: number }
+  /**
+   * Pins a tab on an entry, at the end of the pinned tabs, or unpins it, at
+   * the start of the others.
+   */
+  | { kind: "pin"; id: number; pinned: boolean }
   /** Reopens the tab closed last where it stood, and shows it. */
   | { kind: "reopen" }
-  /** Moves a tab before or after another, as it is dragged there. */
+  /**
+   * Moves a tab before or after another, as it is dragged there: a pinned
+   * one among the pinned tabs, and another among the others.
+   */
   | { kind: "move"; id: number; target: number; side: "before" | "after" }
   /** Goes to an issue page, or back, within the tab shown. */
   | { kind: "navigate"; navigation: IssueNavigation }
@@ -94,17 +109,21 @@ export function shownTab(state: TabState): Tab | undefined {
   return state.tabs.find((tab) => tab.id === state.shown);
 }
 
-/** The tabs as the core restored them, each issue page at its top. */
+/**
+ * The tabs as the core restored them, each issue page at its top, and the
+ * pinned ones first.
+ */
 export function restoredTabs({ tabs, shown }: RestoredTabs): TabState {
   const restored = tabs.map((tab, id): Tab =>
     tab.kind === "new"
-      ? { id, entry: undefined, stack: [], from: tab.from, opener: undefined }
+      ? newTab(id, tab.from)
       : {
           id,
           entry: tab.entry,
           stack: stackOf(tab.issues.map(issueName)),
           from: undefined,
           opener: undefined,
+          pinned: tab.pinned === true,
         },
   );
   if (restored.length === 0)
@@ -116,6 +135,7 @@ export function restoredTabs({ tabs, shown }: RestoredTabs): TabState {
           stack: [],
           from: undefined,
           opener: undefined,
+          pinned: false,
         },
       ],
       shown: 0,
@@ -123,7 +143,10 @@ export function restoredTabs({ tabs, shown }: RestoredTabs): TabState {
       closed: [],
     };
   return {
-    tabs: restored,
+    tabs: [
+      ...restored.filter((tab) => tab.pinned),
+      ...restored.filter((tab) => !tab.pinned),
+    ],
     shown: restored[Math.min(Math.max(shown, 0), restored.length - 1)]?.id ?? 0,
     next: restored.length,
     closed: [],
@@ -143,6 +166,7 @@ export function savedTabs(state: TabState): SavedTabs {
                 ? { kind: "view", id: tab.entry.view.id }
                 : tab.entry,
             issues: tab.stack.map(({ issue }) => issueName(issue)),
+            ...(tab.pinned ? { pinned: true } : {}),
           },
     ),
     shown: Math.max(
@@ -174,6 +198,11 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
     case "find":
       return updateShown(state, (tab) => ({ ...tab, find: action.find }));
     case "choose":
+      if (shown?.pinned && shown.entry && !sameScope(shown.entry, action.entry))
+        return {
+          ...openInBackground(state, action.entry, []),
+          shown: state.next,
+        };
       return updateShown(state, (tab) => ({
         ...tab,
         entry: action.entry,
@@ -207,22 +236,41 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
     case "close-others":
       return close(
         { ...state, shown: action.id },
-        state.tabs.flatMap((tab) => (tab.id === action.id ? [] : [tab.id])),
+        state.tabs.flatMap((tab) =>
+          tab.id === action.id || tab.pinned ? [] : [tab.id],
+        ),
       );
     case "close-right": {
       const index = state.tabs.findIndex((tab) => tab.id === action.id);
       if (index < 0) return state;
-      const right = state.tabs.slice(index + 1).map((tab) => tab.id);
+      const right = state.tabs
+        .slice(index + 1)
+        .flatMap((tab) => (tab.pinned ? [] : [tab.id]));
       return close(
         right.includes(state.shown) ? { ...state, shown: action.id } : state,
         right,
       );
     }
+    case "pin": {
+      const tab = state.tabs.find((each) => each.id === action.id);
+      if (!tab?.entry || tab.pinned === action.pinned) return state;
+      const tabs = state.tabs.filter((each) => each.id !== action.id);
+      tabs.splice(pinnedCount(tabs), 0, { ...tab, pinned: action.pinned });
+      return { ...state, tabs };
+    }
     case "reopen": {
       const last = state.closed.at(-1);
       if (!last) return state;
       const tabs = [...state.tabs];
-      tabs.splice(Math.min(last.index, tabs.length), 0, last.tab);
+      // Where it stood, among the pinned tabs if it was one, or else after.
+      const pinned = pinnedCount(tabs);
+      tabs.splice(
+        last.tab.pinned
+          ? Math.min(last.index, pinned)
+          : Math.max(Math.min(last.index, tabs.length), pinned),
+        0,
+        last.tab,
+      );
       return {
         ...state,
         tabs,
@@ -235,7 +283,7 @@ export function updateTabs(state: TabState, action: TabAction): TabState {
       if (!moved || action.id === action.target) return state;
       const tabs = state.tabs.filter((tab) => tab.id !== action.id);
       const target = tabs.findIndex((tab) => tab.id === action.target);
-      if (target < 0) return state;
+      if (target < 0 || tabs[target]?.pinned !== moved.pinned) return state;
       tabs.splice(target + (action.side === "after" ? 1 : 0), 0, moved);
       return { ...state, tabs };
     }
@@ -293,7 +341,19 @@ function closeFind(tab: Tab): Pick<Tab, "find"> {
 }
 
 function newTab(id: number, from: RepositoryAddress | undefined): Tab {
-  return { id, entry: undefined, stack: [], from, opener: undefined };
+  return {
+    id,
+    entry: undefined,
+    stack: [],
+    from,
+    opener: undefined,
+    pinned: false,
+  };
+}
+
+/** How many tabs are pinned, which stand first in the row. */
+function pinnedCount(tabs: readonly Tab[]): number {
+  return tabs.filter((tab) => tab.pinned).length;
 }
 
 /** The repository a tab shows, or that a bare `#12` names in a new tab. */
@@ -311,7 +371,8 @@ function updateShown(state: TabState, update: (tab: Tab) => Tab): TabState {
 
 /**
  * Opens a tab on an entry with these issue pages in the background, as a
- * browser does: after the tab shown, and the tabs opened from it already.
+ * browser does: after the tab shown, and the tabs opened from it already,
+ * but never among the pinned tabs.
  */
 function openInBackground(
   state: TabState,
@@ -324,8 +385,12 @@ function openInBackground(
     stack: stackOf(issues),
     from: undefined,
     opener: state.shown,
+    pinned: false,
   };
-  let index = state.tabs.findIndex((each) => each.id === state.shown);
+  let index = Math.max(
+    state.tabs.findIndex((each) => each.id === state.shown),
+    pinnedCount(state.tabs) - 1,
+  );
   while (state.tabs[index + 1]?.opener === state.shown) index++;
   const tabs = [...state.tabs];
   tabs.splice(index + 1, 0, tab);

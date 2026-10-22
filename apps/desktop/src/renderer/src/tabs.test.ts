@@ -52,7 +52,8 @@ function apply(state: TabState, ...actions: TabAction[]): TabState {
 
 /**
  * The row of tabs, each by its entry's label or `new`, with its issue
- * pages after a `>`, and the tab shown in brackets.
+ * pages after a `>`, a pinned one after a `^`, and the tab shown in
+ * brackets.
  */
 function row(state: TabState): string[] {
   return state.tabs.map((tab) => {
@@ -65,7 +66,7 @@ function row(state: TabState): string[] {
             ? tab.entry.view.name
             : "All";
     const pages = tab.stack.map((visit) => visit.issue.reference).join(" ");
-    const label = pages ? `${entry} > ${pages}` : entry;
+    const label = `${tab.pinned ? "^" : ""}${pages ? `${entry} > ${pages}` : entry}`;
     return tab.id === state.shown ? `[${label}]` : label;
   });
 }
@@ -383,6 +384,156 @@ describe("dragging tabs", () => {
   });
 });
 
+describe("pinning tabs", () => {
+  /** The tabs on these entries, the first shown, with these pinned. */
+  function pinnedOn(entries: Scope[], ...pinned: number[]): TabState {
+    const state = tabsOn(...entries);
+    return apply(
+      state,
+      ...pinned.map((index): TabAction => ({
+        kind: "pin",
+        id: idAt(tabsOn(...entries), index),
+        pinned: true,
+      })),
+    );
+  }
+
+  it("moves a tab pinned to the end of the pinned tabs, and one unpinned to the start of the others", () => {
+    let state = pinnedOn([api, web, bugs, all], 2);
+    expect(row(state)).toEqual(["^Bugs", "[api]", "web", "All"]);
+    state = apply(state, { kind: "pin", id: idAt(state, 3), pinned: true });
+    expect(row(state)).toEqual(["^Bugs", "^All", "[api]", "web"]);
+    state = apply(state, { kind: "pin", id: idAt(state, 0), pinned: false });
+    expect(row(state)).toEqual(["^All", "Bugs", "[api]", "web"]);
+  });
+
+  it("does not pin a new tab", () => {
+    const state = tabsOn("new");
+    expect(
+      apply(state, { kind: "pin", id: idAt(state, 0), pinned: true }),
+    ).toBe(state);
+  });
+
+  it("opens an entry chosen in the sidebar in a new tab after the pinned ones, shown, leaving the pinned tab as it was", () => {
+    let state = apply(
+      pinnedOn([all, web], 0),
+      { kind: "navigate", navigation: { kind: "open", issue: issue(1) } },
+      { kind: "choose", entry: api },
+    );
+    expect(row(state)).toEqual(["^All > #1", "[api]", "web"]);
+    state = apply(
+      state,
+      { kind: "show", id: idAt(state, 0) },
+      { kind: "choose", entry: bugs },
+    );
+    expect(row(state)).toEqual(["^All > #1", "api", "[Bugs]", "web"]);
+  });
+
+  it("goes back to its list when the entry chosen is its own, and opens issue pages in it", () => {
+    const state = apply(
+      pinnedOn([all], 0),
+      { kind: "navigate", navigation: { kind: "open", issue: issue(1) } },
+      { kind: "choose", entry: { kind: "all" } },
+      { kind: "navigate", navigation: { kind: "open", issue: issue(2) } },
+    );
+    expect(row(state)).toEqual(["[^All > #2]"]);
+  });
+
+  it("opens tabs in the background after the pinned ones", () => {
+    const state = apply(
+      pinnedOn([all, bugs, web], 0, 1),
+      { kind: "choose-in-new-tab", entry: api },
+      { kind: "open-in-new-tab", issue: issue(2) },
+    );
+    expect(row(state)).toEqual(["[^All]", "^Bugs", "api", "All > #2", "web"]);
+  });
+
+  it("spares the pinned tabs when closing the others or those to the right", () => {
+    let state = pinnedOn([all, bugs, api, web], 1);
+    state = apply(state, { kind: "close-others", id: idAt(state, 2) });
+    expect(row(state)).toEqual(["^Bugs", "[api]"]);
+    state = pinnedOn([all, bugs, api, web], 1, 2);
+    state = apply(state, { kind: "close-right", id: idAt(state, 0) });
+    expect(row(state)).toEqual(["[^Bugs]", "^api"]);
+  });
+
+  it("closes a pinned tab of its own, and reopens it pinned among the pinned tabs", () => {
+    let state = pinnedOn([all, bugs, api], 1);
+    state = apply(state, { kind: "close", id: idAt(state, 0) });
+    expect(row(state)).toEqual(["[All]", "api"]);
+    state = apply(
+      state,
+      { kind: "pin", id: idAt(state, 1), pinned: true },
+      { kind: "reopen" },
+    );
+    expect(row(state)).toEqual(["[^Bugs]", "^api", "All"]);
+  });
+
+  it("reopens a tab not pinned after the pinned ones", () => {
+    let state = tabsOn(all, api);
+    state = apply(state, { kind: "close", id: idAt(state, 0) });
+    state = apply(
+      state,
+      { kind: "pin", id: idAt(state, 0), pinned: true },
+      { kind: "reopen" },
+    );
+    expect(row(state)).toEqual(["^api", "[All]"]);
+  });
+
+  it("moves a pinned tab only among the pinned, and another only among the others", () => {
+    let state = pinnedOn([all, bugs, api, web], 0, 1);
+    const before = state;
+    state = apply(state, {
+      kind: "move",
+      id: idAt(state, 2),
+      target: idAt(state, 0),
+      side: "before",
+    });
+    expect(state).toBe(before);
+    state = apply(
+      state,
+      {
+        kind: "move",
+        id: idAt(state, 0),
+        target: idAt(state, 3),
+        side: "after",
+      },
+      {
+        kind: "move",
+        id: idAt(state, 0),
+        target: idAt(state, 1),
+        side: "after",
+      },
+    );
+    expect(row(state)).toEqual(["^Bugs", "[^All]", "api", "web"]);
+  });
+
+  it("stays pinned for the next launch, and the pinned tabs come first", () => {
+    const state = pinnedOn([api, web, bugs], 2);
+    expect(savedTabs(state).tabs.map((tab) => "pinned" in tab)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(row(restoredTabs(savedAndRestored(state)))).toEqual([
+      "^Bugs",
+      "[api]",
+      "web",
+    ]);
+    expect(
+      row(
+        restoredTabs({
+          tabs: [
+            { kind: "entry", entry: api, issues: [] },
+            { kind: "entry", entry: bugs, issues: [], pinned: true },
+          ],
+          shown: 0,
+        }),
+      ),
+    ).toEqual(["^Bugs", "[api]"]);
+  });
+});
+
 /** The tabs saved, as the core would restore them with every entry there. */
 function savedAndRestored(state: TabState): RestoredTabs {
   const saved = savedTabs(state);
@@ -518,6 +669,7 @@ describe("naming a tab", () => {
       })),
       from: undefined,
       opener: undefined,
+      pinned: false,
     };
   }
 

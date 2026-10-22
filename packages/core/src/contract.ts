@@ -504,14 +504,16 @@ export interface TabIssue {
 /**
  * A tab of the main area, as the interface keeps it for the next launch: a
  * sidebar entry's list with the issue pages opened from it one after
- * another, the last on top, or a new tab, with the tracked repository that
- * a bare `#12` names in it, if any.
+ * another, the last on top, pinned or not, or a new tab, with the tracked
+ * repository that a bare `#12` names in it, if any.
  */
 export type SavedTab =
   | {
       kind: "entry";
       entry: SidebarEntryKey | { kind: "all" } | { kind: "checkouts" };
       issues: TabIssue[];
+      /** Whether the user pinned it; there only if they did. */
+      pinned?: true | undefined;
     }
   | { kind: "new"; from: RepositoryAddress | undefined };
 
@@ -527,7 +529,13 @@ export interface SavedTabs {
  * with its current name and search, All, or Checkouts while it is on.
  */
 export type RestoredTab =
-  | { kind: "entry"; entry: SidebarSelection; issues: TabIssue[] }
+  | {
+      kind: "entry";
+      entry: SidebarSelection;
+      issues: TabIssue[];
+      /** Whether the user pinned it; there only if they did. */
+      pinned?: true | undefined;
+    }
   | { kind: "new"; from: TrackedRepository | undefined };
 
 /** The tabs as they were saved, and the one shown, by position. */

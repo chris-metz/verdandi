@@ -94,7 +94,8 @@ function reduceTabs(
  * The pane that has it follows the DOM focus, and survives the main area's
  * list being replaced when another entry is selected. The main area holds
  * tabs, restored as they were at launch, and the sidebar shows into the tab
- * shown, which has the keyboard once shown. What is on screen is read again
+ * shown, or into a new tab beside a pinned one, which has the keyboard once
+ * shown. What is on screen is read again
  * with `r`, and when it is old as the window regains focus. When GitHub is
  * read as another account, every tab stays, read anew as it shows. A
  * repository renamed or transferred stays in its tabs under its new name,
@@ -308,7 +309,8 @@ export function App() {
 
   /**
    * Shows an entry chosen in the sidebar in the tab shown, its list in place
-   * of what the tab showed.
+   * of what the tab showed; a pinned tab stays, and the entry opens in a new
+   * tab.
    */
   function select(scope: Scope) {
     dispatch({ kind: "choose", entry: scope });
@@ -747,6 +749,9 @@ export function App() {
               }}
               onCloseRight={(id) => {
                 dispatch({ kind: "close-right", id });
+              }}
+              onPin={(id, pinned) => {
+                dispatch({ kind: "pin", id, pinned });
               }}
               onMove={(id, target, side) => {
                 dispatch({ kind: "move", id, target, side });

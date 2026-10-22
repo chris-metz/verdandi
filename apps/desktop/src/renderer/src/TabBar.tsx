@@ -28,10 +28,14 @@ const itemClass =
  * with its icon, and the issue it shows dimmed after it. Tabs shrink to a
  * minimum width, their names shortening, the issue's repository first and
  * its number never, then the row scrolls sideways, keeping the tab shown
- * in view. A click shows a tab, a middle click or its × closes it,
- * and a right click offers to close it, the others, or those to its right.
- * Tabs are reordered by dragging. None takes the keyboard from the panes,
- * and the main area's mark of having it shows through the row.
+ * in view. The pinned tabs come first, small, each with its icon alone,
+ * or a repository's with the first two letters of its name, and no ×.
+ * A click shows a tab, a middle click or its × closes it, and a right
+ * click offers to pin or unpin it, and to close it, the others, or those
+ * to its right, the last two sparing the pinned tabs. Tabs are reordered
+ * by dragging, a pinned one among the pinned tabs. None takes the keyboard
+ * from the panes, and the main area's mark of having it shows through the
+ * row.
  */
 export function TabBar({
   sidebarButton,
@@ -43,6 +47,7 @@ export function TabBar({
   onClose,
   onCloseOthers,
   onCloseRight,
+  onPin,
   onMove,
   onNew,
 }: {
@@ -59,6 +64,7 @@ export function TabBar({
   onClose: (id: number) => void;
   onCloseOthers: (id: number) => void;
   onCloseRight: (id: number) => void;
+  onPin: (id: number, pinned: boolean) => void;
   /** Moves a tab before or after another, where it was dropped. */
   onMove: (id: number, target: number, side: "before" | "after") => void;
   onNew: () => void;
@@ -92,6 +98,7 @@ export function TabBar({
         {tabs.map((tab, index) => {
           const title = tabTitle(tab, tracked);
           const selected = tab.id === shown;
+          const { pinned } = tab;
           const element = (
             <div
               role="tab"
@@ -114,7 +121,13 @@ export function TabBar({
                 event.dataTransfer.setData("text/plain", title.tooltip);
               }}
               onDragOver={(event) => {
-                if (dragged.current === undefined) return;
+                // A pinned tab drops only among the pinned, another only
+                // among the others.
+                if (
+                  tabs.find((each) => each.id === dragged.current)?.pinned !==
+                  pinned
+                )
+                  return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
                 setDrop({ id: tab.id, side: sideOf(event) });
@@ -131,7 +144,10 @@ export function TabBar({
                 setDrop(undefined);
               }}
               className={cn(
-                "group relative flex max-w-64 min-w-32 flex-1 items-center gap-1.5 border-r px-3 text-xs select-none",
+                "group relative flex items-center border-r text-xs select-none",
+                pinned
+                  ? "w-9 shrink-0 justify-center"
+                  : "max-w-64 min-w-32 flex-1 gap-1.5 px-3",
                 selected
                   ? "bg-muted/40 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-selection-edge"
                   : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
@@ -155,26 +171,34 @@ export function TabBar({
                 />
               ) : title.kind === "new" ? (
                 <Plus aria-hidden className="size-3.5 shrink-0 opacity-70" />
+              ) : pinned ? (
+                <span aria-hidden className={cn(selected && "font-medium")}>
+                  {Array.from(title.name).slice(0, 2).join("")}
+                </span>
               ) : null}
-              <TabName title={title} selected={selected} />
-              <button
-                type="button"
-                aria-label="Close Tab"
-                tabIndex={-1}
-                // Closing a tab does not show it first.
-                onMouseDown={(event) => {
-                  event.stopPropagation();
-                }}
-                onClick={() => {
-                  onClose(tab.id);
-                }}
-                className={cn(
-                  "grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground",
-                  selected ? "visible" : "invisible group-hover:visible",
-                )}
-              >
-                <X aria-hidden className="size-3" />
-              </button>
+              {!pinned && (
+                <>
+                  <TabName title={title} selected={selected} />
+                  <button
+                    type="button"
+                    aria-label="Close Tab"
+                    tabIndex={-1}
+                    // Closing a tab does not show it first.
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                    onClick={() => {
+                      onClose(tab.id);
+                    }}
+                    className={cn(
+                      "grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground",
+                      selected ? "visible" : "invisible group-hover:visible",
+                    )}
+                  >
+                    <X aria-hidden className="size-3" />
+                  </button>
+                </>
+              )}
             </div>
           );
           return (
@@ -184,6 +208,17 @@ export function TabBar({
                 <ContextMenu.Positioner className="z-50">
                   <ContextMenu.Popup className="min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md outline-none">
                     <ContextMenu.Item
+                      // A new tab has nothing to keep.
+                      disabled={!tab.entry}
+                      onClick={() => {
+                        onPin(tab.id, !pinned);
+                      }}
+                      className={itemClass}
+                    >
+                      {pinned ? "Unpin Tab" : "Pin Tab"}
+                    </ContextMenu.Item>
+                    <ContextMenu.Separator className="my-1 h-px bg-border" />
+                    <ContextMenu.Item
                       onClick={() => {
                         onClose(tab.id);
                       }}
@@ -192,7 +227,9 @@ export function TabBar({
                       Close Tab
                     </ContextMenu.Item>
                     <ContextMenu.Item
-                      disabled={tabs.length < 2}
+                      disabled={tabs.every(
+                        (other) => other.id === tab.id || other.pinned,
+                      )}
                       onClick={() => {
                         onCloseOthers(tab.id);
                       }}
@@ -201,7 +238,9 @@ export function TabBar({
                       Close Other Tabs
                     </ContextMenu.Item>
                     <ContextMenu.Item
-                      disabled={index === tabs.length - 1}
+                      disabled={tabs
+                        .slice(index + 1)
+                        .every((other) => other.pinned)}
                       onClick={() => {
                         onCloseRight(tab.id);
                       }}

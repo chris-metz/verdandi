@@ -715,6 +715,8 @@ public enum SavedEntry: Encodable, Hashable, Sendable {
     }
 }
 
+/// A tab on an entry, as iOS saves it: never pinned, which only the
+/// Electron app does.
 public struct SavedTab: Encodable, Hashable, Sendable {
     public var entry: SavedEntry
     public var issues: [TabIssue]
@@ -767,6 +769,8 @@ public enum SidebarSelection: Decodable, Hashable, Sendable {
     }
 }
 
+/// A tab as it was saved, leaving out whether it is pinned, which only the
+/// Electron app saves.
 public enum RestoredTab: Decodable, Hashable, Sendable {
     case entry(SidebarSelection, issues: [TabIssue])
     case new

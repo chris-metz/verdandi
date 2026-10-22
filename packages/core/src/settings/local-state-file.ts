@@ -149,7 +149,12 @@ function readTab(value: unknown): StoredTab | undefined {
         return read ? [read] : [];
       })
     : [];
-  return { kind: "entry", entry, issues };
+  return {
+    kind: "entry",
+    entry,
+    issues,
+    ...(value.pinned === true ? { pinned: true } : {}),
+  };
 }
 
 function readTabIssue(value: unknown): TabIssue | undefined {

@@ -135,8 +135,12 @@ _Avoid_: checkout as a verb (a Checkout is a thing here), reset
 ### Tabs
 
 **Tab**:
-One of the places open side by side in the main area, shown one at a time: a sidebar entry's list with the issues opened from it one after another, or a new tab. Choosing a sidebar entry shows it in the tab shown. A tab is named after its sidebar entry, followed by the issue it shows, if any.
+One of the places open side by side in the main area, shown one at a time: a sidebar entry's list with the issues opened from it one after another, or a new tab. Choosing a sidebar entry shows it in the tab shown, unless that is a pinned tab. A tab is named after its sidebar entry, followed by the issue it shows, if any.
 _Avoid_: window, page
+
+**Pinned tab**:
+A tab the user has pinned to keep it open. It stands small at the left end of the row with the other pinned tabs, showing only its sidebar entry's icon, or a repository's first two letters. Choosing another sidebar entry while it is shown opens that entry in a new tab, and leaves the pinned tab as it was; the issues opened from its own list open in it. Closing the other tabs, or those to the right, spares it.
+_Avoid_: fixed tab, sticky tab, favourite
 
 **New tab**:
 A tab with nothing chosen in it yet, offering the recent issues and a field to go to an issue by its number or link.

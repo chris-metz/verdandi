@@ -180,6 +180,36 @@ it("restores every tab in its order, the one shown, and new tabs with the reposi
   });
 });
 
+it("keeps a tab pinned across a restart, and no other", async () => {
+  await core.saveTabs({
+    tabs: [
+      {
+        kind: "entry",
+        entry: { kind: "all" },
+        issues: [],
+        pinned: true,
+      },
+      { kind: "entry", entry: { kind: "all" }, issues: [] },
+    ],
+    shown: 1,
+  });
+  restart();
+  const { tabs } = await core.getTabs();
+  expect(tabs.map((tab) => tab.kind === "entry" && tab.pinned)).toEqual([
+    true,
+    undefined,
+  ]);
+  const state: unknown = JSON.parse(
+    await readFile(join(home, "desktop/state.json"), "utf8"),
+  );
+  expect(state).toMatchObject({
+    tabs: { tabs: [{ pinned: true }, { kind: "entry" }] },
+  });
+  expect(
+    (state as { tabs: { tabs: object[] } }).tabs.tabs[1],
+  ).not.toHaveProperty("pinned");
+});
+
 it("restores a repository with its ID, for removing it by its ID", async () => {
   await writeSettings({
     version: 1,

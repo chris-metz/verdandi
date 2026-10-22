@@ -166,11 +166,17 @@ export interface StoredTabs {
 }
 
 /**
- * A tab: a sidebar entry's list with the issue pages opened from it, or a
- * new tab with the repository a bare `#12` names in it.
+ * A tab: a sidebar entry's list with the issue pages opened from it, pinned
+ * or not, or a new tab with the repository a bare `#12` names in it.
  */
 export type StoredTab =
-  | { kind: "entry"; entry: StoredSidebarEntry; issues: TabIssue[] }
+  | {
+      kind: "entry";
+      entry: StoredSidebarEntry;
+      issues: TabIssue[];
+      /** There only if the user pinned it. */
+      pinned?: true | undefined;
+    }
   | { kind: "new"; from: StoredRepository | undefined };
 
 /** A tracked repository, by its ID once it is known. */

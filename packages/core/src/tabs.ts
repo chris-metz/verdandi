@@ -15,8 +15,9 @@ import type {
 } from "./settings/port.ts";
 
 /**
- * Keeps the tabs over the main area on this machine: each tab's entry and
- * the issue pages opened from its list, never the place within them.
+ * Keeps the tabs over the main area on this machine: each tab's entry, the
+ * issue pages opened from its list, never the place within them, and
+ * whether it is pinned.
  */
 export function createTabs(
   settings: SettingsStorage,
@@ -47,6 +48,7 @@ export function createTabs(
                 kind: "entry",
                 entry: entryOf(value, tab.entry, checkouts),
                 issues: tab.issues,
+                ...(tab.pinned ? { pinned: true } : {}),
               },
         ),
         shown: stored.shown,
@@ -69,6 +71,7 @@ export function createTabs(
                     kind: "entry",
                     entry: storedEntry(value, tab.entry),
                     issues: tab.issues,
+                    ...(tab.pinned ? { pinned: true } : {}),
                   },
             ),
             shown,
