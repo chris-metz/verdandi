@@ -15,11 +15,16 @@ import {
   machineKey,
   machineName,
   machineProblemText,
-  needsAttention,
   updateSummaryText,
   type BranchState,
 } from "./checkouts";
 import { MachineDialog, type MachineDialogPurpose } from "./MachineDialog";
+import {
+  PrototypeGroup,
+  PrototypeSwitcher,
+  prototypeNeedsAttention,
+  usePrototypeCheckouts,
+} from "./PROTOTYPE-checkout-switch";
 import { RefreshControl } from "./RefreshControl";
 import type { CheckoutsOn } from "./sidebar-entries";
 import { useNow } from "./use-now";
@@ -40,7 +45,10 @@ const tones: Record<BranchState["tone"], string> = {
  * GitHub, and the checkouts themselves. **Update all** brings every main
  * branch up to date; hosts are added and changed here.
  */
-export function CheckoutsPane({ checkouts }: { checkouts: CheckoutsOn }) {
+export function CheckoutsPane({ checkouts: read }: { checkouts: CheckoutsOn }) {
+  // PROTOTYPE (checkout switch): made-up checkouts instead of those read.
+  void read;
+  const checkouts = usePrototypeCheckouts();
   const [dialog, setDialog] = useState<MachineDialogPurpose>();
   const now = useNow();
 
@@ -52,7 +60,11 @@ export function CheckoutsPane({ checkouts }: { checkouts: CheckoutsOn }) {
   const rows = useMemo(
     () =>
       checkouts.repositories
-        .map((row, index) => ({ row, index, attention: needsAttention(row) }))
+        .map((row, index) => ({
+          row,
+          index,
+          attention: prototypeNeedsAttention(row),
+        }))
         .toSorted(
           (a, b) =>
             Number(b.attention) - Number(a.attention) || a.index - b.index,
@@ -162,7 +174,11 @@ export function CheckoutsPane({ checkouts }: { checkouts: CheckoutsOn }) {
                         key={machine ? machineKey(machine) : index}
                         className="border-b px-3 py-2 align-top"
                       >
-                        <Cell cell={cell} machine={machine} />
+                        <Cell
+                          cell={cell}
+                          machine={machine}
+                          repository={`${repository.owner}/${repository.name}`}
+                        />
                       </td>
                     );
                   })}
@@ -172,6 +188,8 @@ export function CheckoutsPane({ checkouts }: { checkouts: CheckoutsOn }) {
           </table>
         )}
       </div>
+      {/* PROTOTYPE (checkout switch) */}
+      <PrototypeSwitcher />
       {dialog && (
         <MachineDialog
           purpose={dialog}
@@ -244,9 +262,11 @@ function MachineHeading({
 function Cell({
   cell,
   machine,
+  repository,
 }: {
   cell: CheckoutCell;
   machine: Machine | undefined;
+  repository: string;
 }) {
   if (cell.status === "unknown")
     return (
@@ -265,9 +285,19 @@ function Cell({
     return <span className="text-xs text-muted-foreground">No checkout</span>;
   return (
     <div className="flex flex-col gap-2">
-      {cell.groups.map((group, index) => (
-        <Group key={index} group={group} />
-      ))}
+      {cell.groups.map((group, index) =>
+        machine ? (
+          <PrototypeGroup
+            key={index}
+            group={group}
+            repository={repository}
+            machine={machine}
+            index={index}
+          />
+        ) : (
+          <Group key={index} group={group} />
+        ),
+      )}
     </div>
   );
 }
