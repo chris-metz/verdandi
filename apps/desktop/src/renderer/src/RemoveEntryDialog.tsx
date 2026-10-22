@@ -11,7 +11,10 @@ import {
 import { repositoryLabel, type SidebarScope } from "./scope";
 
 /** A sidebar entry that can be removed: a tracked repository or a view. */
-export type RemovableEntry = Exclude<SidebarScope, { kind: "all" }>;
+export type RemovableEntry = Exclude<
+  SidebarScope,
+  { kind: "all" } | { kind: "checkouts" }
+>;
 
 /**
  * The confirmation every removal of a sidebar entry goes through, from its

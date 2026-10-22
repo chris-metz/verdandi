@@ -23,11 +23,14 @@ private struct StepFailed: Error, CustomStringConvertible {
 }
 
 /// The requests the app does not make through `Core`: the desktop's window
-/// and sidebar, and choosing gh, which iOS has none of; and the installed
-/// fonts, which the host gives the core as it starts it.
+/// and sidebar, and choosing gh, which iOS has none of; the installed
+/// fonts, which the host gives the core as it starts it; and Checkouts,
+/// which runs git and ssh, as iOS cannot.
 private let requestsNotOnIOS: Set<String> = [
     "getWindowState", "saveWindowState", "getSidebarHidden", "saveSidebarHidden",
     "getSidebarWidth", "saveSidebarWidth", "chooseGhExecutable", "setInstalledFonts",
+    "getCheckouts", "openCheckouts", "updateAllCheckouts", "saveHost", "removeHost",
+    "setCheckoutFolders",
 ]
 
 /// The events the core pushed, as the Swift types read them, and those they
@@ -558,7 +561,7 @@ private let ghFailed = ["kind": "gh-failed", "message": "Could not connect to ap
         #expect(try await core.resetSettings().ok)
 
         mark = contract.reads.mark
-        try Data(#"{ "version": 2, "repositories": [], "views": [] }"#.utf8).write(to: file)
+        try Data(#"{ "version": 3, "repositories": [], "views": [] }"#.utf8).write(to: file)
         try await core.reloadSettings()
         _ = try await contract.sidebar(since: mark, "the settings, of a newer version") { sidebar in
             if case .newerVersion = sidebar.settings { return true }

@@ -6,7 +6,7 @@ import type {
   SidebarDestination,
   TrackedRepository,
 } from "@verdandi/core/contract";
-import { ListFilter, TriangleAlert } from "lucide-react";
+import { FolderGit2, ListFilter, TriangleAlert } from "lucide-react";
 import { problemText } from "./problem-text";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import {
@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { accountLabel } from "./account-label";
 import { AllIcon } from "./AllIcon";
+import { CheckoutsCount } from "./CheckoutsCount";
 import { ConfigProblems } from "./ConfigProblems";
 import { opensInNewTab } from "./open-in-new-tab";
 import { entryShortcut, type ShortcutModifier } from "./pane-navigation";
@@ -38,12 +39,12 @@ import {
 } from "./sidebar-entries";
 
 /**
- * All, pinned on top, then the sidebar's sections, Repositories and Views,
- * then the account. Entries are selected by click or by the keys the window
- * handles, into the tab shown; the sidebar pane itself holds the keyboard,
- * not its entries. A click with ⌘ held (Ctrl elsewhere), or Open in New Tab
- * in its context menu, opens an entry in a new tab instead, in the
- * background.
+ * All, pinned on top with Checkouts while it is on, then the sidebar's
+ * sections, Repositories and Views, then the account. Entries are selected
+ * by click or by the keys the window handles, into the tab shown; the
+ * sidebar pane itself holds the keyboard, not its entries. A click with ⌘
+ * held (Ctrl elsewhere), or Open in New Tab in its context menu, opens an
+ * entry in a new tab instead, in the background.
  */
 export function Sidebar({
   sidebar,
@@ -119,7 +120,7 @@ export function Sidebar({
     const position = items.indexOf(item);
     const key = scopeLabel(item.scope);
     const entry: SidebarEntryKey | undefined =
-      item.scope.kind === "all"
+      item.scope.kind === "all" || item.scope.kind === "checkouts"
         ? undefined
         : item.scope.kind === "view"
           ? { kind: "view", id: item.scope.view.id }
@@ -412,10 +413,10 @@ interface MenuItem {
 }
 
 /**
- * An entry: All with its icon, a tracked repository's name with its owner
- * on a second line, or a view's name with its icon; then the open-issue
- * count, a view's match count, or the entry's shortcut while the modifier
- * is held.
+ * An entry: All or Checkouts with its icon, a tracked repository's name
+ * with its owner on a second line, or a view's name with its icon; then the
+ * open-issue count, a view's match count, how many checkouts are behind and
+ * ahead, or the entry's shortcut while the modifier is held.
  */
 function Entry({
   item,
@@ -481,7 +482,14 @@ function Entry({
     >
       {entry.section === "pinned" ? (
         <>
-          <AllIcon className="size-4 shrink-0 text-muted-foreground" />
+          {scope.kind === "checkouts" ? (
+            <FolderGit2
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          ) : (
+            <AllIcon className="size-4 shrink-0 text-muted-foreground" />
+          )}
           <span
             className={cn("min-w-0 flex-1 truncate", selected && "font-medium")}
           >
@@ -526,6 +534,8 @@ function Entry({
             className="size-4 shrink-0 text-warning"
           />
         </span>
+      ) : "checkouts" in item ? (
+        <CheckoutsCount checkouts={item.checkouts} />
       ) : "matches" in item ? (
         item.matches.status === "rejected" ? (
           <span title={`GitHub rejected this search: ${item.matches.message}`}>

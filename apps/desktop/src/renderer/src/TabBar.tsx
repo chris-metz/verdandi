@@ -1,6 +1,6 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import type { RepositoryAddress } from "@verdandi/core/contract";
-import { ListFilter, Plus, X } from "lucide-react";
+import { FolderGit2, ListFilter, Plus, X } from "lucide-react";
 import {
   useLayoutEffect,
   useRef,
@@ -143,6 +143,11 @@ export function TabBar({
             >
               {title.kind === "all" ? (
                 <AllIcon className="size-3.5 shrink-0 opacity-70" />
+              ) : title.kind === "checkouts" ? (
+                <FolderGit2
+                  aria-hidden
+                  className="size-3.5 shrink-0 opacity-70"
+                />
               ) : title.kind === "view" ? (
                 <ListFilter
                   aria-hidden

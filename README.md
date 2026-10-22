@@ -119,6 +119,14 @@ The main area holds tabs, and choosing a sidebar entry shows it in the tab shown
 
 **File → New Tab** (⌘T, Ctrl+T elsewhere) opens a tab that goes to an issue by `owner/name#12`, its link, or `#12` in the repository of the tab it came from, and lists the 20 issues you opened last. `#` offers the same over the tab shown. **Close Tab** is ⌘W, **Reopen Closed Tab** ⌘⇧T, and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab. The tabs and the recent issues are kept on this machine, in `state.json` beside the `gh` choice, and the tabs come back as they were at the next launch.
 
+## See your checkouts
+
+Turn on **Checkouts** under **Settings… → Checkouts**, or with `checkouts = true` in `config.toml`. Its sidebar entry, below All, counts the checkouts whose main branches are behind GitHub (↓) and those with commits not on GitHub (↑), the worktrees of one checkout counting once. Its page shows every tracked repository with a column per machine: each checkout of it, found a few levels deep in the machine's folders by a remote that names the repository on GitHub, with where each main branch stands. Verdandi fetches first, with the sidebar's counts, when they are older than five minutes.
+
+**Update all** brings every checkout's main branches up to date: a branch that is only behind GitHub moves forward, and one only GitHub has is created. It never merges, rebases or pushes, keeps changed files, and leaves a branch that is ahead, has gone apart from GitHub, or is checked out in a worktree, where an agent may work, marking it on the page. The main branches are `main`, `master`, `test`, `testing`, `dev` and `develop` unless you set others, in the settings or as `main_branches = ["main", "staging"]`.
+
+This machine's folders are `~/code` unless you change them on the page, kept on this machine in `state.json`. **Add host…** adds another machine by the address you would give `ssh`, e.g. `nuc.example.ts.net`, kept in `settings.json`. Verdandi runs the system's `ssh` and never lets it ask for anything, so the host must let you in without a key, as Tailscale SSH does through the host's Tailscale name; it needs bash and git. On Windows, checking this machine needs the bash of Git for Windows. The iOS app has no Checkouts.
+
 ## Choose the look
 
 How Verdandi looks is kept in `config.toml` in the config directory: `~/.config/verdandi/` on macOS and Linux (`$XDG_CONFIG_HOME/verdandi/` when that is set), `%APPDATA%\Verdandi\` on Windows, or `VERDANDI_HOME` when it is set. It is meant for your dotfiles. Every key is optional:

@@ -1,4 +1,5 @@
 import type {
+  Checkouts,
   IssueList,
   RecentIssue,
   RepositoryAddress,
@@ -7,6 +8,7 @@ import type {
   SidebarEntryKey,
   SidebarDestination,
   Screen,
+  SidebarEntries,
   TrackedRepository,
 } from "@verdandi/core/contract";
 import {
@@ -19,6 +21,7 @@ import {
   useState,
 } from "react";
 import { cn } from "@/lib/utils";
+import { useCheckouts } from "./checkouts";
 import { useConfig } from "./config";
 import { openedIssue, recentIssueOf, tabEntryOf } from "./go-to-issue";
 import { GoToIssueDialog } from "./GoToIssueDialog";
@@ -106,7 +109,11 @@ export function App() {
   const setup = useSetup();
   const blocked = setup?.status === "blocked";
   const sidebar = useSidebar();
-  const items = useMemo(() => entryOrder(sidebar), [sidebar]);
+  const checkouts = useCheckouts();
+  const items = useMemo(
+    () => entryOrder(sidebar, checkouts),
+    [sidebar, checkouts],
+  );
   const entries = useMemo(() => items.map((item) => item.scope), [items]);
   const tracked = useMemo(
     () =>
@@ -129,6 +136,7 @@ export function App() {
     if (selected?.kind === "view") {
       return { kind: "view", viewId: selected.view.id };
     }
+    if (selected?.kind === "checkouts") return { kind: "checkouts" };
     return selected && { kind: "list", scope: selected };
   }, [selected, shownIssueId]);
   const [focusedPane, setFocusedPane] = useState<Pane>("sidebar");
@@ -332,9 +340,9 @@ export function App() {
 
   // Open in New Tab, the same function for every pane all along, as rows
   // show again only when it changes.
-  const latest = useRef({ tabs, selected });
+  const latest = useRef({ tabs, selected, sidebar, checkouts });
   useLayoutEffect(() => {
-    latest.current = { tabs, selected };
+    latest.current = { tabs, selected, sidebar, checkouts };
   });
   const openInNewTab = useCallback((issue: IssueDestination) => {
     const { tabs, selected } = latest.current;
@@ -477,36 +485,59 @@ export function App() {
   );
 
   // A removal, a hand edit or Reset can remove an entry or rename a view,
-  // and GitHub can rename or transfer a repository, which stays in its tabs
-  // with their issue pages.
-  useEffect(
-    () =>
-      window.verdandi.on("sidebarChanged", (changed) => {
-        if (changed.status !== "read") return;
-        const scopes = entryOrder(changed).map((item) => item.scope);
-        /** An entry as the sidebar lists it now, or none once it is gone. */
-        function follow(entry: Scope): Scope | undefined {
-          const current = followSelection(entry, scopes, renamed.current);
-          if (current?.kind === "view" && entry.kind === "view")
-            return current.view.name !== entry.view.name ||
-              current.view.query !== entry.view.query
-              ? current
-              : entry;
-          return current && sameScope(current, entry) ? entry : current;
-        }
-        const { tabs } = latest.current;
-        for (const { entry } of [
-          ...(tabs?.tabs ?? []),
-          ...(tabs?.closed.map((closed) => closed.tab) ?? []),
-        ]) {
-          const current = entry && follow(entry);
-          if (entry && current?.kind === "repository" && current !== entry)
-            movePlace(entry, current);
-        }
-        dispatch({ kind: "follow-entries", follow });
-      }),
-    [],
-  );
+  // GitHub can rename or transfer a repository, which stays in its tabs
+  // with their issue pages, and Checkouts can be turned off.
+  useEffect(() => {
+    function followEntries(
+      changed: SidebarEntries,
+      checkouts: Checkouts | undefined,
+    ) {
+      if (changed.status !== "read") return;
+      const scopes = entryOrder(changed, checkouts).map((item) => item.scope);
+      /** An entry as the sidebar lists it now, or none once it is gone. */
+      function follow(entry: Scope): Scope | undefined {
+        // Until the core has said whether Checkouts is on, it stays.
+        if (entry.kind === "checkouts")
+          return checkouts === undefined || checkouts.status === "on"
+            ? entry
+            : undefined;
+        const current = followSelection(entry, scopes, renamed.current);
+        if (current?.kind === "view" && entry.kind === "view")
+          return current.view.name !== entry.view.name ||
+            current.view.query !== entry.view.query
+            ? current
+            : entry;
+        return current && sameScope(current, entry) ? entry : current;
+      }
+      const { tabs } = latest.current;
+      for (const { entry } of [
+        ...(tabs?.tabs ?? []),
+        ...(tabs?.closed.map((closed) => closed.tab) ?? []),
+      ]) {
+        const current = entry && follow(entry);
+        if (entry && current?.kind === "repository" && current !== entry)
+          movePlace(entry, current);
+      }
+      dispatch({ kind: "follow-entries", follow });
+    }
+    const unsubscribeSidebar = window.verdandi.on(
+      "sidebarChanged",
+      (changed) => {
+        followEntries(changed, latest.current.checkouts);
+      },
+    );
+    const unsubscribeCheckouts = window.verdandi.on(
+      "checkoutsChanged",
+      (changed) => {
+        const { sidebar } = latest.current;
+        if (sidebar) followEntries(sidebar, changed);
+      },
+    );
+    return () => {
+      unsubscribeSidebar();
+      unsubscribeCheckouts();
+    };
+  }, []);
 
   // Back in the window, what is on screen is read again if it is old.
   useEffect(() => {
@@ -738,6 +769,7 @@ export function App() {
               <MainArea
                 tab={tab.id}
                 scope={tab.entry}
+                checkouts={checkouts?.status === "on" ? checkouts : undefined}
                 repositories={
                   sidebar?.status === "read" ? sidebar.repositories : []
                 }

@@ -256,7 +256,10 @@ export type SettingsStatus =
  */
 export type Appearance = "system" | "light" | "dark";
 
-/** How Verdandi looks, as `config.toml` sets it. */
+/**
+ * How Verdandi looks, and which optional features are on and how they are
+ * set, as `config.toml` sets it.
+ */
 export interface Config {
   appearance: Appearance;
   /** The ID of the light theme. */
@@ -278,10 +281,32 @@ export interface Config {
    * and shrinks with it in proportion; spacing and icons stay as they are.
    */
   textSize: number;
+  /**
+   * Whether Checkouts is on: a sidebar entry that shows the checkouts of the
+   * tracked repositories on this machine and on hosts, and brings their main
+   * branches up to date. While it is off, Verdandi runs no git and no ssh.
+   */
+  checkouts: boolean;
+  /**
+   * The names of the main branches, the branches Update all keeps level
+   * with GitHub in every checkout: `defaultMainBranches` unless the user
+   * changes them.
+   */
+  mainBranches: string[];
 }
 
 /** The text sizes `config.toml` allows, in pixels, and the default. */
 export const textSizes = { smallest: 11, largest: 20, default: 14 } as const;
+
+/** The main branches unless the user changes them. */
+export const defaultMainBranches: readonly string[] = [
+  "main",
+  "master",
+  "test",
+  "testing",
+  "dev",
+  "develop",
+];
 
 /** `config.toml` as Verdandi read it, and what it uses of it. */
 export interface ConfigState {
@@ -456,8 +481,12 @@ export type SortOrder = "newest" | "updated";
  */
 export type ExpandableList = Scope | { kind: "view"; viewId: string };
 
-/** A sidebar entry, with the current view text when it is a view. */
-export type SidebarSelection = Scope | { kind: "view"; view: SavedView };
+/**
+ * A sidebar entry, with the current view text when it is a view: All, a
+ * tracked repository, a view, or Checkouts.
+ */
+export type SidebarSelection =
+  Scope | { kind: "view"; view: SavedView } | { kind: "checkouts" };
 
 /**
  * An issue page opened in a tab, as the place it was opened from named it,
@@ -481,7 +510,7 @@ export interface TabIssue {
 export type SavedTab =
   | {
       kind: "entry";
-      entry: SidebarEntryKey | { kind: "all" };
+      entry: SidebarEntryKey | { kind: "all" } | { kind: "checkouts" };
       issues: TabIssue[];
     }
   | { kind: "new"; from: RepositoryAddress | undefined };
@@ -494,8 +523,8 @@ export interface SavedTabs {
 
 /**
  * A tab as it was saved, its entry as the sidebar lists it now: a tracked
- * repository with its current `owner/name` and its ID, if known, or a view
- * with its current name and search.
+ * repository with its current `owner/name` and its ID, if known, a view
+ * with its current name and search, All, or Checkouts while it is on.
  */
 export type RestoredTab =
   | { kind: "entry"; entry: SidebarSelection; issues: TabIssue[] }
@@ -515,11 +544,15 @@ export interface RecentIssue {
   title: string;
 }
 
-/** What the main area shows: a scope's list, a view, or an issue page. */
+/**
+ * What the main area shows: a scope's list, a view, an issue page, or
+ * Checkouts.
+ */
 export type Screen =
   | { kind: "list"; scope: Scope }
   | { kind: "view"; viewId: string }
-  | { kind: "issue"; issueId: string };
+  | { kind: "issue"; issueId: string }
+  | { kind: "checkouts" };
 
 /** A GitHub label. */
 export interface Label {
@@ -1216,6 +1249,190 @@ export type RepositoryAddition = {
   | { status: "failed"; problem: Problem }
 );
 
+/**
+ * Another machine whose checkouts Verdandi reads over SSH, as `settings.json`
+ * keeps it.
+ */
+export interface Host {
+  id: string;
+  /** What Verdandi calls it, e.g. `NUC`. */
+  name: string;
+  /**
+   * Where `ssh` reaches it, e.g. `nuc.example.ts.net`: a name the user's SSH
+   * configuration knows, or an address.
+   */
+  address: string;
+  /** Where its checkouts are, e.g. `~/code`, as the host's shell names them. */
+  folders: string[];
+}
+
+/**
+ * A host as the user entered it, to save: a new host without an `id`, or
+ * the host with that `id`, which keeps it.
+ */
+export interface HostDraft {
+  id?: string;
+  name: string;
+  address: string;
+  folders: string[];
+}
+
+/** What became of saving a host. Nothing is saved unless it says `saved`. */
+export type HostSave =
+  { status: "saved"; host: Host } | { status: "failed"; message: string };
+
+/** The folders this machine's checkouts are in unless the user changes them. */
+export const defaultCheckoutFolders: readonly string[] = ["~/code"];
+
+/**
+ * Checkouts: the checkouts of the tracked repositories on this machine and on
+ * hosts. It is off while `config.toml` does not turn it on, and unavailable
+ * where Verdandi cannot run git, as on iOS.
+ */
+export type Checkouts =
+  | { status: "off" | "unavailable" }
+  | {
+      status: "on";
+      /** This machine first, then the hosts, in `settings.json`'s order. */
+      machines: Machine[];
+      /**
+       * One row per tracked repository, in the sidebar's order, with a cell
+       * for each machine.
+       */
+      repositories: CheckoutRow[];
+      /**
+       * How many checkout groups have a main branch behind GitHub, for the
+       * sidebar entry.
+       */
+      behind: number;
+      /** How many checkout groups have a main branch with commits not on GitHub. */
+      ahead: number;
+      /** Whether Update all runs. */
+      updating: boolean;
+      /** What the last Update all did, once one ran. */
+      lastUpdate: UpdateSummary | undefined;
+    };
+
+/** This machine or a host, as Checkouts shows it. */
+export type Machine = {
+  /** Where its checkouts are looked for, as its shell names them. */
+  folders: string[];
+  /** How far reading its checkouts has come, and how current they are. */
+  loading: MachineLoading;
+} & ({ kind: "this" } | { kind: "host"; host: Host });
+
+/**
+ * How far reading a machine's checkouts has come: as `LoadingState`, with
+ * why reading them failed.
+ */
+export type MachineLoading =
+  | { status: "loading" }
+  | {
+      status: "refreshing" | "current";
+      /** When the checkouts were read, in milliseconds since the epoch. */
+      updatedAt: number;
+    }
+  | { status: "stale"; updatedAt: number; problem: MachineProblem }
+  | { status: "failed"; problem: MachineProblem };
+
+/**
+ * Why a machine's checkouts could not be read:
+ *
+ * - `cannot-log-in`: `ssh` could not reach the host or log in without
+ *   asking, e.g. as the host wants a key. Tailscale SSH lets the user in
+ *   without one, through the host's Tailscale name.
+ * - `cannot-run`: `bash`, `ssh` or `git` is missing where it should run.
+ * - `failed`: anything else, with what went wrong.
+ */
+export interface MachineProblem {
+  kind: "cannot-log-in" | "cannot-run" | "failed";
+  message: string;
+}
+
+/** A tracked repository's checkouts, a cell per machine. */
+export interface CheckoutRow {
+  repository: RepositoryAddress;
+  /** A cell per machine, in the machines' order. */
+  cells: CheckoutCell[];
+}
+
+/**
+ * A tracked repository's checkouts on one machine: unknown until the
+ * machine's checkouts have been read, none when its folders hold none, or
+ * those found.
+ */
+export type CheckoutCell =
+  { status: "unknown" | "none" } | { status: "found"; groups: CheckoutGroup[] };
+
+/**
+ * The checkouts of a tracked repository on one machine that share their
+ * branches: a clone, and those of its worktrees in the machine's folders.
+ */
+export interface CheckoutGroup {
+  /** The clone's own first, when it is in the folders, then its worktrees. */
+  checkouts: Checkout[];
+  /**
+   * The main branches it has, in the order of the list of main branches.
+   * One it lacks, Update all creates from GitHub's.
+   */
+  mainBranches: MainBranch[];
+  /** Whether fetching from GitHub worked, as the checkouts were read. */
+  fetch: { ok: true } | { ok: false; message: string };
+}
+
+/** A clone of a tracked repository, or a worktree of one. */
+export interface Checkout {
+  /** Where it is on its machine, `~` for the home folder. */
+  path: string;
+  /** The branch checked out, or none when no branch is. */
+  branch: string | undefined;
+  /** How many files are changed, new ones included. */
+  changedFiles: number;
+}
+
+/** A main branch of a checkout group, against the branch it tracks on GitHub. */
+export interface MainBranch {
+  name: string;
+  /**
+   * How far it is ahead of and behind the branch it tracks, `none` when it
+   * tracks none, or `gone` when that branch was deleted.
+   */
+  upstream:
+    | { status: "none" | "gone" }
+    | { status: "tracking"; ahead: number; behind: number };
+  /** Why the last Update all left it behind GitHub, when it did. */
+  stuck?: StuckBranch | undefined;
+}
+
+/**
+ * Why Update all could not bring a main branch up to date:
+ *
+ * - `checked-out-elsewhere`: it is checked out in a worktree, not in the
+ *   clone's own checkout; an agent may work there. `message` names where.
+ * - `refused`: git refused, e.g. as merging would overwrite a changed file.
+ */
+export interface StuckBranch {
+  reason: "checked-out-elsewhere" | "refused";
+  message: string;
+}
+
+/** What the last Update all did, on every machine it could reach. */
+export interface UpdateSummary {
+  /** When it finished, in milliseconds since the epoch. */
+  at: number;
+  /** How many main branches it moved forward. */
+  moved: number;
+  /** How many main branches it created from GitHub's. */
+  created: number;
+  /**
+   * How many main branches behind GitHub it had to leave behind, those that
+   * went apart from GitHub included.
+   */
+  stuck: number;
+  /** How many machines it could not read or update. */
+  failedMachines: number;
+}
+
 /** The sidebar's widths in pixels: the narrowest, the widest and the default. */
 export const sidebarWidths = {
   narrowest: 180,
@@ -1561,6 +1778,39 @@ export interface CoreRequests {
    * is checked only for its type. The new state is pushed as `configChanged`.
    */
   setInstalledFonts: (families: string[]) => Promise<void>;
+  /**
+   * Checkouts as far as their machines have been read; changes are pushed
+   * as `checkoutsChanged`. While it is on, the first call reads every
+   * machine. A machine is read again, fetching from GitHub first, with the
+   * sidebar's counts: when it is older than five minutes, or failed, as a
+   * screen opens or is shown again; and at once as Checkouts is opened or
+   * refreshed, or its host, its folders or the main branches change.
+   */
+  getCheckouts: () => Promise<Checkouts>;
+  /** Shows Checkouts in the main area, reading every machine again. */
+  openCheckouts: () => Promise<void>;
+  /**
+   * **Update all**: brings every checkout's main branches on every machine
+   * up to date, after fetching from GitHub. A main branch only GitHub has is
+   * created; one that is only behind is moved forward; any other is left as
+   * it is, as is one checked out in a worktree, where an agent may work, or
+   * one whose merge would overwrite a changed file. Nothing is ever merged with a
+   * commit of its own, rebased or pushed. Progress is pushed as
+   * `checkoutsChanged`, ending with what it did; the call returns at once.
+   */
+  updateAllCheckouts: () => Promise<void>;
+  /**
+   * Saves a host to `settings.json`: a new one at the end, or the one with
+   * the draft's ID where it is. Its checkouts are read at once.
+   */
+  saveHost: (draft: HostDraft) => Promise<HostSave>;
+  /** Removes a host from `settings.json`. */
+  removeHost: (hostId: string) => Promise<SettingsChangeResult>;
+  /**
+   * Keeps the folders this machine's checkouts are in, on this machine, and
+   * reads them at once.
+   */
+  setCheckoutFolders: (folders: string[]) => Promise<SettingsChangeResult>;
 }
 
 /** Events the core pushes, by name, with their payloads. */
@@ -1598,6 +1848,11 @@ export interface CoreEvents {
    * or replaced.
    */
   configChanged: ConfigState;
+  /**
+   * Checkouts whenever they change: as `config.toml` turns it on or off,
+   * hosts or folders change, and as machines are read or brought up to date.
+   */
+  checkoutsChanged: Checkouts;
 }
 
 export type CoreEventName = keyof CoreEvents;
@@ -1660,6 +1915,12 @@ const requests: Record<keyof CoreRequests, true> = {
   getConfig: true,
   changeConfig: true,
   setInstalledFonts: true,
+  getCheckouts: true,
+  openCheckouts: true,
+  updateAllCheckouts: true,
+  saveHost: true,
+  removeHost: true,
+  setCheckoutFolders: true,
 };
 const events: Record<CoreEventName, true> = {
   setupChanged: true,
@@ -1672,6 +1933,7 @@ const events: Record<CoreEventName, true> = {
   rateLimitBudgetsChanged: true,
   repositorySuggestionsChanged: true,
   configChanged: true,
+  checkoutsChanged: true,
 };
 
 /** Every request name, for wiring the contract to a transport. */

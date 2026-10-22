@@ -118,7 +118,7 @@ it("keeps the last valid sidebar and refuses to overwrite an unknown field with 
 
 it("reads a newer version with unfamiliar fields but never writes or resets it", async () => {
   const future = {
-    version: 2,
+    version: 3,
     repositories: [{ name: "acme/api", color: "blue" }, { name: "acme/web" }],
     future: true,
   };
@@ -317,6 +317,39 @@ it.each([
     "views[1].id",
   ],
   [{ repositories: [] }, "version"],
+  [
+    {
+      version: 2,
+      hosts: [{ id: "nuc", name: "NUC", folders: ["~/code"] }],
+    },
+    "hosts[0].address",
+  ],
+  [
+    {
+      version: 2,
+      hosts: [{ id: "nuc", name: "NUC", address: "nuc", folders: [] }],
+    },
+    "hosts[0].folders",
+  ],
+  [
+    {
+      version: 2,
+      hosts: [
+        { id: "nuc", name: "NUC", address: "nuc", folders: ["~/code"] },
+        { id: "nuc", name: "Work", address: "work", folders: ["~/code"] },
+      ],
+    },
+    "hosts[1].id",
+  ],
+  [
+    {
+      version: 2,
+      hosts: [
+        { id: "nuc", name: "NUC", address: "nuc", folders: ["~"], typo: 1 },
+      ],
+    },
+    "hosts[0].typo",
+  ],
 ])(
   "rejects invalid settings without changing the file (%s)",
   async (data, location) => {

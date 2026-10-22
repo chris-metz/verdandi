@@ -13,6 +13,7 @@ public enum CoreEvent: Sendable {
     case rateLimitBudgetsChanged([RateLimitBudget])
     case repositorySuggestionsChanged(RepositorySuggestions)
     case configChanged(ConfigState)
+    case checkoutsChanged(Checkouts)
 
     /// Reads an event as the core pushed it, by name, or none for one this
     /// app does not know.
@@ -30,6 +31,7 @@ public enum CoreEvent: Sendable {
         case "rateLimitBudgetsChanged": return .rateLimitBudgetsChanged(try read([RateLimitBudget].self))
         case "repositorySuggestionsChanged": return .repositorySuggestionsChanged(try read(RepositorySuggestions.self))
         case "configChanged": return .configChanged(try read(ConfigState.self))
+        case "checkoutsChanged": return .checkoutsChanged(try read(Checkouts.self))
         default: return nil
         }
     }

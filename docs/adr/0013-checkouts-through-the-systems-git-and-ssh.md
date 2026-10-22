@@ -1,0 +1,21 @@
+# Read checkouts through the system's git and ssh, never asking, and change them only by moving main branches forward
+
+Checkouts reads the checkouts of the tracked repositories on this machine and on hosts, and Update all brings their main branches up to date. Verdandi reaches a host only through the system's `ssh`, as it reaches GitHub only through `gh`: it knows a host's address, and keys, agents and aliases come from the user's SSH configuration. It sends one bash script on the standard input of `bash -s`, here or through `ssh`, and nothing in the job passes through a shell's command line, as a host's login shell may not be bash. Every read and every update logs in afresh with `BatchMode=yes` and `IdentityAgent=none`, and git fetches the same way, so that nothing can ask for anything: a host must let the user in without a key, as Tailscale SSH does through the host's Tailscale name, or its column says it cannot log in. Update all is the first time Verdandi changes something outside its own files, and it only fast-forwards: a main branch that is only behind moves forward, by `git merge --ff-only` where the checkout itself has it checked out, which stops rather than overwrite a changed file, and elsewhere by fetching from the repository itself; one only GitHub has is created. Anything else is left and reported: a branch ahead of GitHub or gone apart from it, and one checked out in a worktree, where an agent may work.
+
+## Considered Options
+
+- **An SSH library in Verdandi** (`ssh2`): no system `ssh` needed, but Verdandi would have to rebuild the user's SSH configuration, agents and known hosts, and would hold keys.
+- **A helper on each host** that reports its checkouts, e.g. over HTTP in a tailnet: no SSH at all, but something to install, run and keep up on every host.
+- **Logging in when the user looks, and holding the connection**: hosts that need a key from a password manager would work, but Verdandi would manage a long-running `ssh` per host, and on Windows without shared connections. Every host of the one user Verdandi has so far lets them in through Tailscale SSH; a **Connect** button for hosts that need a key can join once one turns up.
+- **Using the agent and letting it ask**: keys from a password manager would work, but its window would pop up every five minutes in the background, e.g. after the Mac wakes.
+- **Pull, or a merge or rebase where a branch went apart**: one click would bring more up to date, but Verdandi would make commits, and could leave a checkout mid-merge with nobody looking.
+
+## Consequences
+
+- **Checkouts is off unless `config.toml` turns it on** (`checkouts = true`), with the list of main branches (`main_branches`) beside it: they say nothing private, and belong in dotfiles like a theme. ADR 0005 keeps `config.toml` for how Verdandi looks; it now also holds which optional features are on and how they are set. While it is off, Verdandi runs no git and no ssh.
+- **Hosts live in `settings.json`**, private by ADR 0002, as a host's address can name a private network. The file says version 2 only while it holds hosts, so that a version of Verdandi without them reads it without changing it, and every other file stays as earlier versions wrote it. This machine's folders are machine-local, in `state.json`.
+- **A short host name may miss Tailscale SSH**: it can resolve to an address in the local network, where OpenSSH answers and wants a key.
+- **Checking this machine needs bash and git**: macOS and Linux have them; on Windows, the bash of Git for Windows runs the script. A host needs bash and git too.
+- **iOS has no Checkouts**: it runs no processes (ADR 0010), so the core gets no checkout reader there.
+
+Decided in [See the checkouts of tracked repositories, here and on other hosts, and bring their main branches up to date](https://github.com/chris-metz/verdandi/issues/94).

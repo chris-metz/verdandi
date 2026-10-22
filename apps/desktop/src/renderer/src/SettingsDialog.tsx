@@ -17,6 +17,7 @@ import { useFonts } from "./installed-fonts";
 /** The dialog's sections, in its sidebar's order, each with its settings. */
 const sections = [
   { label: "Appearance", Settings: AppearanceSection },
+  { label: "Checkouts", Settings: CheckoutsSection },
 ] as const;
 
 /**
@@ -110,30 +111,16 @@ const appearances: readonly { value: Appearance; label: string }[] = [
  * TOML, they cannot be changed.
  */
 function AppearanceSection({ config }: { config: ConfigState }) {
-  // Why the last choice was not written, until the file changes.
-  const [error, setError] = useState<{ message: string; for: ConfigState }>();
+  const { error, choose } = useConfigChange(config);
   const disabled = config.status === "unreadable";
   const fonts = useFonts();
-
-  async function choose(change: Partial<Config>) {
-    setError(undefined);
-    let message: string;
-    try {
-      const result = await window.verdandi.changeConfig(change);
-      if (result.ok) return;
-      message = result.message;
-    } catch (cause) {
-      message = cause instanceof Error ? cause.message : String(cause);
-    }
-    setError({ message, for: config });
-  }
 
   return (
     <div className="flex flex-col gap-5">
       <FileProblems config={config} />
-      {error?.for === config && (
+      {error && (
         <p role="alert" className="text-xs break-words text-destructive">
-          {error.message}
+          {error}
         </p>
       )}
       <Setting label="Appearance">
@@ -212,6 +199,113 @@ function AppearanceSection({ config }: { config: ConfigState }) {
       <ConfigFileLink config={config} />
     </div>
   );
+}
+
+/**
+ * Whether Checkouts is on, and the main branches Update all keeps up to
+ * date, each written at once: the switch as it is clicked, the branches as
+ * the field is left or ↵ is pressed. While the file cannot be read as TOML,
+ * they cannot be changed.
+ */
+function CheckoutsSection({ config }: { config: ConfigState }) {
+  const { error, choose } = useConfigChange(config);
+  const disabled = config.status === "unreadable";
+  const { checkouts, mainBranches } = config.config;
+  const written = mainBranches.join(", ");
+
+  function saveBranches(text: string) {
+    const names = text.split(/[\s,]+/).filter((name) => name !== "");
+    if (names.join(", ") !== written) void choose({ mainBranches: names });
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <FileProblems config={config} />
+      {error && (
+        <p role="alert" className="text-xs break-words text-destructive">
+          {error}
+        </p>
+      )}
+      <Setting label="Checkouts">
+        {(labelId) => (
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              aria-labelledby={labelId}
+              checked={checkouts}
+              disabled={disabled}
+              onChange={(event) => {
+                void choose({ checkouts: event.target.checked });
+              }}
+              className="mt-0.5 size-4 shrink-0 accent-selection-edge"
+            />
+            <span className="text-xs text-muted-foreground">
+              Shows Checkouts in the sidebar: the checkouts of the tracked
+              repositories on this machine and on hosts, whether their main
+              branches are behind or ahead of GitHub, and Update all, which
+              brings them up to date. While it is off, Verdandi runs no git and
+              no ssh.
+            </span>
+          </label>
+        )}
+      </Setting>
+      <Setting label="Main branches">
+        {(labelId) => (
+          <>
+            <input
+              // It starts anew as the file changes, by hand too.
+              key={written}
+              aria-labelledby={labelId}
+              defaultValue={written}
+              disabled={disabled}
+              spellCheck={false}
+              autoComplete="off"
+              onBlur={(event) => {
+                saveBranches(event.currentTarget.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  saveBranches(event.currentTarget.value);
+                }
+              }}
+              className="h-line-8 rounded-md border bg-background px-2.5 font-mono text-[calc(13px*var(--text-scale))] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              The branches Update all keeps level with GitHub in every checkout,
+              separated by commas. It creates one GitHub has and a checkout
+              lacks.
+            </p>
+          </>
+        )}
+      </Setting>
+      <ConfigFileLink config={config} />
+    </div>
+  );
+}
+
+/**
+ * Writes a choice to `config.toml` at once, with why the last one was not
+ * written, until the file changes.
+ */
+function useConfigChange(config: ConfigState): {
+  error: string | undefined;
+  choose: (change: Partial<Config>) => Promise<void>;
+} {
+  const [error, setError] = useState<{ message: string; for: ConfigState }>();
+  async function choose(change: Partial<Config>) {
+    setError(undefined);
+    let message: string;
+    try {
+      const result = await window.verdandi.changeConfig(change);
+      if (result.ok) return;
+      message = result.message;
+    } catch (cause) {
+      message = cause instanceof Error ? cause.message : String(cause);
+    }
+    setError({ message, for: config });
+  }
+  return { error: error?.for === config ? error.message : undefined, choose };
 }
 
 /** A setting's name above its control, which it labels. */

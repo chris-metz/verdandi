@@ -18,6 +18,8 @@ function state(textSize: number): ConfigState {
       interfaceFont: null,
       codeFont: null,
       textSize,
+      checkouts: false,
+      mainBranches: ["main"],
     },
     file: "/home/octo/.config/verdandi/config.toml",
     status: "read",

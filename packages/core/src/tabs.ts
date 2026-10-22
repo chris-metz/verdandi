@@ -21,11 +21,14 @@ import type {
 export function createTabs(
   settings: SettingsStorage,
   localState: LocalStateStorage,
+  /** Whether Checkouts is on, so that a tab can show it. */
+  checkoutsOn: () => Promise<boolean>,
 ): Pick<CoreRequests, "getTabs" | "saveTabs"> {
   return {
     async getTabs() {
       const { tabs, selectedEntry } = await localState.read();
       const { value } = await settings.read();
+      const checkouts = await checkoutsOn();
       const stored = tabs ?? {
         tabs: [
           {
@@ -42,7 +45,7 @@ export function createTabs(
             ? { kind: "new", from: tab.from && trackedOf(value, tab.from) }
             : {
                 kind: "entry",
-                entry: entryOf(value, tab.entry),
+                entry: entryOf(value, tab.entry, checkouts),
                 issues: tab.issues,
               },
         ),
@@ -80,12 +83,14 @@ export function createTabs(
 
 /**
  * A stored entry as the sidebar lists it now: All in place of one that is
- * gone.
+ * gone, or of Checkouts while it is off.
  */
 function entryOf(
   settings: Settings,
   entry: StoredSidebarEntry,
+  checkouts: boolean,
 ): SidebarSelection {
+  if (entry.kind === "checkouts" && checkouts) return entry;
   if (entry.kind === "repository") {
     const repository = trackedOf(settings, entry);
     if (repository) return { kind: "repository", repository };
@@ -123,7 +128,7 @@ function trackedOf(
 /** An entry as it is stored: a tracked repository by its ID, once known. */
 function storedEntry(
   settings: Settings,
-  entry: SidebarEntryKey | { kind: "all" },
+  entry: SidebarEntryKey | { kind: "all" } | { kind: "checkouts" },
 ): StoredSidebarEntry {
   return entry.kind === "repository"
     ? storedRepository(settings, entry.repository)

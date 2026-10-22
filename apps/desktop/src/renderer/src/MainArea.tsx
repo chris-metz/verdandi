@@ -2,19 +2,22 @@ import type {
   RepositoryEntry,
   TrackedRepository,
 } from "@verdandi/core/contract";
+import { CheckoutsPane } from "./CheckoutsPane";
 import { IssueListPane } from "./IssueListPane";
 import { IssuePagePane } from "./IssuePagePane";
 import type { IssueNavigation, IssueVisit } from "./issue-navigation";
 import { presentScope, type SidebarScope as Scope } from "./scope";
+import type { CheckoutsOn } from "./sidebar-entries";
 import { ViewPane } from "./ViewPane";
 
 /**
- * One tab's sidebar entry's list and the issue pages opened from it. A
- * label clicked on a page returns to the list, filtered by it.
+ * One tab's sidebar entry's list and the issue pages opened from it, or
+ * Checkouts. A label clicked on a page returns to the list, filtered by it.
  */
 export function MainArea({
   tab,
   scope,
+  checkouts,
   stack,
   login,
   onNavigate,
@@ -29,6 +32,8 @@ export function MainArea({
   /** The tab it shows in. */
   tab: number;
   scope: Scope;
+  /** Checkouts, while it is on. */
+  checkouts: CheckoutsOn | undefined;
   repositories: readonly RepositoryEntry[];
   onSelectRepository: (repository: TrackedRepository) => void;
   onRemoveRepository: ((repository: TrackedRepository) => void) | undefined;
@@ -45,7 +50,9 @@ export function MainArea({
   hasKeyboard: boolean;
 }) {
   const current = stack.at(-1);
-  if (!current)
+  if (!current) {
+    if (scope.kind === "checkouts")
+      return checkouts ? <CheckoutsPane checkouts={checkouts} /> : null;
     return scope.kind === "view" ? (
       <ViewPane
         tab={tab}
@@ -74,6 +81,7 @@ export function MainArea({
         onGoToIssue={onGoToIssue}
       />
     );
+  }
   return (
     <IssuePagePane
       key={`${String(stack.length)}:${current.issue.id}`}
@@ -85,12 +93,14 @@ export function MainArea({
       onNavigate={onNavigate}
       onGoToIssue={onGoToIssue}
       onFilterLabel={(label) => {
-        void window.verdandi.addLabelToFilter(
-          scope.kind === "view"
-            ? { kind: "view", viewId: scope.view.id }
-            : scope,
-          label,
-        );
+        // Checkouts has no issues to filter.
+        if (scope.kind !== "checkouts")
+          void window.verdandi.addLabelToFilter(
+            scope.kind === "view"
+              ? { kind: "view", viewId: scope.view.id }
+              : scope,
+            label,
+          );
         onNavigate({ kind: "list" });
       }}
     />

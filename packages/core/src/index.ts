@@ -1,5 +1,13 @@
 export type * from "./contract.ts";
 export { createCore, type CoreOptions } from "./core.ts";
+export { createCheckoutReader } from "./checkouts/git-adapter.ts";
+export type {
+  CheckoutJob,
+  CheckoutReader,
+  MachineAddress,
+  MachineReport,
+  ReportedGroup,
+} from "./checkouts/port.ts";
 export { createGhAdapter, type GhAdapterOptions } from "./github/gh-adapter.ts";
 export type { CommandResult, CommandRunner } from "./github/command-runner.ts";
 export type {

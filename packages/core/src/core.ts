@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { createCheckouts } from "./checkouts/checkouts.ts";
+import type { CheckoutReader } from "./checkouts/port.ts";
 import {
   sidebarWidths,
   type Contract,
@@ -6,6 +9,7 @@ import {
   type CoreEvents,
   type ExpandableList,
   type Label,
+  type Host,
   type RepositoryAddress,
   type SavedView,
   type Screen,
@@ -77,6 +81,11 @@ export interface CoreOptions {
   localState: LocalStateStorage;
   /** How Verdandi looks, which the user may edit by hand while it runs. */
   config: ConfigStorage;
+  /**
+   * Reads the checkouts of the tracked repositories, here and on hosts;
+   * without it, as where Verdandi cannot run git, Checkouts is unavailable.
+   */
+  checkouts?: CheckoutReader;
   /** The time, in milliseconds since the epoch: the system clock by default. */
   now?: () => number;
   /**
@@ -122,6 +131,7 @@ export function createCore({
   settings,
   localState,
   config,
+  checkouts: checkoutReader,
   now = Date.now,
   wait = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -421,7 +431,30 @@ export function createCore({
     } else session.lists.changeLabelFilter(list, apply);
   }
 
-  const tabs = createTabs(settings, localState);
+  const checkouts = createCheckouts({
+    reader: checkoutReader,
+    settings,
+    localState,
+    config: async () => (await config.read()).config,
+    // git's credential helper may run gh, which a launch from Finder does
+    // not find on its PATH.
+    programFolders: () => {
+      const current = setup.current();
+      if (current.status !== "ready") return [];
+      const paths = host.platform === "win32" ? path.win32 : path.posix;
+      return [paths.dirname(current.gh.path)];
+    },
+    clock,
+    push: (state) => {
+      events.emit("checkoutsChanged", state);
+    },
+  });
+  const tabs = createTabs(
+    settings,
+    localState,
+    async () =>
+      checkoutReader !== undefined && (await config.read()).config.checkouts,
+  );
   const recentIssues = createRecentIssues(localState);
   async function settingsChanged() {
     session.views.settingsChanged((await settings.read()).value);
@@ -429,6 +462,7 @@ export function createCore({
     await session.pages.settingsChanged();
     await session.sidebar.reload();
     session.picker.settingsChanged();
+    checkouts.changed();
     queue.sweep();
   }
   const stopWatchingSettings = settings.watch(() => {
@@ -437,6 +471,7 @@ export function createCore({
   const stopWatchingConfig = config.watch(() => {
     void config.read().then((state) => {
       events.emit("configChanged", state);
+      checkouts.changed();
     });
   });
 
@@ -610,6 +645,7 @@ export function createCore({
       show({ kind: "view", viewId });
       session.views.open(viewId);
       session.sidebar.revalidate();
+      checkouts.revalidate();
       return Promise.resolve();
     },
     async skipRepositoryPicker() {
@@ -635,6 +671,7 @@ export function createCore({
       show({ kind: "issue", issueId });
       session.pages.open(issueId);
       session.sidebar.revalidate();
+      checkouts.revalidate();
       return Promise.resolve();
     },
     renewMediaLinks(issueId, bodyId) {
@@ -676,7 +713,10 @@ export function createCore({
     },
     async changeConfig(change) {
       const result = await config.change(change);
-      if (result.ok) events.emit("configChanged", await config.read());
+      if (result.ok) {
+        events.emit("configChanged", await config.read());
+        checkouts.changed();
+      }
       return result;
     },
     async setInstalledFonts(families) {
@@ -696,6 +736,7 @@ export function createCore({
       show({ kind: "list", scope });
       session.lists.open(scope);
       session.sidebar.revalidate();
+      checkouts.revalidate();
       return Promise.resolve();
     },
     switchState(scope, state) {
@@ -738,6 +779,8 @@ export function createCore({
       if (screen?.kind === "issue") pages.refresh(screen.issueId);
       if (screen?.kind === "view") session.views.refresh(screen.viewId);
       sidebar.refresh();
+      if (screen?.kind === "checkouts") checkouts.refresh();
+      else checkouts.revalidate();
       return Promise.resolve();
     },
     revalidate(screen) {
@@ -748,6 +791,7 @@ export function createCore({
       if (screen?.kind === "issue") pages.revalidate(screen.issueId);
       if (screen?.kind === "view") session.views.revalidate(screen.viewId);
       sidebar.revalidate();
+      checkouts.revalidate();
       return Promise.resolve();
     },
     retry(screen) {
@@ -757,6 +801,7 @@ export function createCore({
       if (screen?.kind === "issue") pages.retry(screen.issueId);
       if (screen?.kind === "view") session.views.retry(screen.viewId);
       sidebar.retry();
+      checkouts.retry();
       return Promise.resolve();
     },
     getRateLimits() {
@@ -764,6 +809,82 @@ export function createCore({
     },
     getRateLimitBudgets() {
       return Promise.resolve(queue.budgets());
+    },
+    getCheckouts() {
+      return checkouts.read();
+    },
+    openCheckouts() {
+      show({ kind: "checkouts" });
+      session.sidebar.revalidate();
+      checkouts.refresh();
+      return Promise.resolve();
+    },
+    updateAllCheckouts() {
+      checkouts.updateAll();
+      return Promise.resolve();
+    },
+    async saveHost(draft) {
+      const name = draft.name.trim();
+      const address = draft.address.trim();
+      const folders = keptFolders(draft.folders);
+      if (!name) return { status: "failed", message: "Give the host a name." };
+      // An address starting with a dash would reach ssh as an option.
+      if (!address || /\s/.test(address) || address.startsWith("-"))
+        return {
+          status: "failed",
+          message:
+            "Give the host an address ssh reaches it at, e.g. nuc.example.ts.net, without spaces.",
+        };
+      if (folders.length === 0)
+        return {
+          status: "failed",
+          message:
+            "Name at least one folder its checkouts are in, e.g. ~/code.",
+        };
+      const read = await settings.read();
+      if (!read.ok) return { status: "failed", message: read.message };
+      if (read.status.status !== "writable")
+        return { status: "failed", message: read.status.message };
+      const { hosts } = read.value;
+      const existing =
+        draft.id === undefined
+          ? undefined
+          : hosts.find(({ id }) => id === draft.id);
+      if (draft.id !== undefined && !existing)
+        return {
+          status: "failed",
+          message: "The host is no longer in settings.json.",
+        };
+      const host: Host = {
+        id: existing?.id ?? newId(hosts.map(({ id }) => id)),
+        name,
+        address,
+        folders,
+      };
+      const result = await settings.saveHost(host);
+      if (!result.ok) return { status: "failed", message: result.message };
+      await settingsChanged();
+      return { status: "saved", host };
+    },
+    async removeHost(hostId) {
+      const { value } = await settings.read();
+      if (!value.hosts.some(({ id }) => id === hostId)) return { ok: true };
+      const result = await settings.removeHost(hostId);
+      if (!result.ok) return result;
+      await settingsChanged();
+      return { ok: true };
+    },
+    async setCheckoutFolders(folders) {
+      const kept = keptFolders(folders);
+      if (kept.length === 0)
+        return {
+          ok: false,
+          message:
+            "Name at least one folder this machine's checkouts are in, e.g. ~/code.",
+        };
+      await localState.update({ checkoutFolders: kept });
+      checkouts.changed();
+      return { ok: true };
     },
     on: events.on,
   };
@@ -774,9 +895,21 @@ export function createCore({
  * and it stays with the view.
  */
 function newViewId(views: readonly SavedView[]): string {
+  return newId(views.map(({ id }) => id));
+}
+
+/** Folders as the user entered them, trimmed, without empty ones. */
+function keptFolders(folders: readonly string[]): string[] {
+  return folders
+    .map((folder) => folder.trim())
+    .filter((folder) => folder !== "");
+}
+
+/** A short ID that none of these is, made up once and kept. */
+function newId(taken: readonly string[]): string {
   for (;;) {
     const id = randomUUID().replaceAll("-", "").slice(0, 12);
-    if (!views.some((view) => view.id === id)) return id;
+    if (!taken.includes(id)) return id;
   }
 }
 

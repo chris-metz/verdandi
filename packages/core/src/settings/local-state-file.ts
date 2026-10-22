@@ -38,6 +38,7 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
       selectedEntry,
       tabs,
       recentIssues,
+      checkoutFolders,
     } = await readObject();
     return {
       selectedEntry: readStoredEntry(selectedEntry),
@@ -52,6 +53,12 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
       ghExecutable:
         typeof ghExecutable === "string" && paths.isAbsolute(ghExecutable)
           ? ghExecutable
+          : undefined,
+      checkoutFolders:
+        Array.isArray(checkoutFolders) &&
+        checkoutFolders.length > 0 &&
+        checkoutFolders.every(isText)
+          ? checkoutFolders
           : undefined,
     };
   }
@@ -94,6 +101,7 @@ export function createLocalStateFile(host: HostEnvironment): LocalStateStorage {
 function readStoredEntry(value: unknown): LocalState["selectedEntry"] {
   if (!isObject(value)) return undefined;
   if (value.kind === "all") return { kind: "all" };
+  if (value.kind === "checkouts") return { kind: "checkouts" };
   if (value.kind === "view" && typeof value.id === "string" && value.id.trim())
     return { kind: "view", id: value.id };
   if (value.kind === "repository" && "id" in value)

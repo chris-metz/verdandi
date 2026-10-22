@@ -5,6 +5,7 @@ import {
   stringify,
 } from "@decimalturn/toml-patch";
 import {
+  defaultMainBranches,
   textSizes,
   type Appearance,
   type Config,
@@ -38,6 +39,8 @@ export function defaultConfig(themes: ThemeCatalogue): Config {
     interfaceFont: null,
     codeFont: null,
     textSize: textSizes.default,
+    checkouts: false,
+    mainBranches: [...defaultMainBranches],
   };
 }
 
@@ -92,7 +95,7 @@ export function readConfig(
       problem(
         [
           checked.problem,
-          `Verdandi uses ${shown(fallbacks[checked.field])} instead.`,
+          `Verdandi uses ${shownDefault(fallbacks[checked.field])} instead.`,
           // The interface lists the installed families as it starts.
           ...(checked.missingFont === undefined
             ? []
@@ -118,11 +121,13 @@ const fileKeys = {
   interfaceFont: "font",
   codeFont: "code_font",
   textSize: "text_size",
+  checkouts: "checkouts",
+  mainBranches: "main_branches",
 } as const satisfies Record<keyof Config, string>;
 
 /**
  * Whether a value is its setting's default, which the file leaves out: no
- * font, or the default text size.
+ * font, the default text size, Checkouts off, or the default main branches.
  */
 function leftOut(field: string, value: unknown): boolean {
   switch (field) {
@@ -131,6 +136,14 @@ function leftOut(field: string, value: unknown): boolean {
       return value === null;
     case "textSize":
       return value === textSizes.default;
+    case "checkouts":
+      return value === false;
+    case "mainBranches":
+      return (
+        Array.isArray(value) &&
+        value.length === defaultMainBranches.length &&
+        value.every((branch, index) => branch === defaultMainBranches[index])
+      );
     default:
       return false;
   }
@@ -213,9 +226,56 @@ function checkValue(
         problem: `${key} is ${shown(value)}, but must be a whole number from ${String(smallest)} to ${String(largest)}${quotes}.`,
       };
     }
+    case fileKeys.checkouts: {
+      if (typeof value === "boolean") return { use: { checkouts: value } };
+      const quotes = typeof value === "string" ? ", without quotes" : "";
+      return {
+        field: "checkouts",
+        problem: `${key} is ${shown(value)}, but must be true or false${quotes}.`,
+      };
+    }
+    case fileKeys.mainBranches: {
+      const field = "mainBranches";
+      if (!Array.isArray(value))
+        return {
+          field,
+          problem: `${key} is ${shown(value)}, but must be a list of branch names in quotes, e.g. ["main", "dev"].`,
+        };
+      if (value.length === 0)
+        return {
+          field,
+          problem: `${key} is an empty list, but must name at least one branch.`,
+        };
+      for (const branch of value as unknown[]) {
+        if (typeof branch !== "string")
+          return {
+            field,
+            problem: `${key} holds ${shown(branch)}, but must hold only branch names, in quotes.`,
+          };
+        if (!isBranchName(branch))
+          return {
+            field,
+            problem: `${key} holds ${shown(branch)}, which cannot be a branch's name.`,
+          };
+      }
+      return { use: { mainBranches: [...new Set(value as string[])] } };
+    }
     default:
       return undefined;
   }
+}
+
+/**
+ * Whether a name can be a branch's, as git checks it: no spaces, control
+ * characters or `~^:?*[\`, no `..`, `@{` or `//`, and no part that starts
+ * with a dot or ends with `.lock`.
+ */
+function isBranchName(name: string): boolean {
+  return (
+    /^[^\s\p{Cc}~^:?*[\\]+$/u.test(name) &&
+    !/^[-/]|\/$|\.$|\.\.|@\{|\/\/|(^|\/)\.|\.lock(\/|$)/.test(name) &&
+    name !== "@"
+  );
 }
 
 /**
@@ -310,6 +370,13 @@ function place(line: number | undefined): string {
   return line === undefined
     ? "config.toml"
     : `config.toml, line ${String(line)}`;
+}
+
+/** A default as the file would give it: a list of names in brackets. */
+function shownDefault(value: unknown): string {
+  return Array.isArray(value)
+    ? `[${value.map((item) => JSON.stringify(item)).join(", ")}]`
+    : shown(value);
 }
 
 /** A value as the user wrote it, or what kind of value it is. */

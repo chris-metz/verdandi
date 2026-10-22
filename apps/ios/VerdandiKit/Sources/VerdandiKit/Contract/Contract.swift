@@ -380,7 +380,8 @@ public enum Appearance: String, Codable, Hashable, Sendable, CaseIterable {
     case system, light, dark
 }
 
-/// How Verdandi looks, as `config.toml` sets it.
+/// How Verdandi looks, and which optional features are on and how they
+/// are set, as `config.toml` sets it.
 public struct Config: Codable, Hashable, Sendable {
     public var appearance: Appearance
     public var lightTheme: String
@@ -388,6 +389,31 @@ public struct Config: Codable, Hashable, Sendable {
     public var interfaceFont: String?
     public var codeFont: String?
     public var textSize: Int
+    /// Whether Checkouts is on, which needs git: iOS never shows it.
+    public var checkouts: Bool
+    /// The names of the main branches, which Checkouts brings up to date.
+    public var mainBranches: [String]
+}
+
+// MARK: - Checkouts
+
+/// Whether Checkouts is on. It reads git checkouts, here and over ssh,
+/// which iOS cannot run, so the core never has it on here: the app reads
+/// only whether it is, and none of what it shows on the desktop.
+public enum Checkouts: Decodable, Hashable, Sendable {
+    case off, unavailable, on
+
+    private enum CodingKeys: String, CodingKey { case status }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.tag(.status) {
+        case "off": self = .off
+        case "unavailable": self = .unavailable
+        case "on": self = .on
+        case let tag: throw c.unknownTag(tag, .status)
+        }
+    }
 }
 
 /// A change to `config.toml`: only the keys given are written. A font set
@@ -620,11 +646,13 @@ public enum ExpandableList: Encodable, Hashable, Sendable {
     private enum ViewKeys: String, CodingKey { case kind, viewId }
 }
 
-/// What the main area shows: a scope's list, a view, or an issue page.
+/// What the main area shows: a scope's list, a view, an issue page, or
+/// Checkouts.
 public enum Screen: Encodable, Hashable, Sendable {
     case list(Scope)
     case view(id: String)
     case issue(id: String)
+    case checkouts
 
     private enum CodingKeys: String, CodingKey { case kind, scope, viewId, issueId }
 
@@ -640,6 +668,8 @@ public enum Screen: Encodable, Hashable, Sendable {
         case .issue(let id):
             try c.encode("issue", forKey: .kind)
             try c.encode(id, forKey: .issueId)
+        case .checkouts:
+            try c.encode("checkouts", forKey: .kind)
         }
     }
 }
@@ -661,11 +691,12 @@ public struct TabIssue: Codable, Hashable, Sendable {
     }
 }
 
-/// A tab's entry when it is saved: All, a repository, or a view.
+/// A tab's entry when it is saved: All, a repository, a view, or Checkouts.
 public enum SavedEntry: Encodable, Hashable, Sendable {
     case all
     case repository(RepositoryAddress)
     case view(id: String)
+    case checkouts
 
     private enum CodingKeys: String, CodingKey { case kind, repository, id }
 
@@ -679,6 +710,7 @@ public enum SavedEntry: Encodable, Hashable, Sendable {
         case .view(let id):
             try c.encode("view", forKey: .kind)
             try c.encode(id, forKey: .id)
+        case .checkouts: try c.encode("checkouts", forKey: .kind)
         }
     }
 }
@@ -712,11 +744,14 @@ public struct SavedTabs: Encodable, Hashable, Sendable {
     }
 }
 
-/// A sidebar entry, with the current view text when it is a view.
+/// A sidebar entry, with the current view text when it is a view: All, a
+/// repository, a view, or Checkouts, which the core restores only where
+/// Checkouts is on, never on iOS.
 public enum SidebarSelection: Decodable, Hashable, Sendable {
     case all
     case repository(RepositoryAddress)
     case view(SavedView)
+    case checkouts
 
     private enum CodingKeys: String, CodingKey { case kind, repository, view }
 
@@ -726,6 +761,7 @@ public enum SidebarSelection: Decodable, Hashable, Sendable {
         case "all": self = .all
         case "repository": self = .repository(try c.decode(RepositoryAddress.self, forKey: .repository))
         case "view": self = .view(try c.decode(SavedView.self, forKey: .view))
+        case "checkouts": self = .checkouts
         case let tag: throw c.unknownTag(tag, .kind)
         }
     }

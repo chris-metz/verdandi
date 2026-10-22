@@ -7,7 +7,16 @@ export interface SettingsDocument {
   version: number;
   repositories: { name: string; id?: number }[];
   views: { id: string; name: string; query: string }[];
+  hosts: { id: string; name: string; address: string; folders: string[] }[];
 }
+
+/**
+ * The newest version Verdandi knows: 2 has hosts, which version 1 does not.
+ * A file says version 2 only while it holds hosts, so that a version of
+ * Verdandi without them reads it without changing it, and every other file
+ * stays as earlier versions wrote it.
+ */
+export const knownVersion = 2;
 
 /** Strict known schema; future versions may carry fields this app cannot write. */
 export function parseSettings(text: string): SettingsDocument {
@@ -28,8 +37,8 @@ export function parseSettings(text: string): SettingsDocument {
   if (!Number.isSafeInteger(root.version) || (root.version as number) < 0)
     throw new Error("version must be a non-negative integer.");
   const version = root.version as number;
-  const strict = version <= 1;
-  fields(root, ["version", "repositories", "views"], "", strict);
+  const strict = version <= knownVersion;
+  fields(root, ["version", "repositories", "views", "hosts"], "", strict);
   const repositories = list(
     root.repositories === undefined ? [] : root.repositories,
     "repositories",
@@ -70,7 +79,29 @@ export function parseSettings(text: string): SettingsDocument {
       return { id, name, query };
     },
   );
-  return { version, repositories, views };
+  const hostIds = new Set<string>();
+  const hosts = list(root.hosts === undefined ? [] : root.hosts, "hosts").map(
+    (value, index) => {
+      const at = `hosts[${String(index)}]`;
+      const entry = object(value, at);
+      fields(entry, ["id", "name", "address", "folders"], at, strict);
+      const id = string(entry.id, `${at}.id`);
+      if (hostIds.has(id)) throw new Error(`${at}.id is duplicated.`);
+      hostIds.add(id);
+      const folders = list(entry.folders, `${at}.folders`).map(
+        (folder, place) => string(folder, `${at}.folders[${String(place)}]`),
+      );
+      if (folders.length === 0)
+        throw new Error(`${at}.folders must name at least one folder.`);
+      return {
+        id,
+        name: string(entry.name, `${at}.name`),
+        address: string(entry.address, `${at}.address`),
+        folders,
+      };
+    },
+  );
+  return { version, repositories, views, hosts };
 }
 function object(value: unknown, at: string): Record<string, unknown> {
   if (!isObject(value)) throw new Error(`${at} is not an object.`);

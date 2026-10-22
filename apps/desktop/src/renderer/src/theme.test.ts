@@ -54,6 +54,8 @@ describe("followAppearance", () => {
         interfaceFont: null,
         codeFont: null,
         textSize: 14,
+        checkouts: false,
+        mainBranches: ["main"],
         ...next,
       },
       file: "/home/octo/.config/verdandi/config.toml",

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { SidebarDestination, SidebarEntryKey } from "../contract.ts";
 import { userDataDirectory, type HostEnvironment } from "../directories.ts";
 import {
+  knownVersion,
   parseSettings,
   type SettingsDocument as Document,
 } from "./settings-document.ts";
@@ -40,7 +41,7 @@ export function createSettingsFile(
     );
     return result;
   }
-  let lastValid: Settings = { repositories: [], views: [] };
+  let lastValid: Settings = { repositories: [], views: [], hosts: [] };
   async function readDocument(): Promise<{
     document: Document;
     text: string | undefined;
@@ -54,7 +55,7 @@ export function createSettingsFile(
         (await missing())
       )
         return {
-          document: { version: 1, repositories: [], views: [] },
+          document: { version: 1, repositories: [], views: [], hosts: [] },
           text: undefined,
         };
       throw new Error(`Cannot read ${file}: ${message(error)}`, {
@@ -77,9 +78,14 @@ export function createSettingsFile(
     }
   }
 
-  async function writeDocument(document: Document) {
+  async function writeDocument({ hosts, ...document }: Document) {
     await mkdir(folder, { recursive: true });
-    await writeWhole(file, `${JSON.stringify(document, null, 2)}\n`, {
+    // Only a file with hosts says the version that knows them.
+    const written =
+      hosts.length === 0
+        ? { ...document, version: 1 }
+        : { ...document, version: knownVersion, hosts };
+    await writeWhole(file, `${JSON.stringify(written, null, 2)}\n`, {
       mode: 0o600,
       rename: renameFile,
     });
@@ -105,12 +111,13 @@ export function createSettingsFile(
                 : [];
             }),
             views: document.views,
+            hosts: document.hosts,
           };
           return {
             ok: true,
             value: lastValid,
             status:
-              document.version > 1
+              document.version > knownVersion
                 ? { status: "newer-version", message: newerVersion }
                 : { status: "writable" },
             exists: text !== undefined,
@@ -146,7 +153,7 @@ export function createSettingsFile(
                 json !== null &&
                 "version" in json &&
                 typeof json.version === "number" &&
-                json.version > 1
+                json.version > knownVersion
               )
                 return { ok: false as const, message: newerVersion };
             } catch {
@@ -168,8 +175,13 @@ export function createSettingsFile(
             `${file}.broken-${stamp}-${randomUUID().slice(0, 8)}`,
             renameFile,
           );
-          await writeDocument({ version: 1, repositories: [], views: [] });
-          lastValid = { repositories: [], views: [] };
+          await writeDocument({
+            version: 1,
+            repositories: [],
+            views: [],
+            hosts: [],
+          });
+          lastValid = { repositories: [], views: [], hosts: [] };
           return { ok: true as const };
         } catch (error) {
           return { ok: false as const, message: message(error) };
@@ -267,9 +279,22 @@ export function createSettingsFile(
         document.views = document.views.filter((view) => view.id !== id);
       });
     },
+    saveHost(host) {
+      return change((document) => {
+        const entry = document.hosts.find(({ id }) => id === host.id);
+        const saved = { ...host, folders: [...host.folders] };
+        if (entry) Object.assign(entry, saved);
+        else document.hosts.push(saved);
+      });
+    },
+    removeHost(id) {
+      return change((document) => {
+        document.hosts = document.hosts.filter((host) => host.id !== id);
+      });
+    },
     createIfMissing() {
       return serial(async () => {
-        const empty: Document = { version: 1, repositories: [], views: [] };
+        const empty = { version: 1, repositories: [], views: [] };
         try {
           await mkdir(folder, { recursive: true });
           // Created only if missing, even when another writer races it.
@@ -296,7 +321,7 @@ export function createSettingsFile(
     return serial(async () => {
       try {
         const { document, text } = await readDocument();
-        if (document.version > 1) throw new Error(newerVersion);
+        if (document.version > knownVersion) throw new Error(newerVersion);
         apply(document);
         if (document.version < 1 && text !== undefined) {
           try {
@@ -309,7 +334,6 @@ export function createSettingsFile(
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           }
         }
-        document.version = 1;
         await writeDocument(document);
         return { ok: true as const };
       } catch (error) {
@@ -388,4 +412,4 @@ function message(error: unknown): string {
 }
 
 const newerVersion =
-  "settings.json was written by a newer version. Update Verdandi to change repositories or views.";
+  "settings.json was written by a newer version. Update Verdandi to change repositories, views or hosts.";

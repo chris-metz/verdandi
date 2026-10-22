@@ -2,6 +2,7 @@ import { lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  createCheckoutReader,
   createConfigFile,
   createCore,
   createGhAdapter,
@@ -68,6 +69,7 @@ function start() {
     settings: createSettingsFile(host),
     localState: createLocalStateFile(host),
     config: createConfigFile(host, themeCatalogue, fontDefaults),
+    checkouts: createCheckoutReader({ runCommand, host }),
   });
 
   // Native menus and dialogs, and the renderer's prefers-color-scheme, follow

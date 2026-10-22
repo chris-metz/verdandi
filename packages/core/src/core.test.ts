@@ -7580,7 +7580,7 @@ it("keeps an open issue page of a removed repository, its issue now external", a
 
 it.each([
   "{broken",
-  JSON.stringify({ version: 2, repositories: [{ name: "acme/api" }] }),
+  JSON.stringify({ version: 3, repositories: [{ name: "acme/api" }] }),
 ])(
   "leaves tracking in place when removal cannot be saved (%s)",
   async (contents) => {

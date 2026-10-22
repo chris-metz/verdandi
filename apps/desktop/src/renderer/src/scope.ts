@@ -16,8 +16,8 @@ export interface ScopePresentation {
   /** What it lists, e.g. as its sidebar entry's tooltip. */
   description: string;
   /**
-   * Its sidebar entry: All pinned on top, or a repository in the
-   * Repositories section, with its owner on a second line.
+   * Its sidebar entry: All or Checkouts pinned on top, or a repository in
+   * the Repositories section, with its owner on a second line.
    */
   entry:
     | { section: "pinned"; name: string }
@@ -36,6 +36,14 @@ export function presentScope(scope: SidebarScope): ScopePresentation {
       repositoryChips: true,
     };
   }
+  if (scope.kind === "checkouts")
+    return {
+      label: "Checkouts",
+      description:
+        "The checkouts of the tracked repositories, on this machine and on hosts",
+      entry: { section: "pinned", name: "Checkouts" },
+      repositoryChips: false,
+    };
   if (scope.kind === "view")
     return {
       label: scope.view.name,

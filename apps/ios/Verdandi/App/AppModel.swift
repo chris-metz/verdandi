@@ -221,6 +221,8 @@ final class AppModel {
         case .rateLimitBudgetsChanged(let budgets): self.budgets = budgets
         case .repositorySuggestionsChanged(let suggestions): self.suggestions = suggestions
         case .configChanged(let config): self.config = config
+        // Checkouts needs git, which iOS cannot run.
+        case .checkoutsChanged: break
         }
     }
 
@@ -339,7 +341,8 @@ final class AppModel {
             case .list(let scope): try await core.openList(scope)
             case .view(let id): try await core.openView(id)
             case .issue(let id): try await core.openIssuePage(id)
-            case nil: break
+            // Checkouts needs git, which iOS cannot run.
+            case .checkouts, nil: break
             }
         }
     }
@@ -507,6 +510,8 @@ final class AppModel {
         case .all: selection = .all
         case .repository(let repository): selection = .repository(repository)
         case .view(let view): selection = .view(id: view.id)
+        // Never restored here, as Checkouts is never on.
+        case .checkouts: selection = .all
         }
         let routes = issues.map { IssueRoute(id: $0.id, reference: $0.reference, title: $0.title, url: $0.url) }
         selectedIssue = routes.first

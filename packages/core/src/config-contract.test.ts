@@ -30,6 +30,8 @@ const defaults = {
   interfaceFont: null,
   codeFont: null,
   textSize: 14,
+  checkouts: false,
+  mainBranches: ["main", "master", "test", "testing", "dev", "develop"],
 };
 
 /** A core with its files under `home`. */
@@ -87,6 +89,8 @@ it("reads every key", async () => {
       'font = "Inter"',
       'code_font = "JetBrains Mono"',
       "text_size = 16",
+      "checkouts = true",
+      'main_branches = ["main", "staging"]',
       "",
     ].join("\n"),
   );
@@ -98,6 +102,8 @@ it("reads every key", async () => {
       interfaceFont: "Inter",
       codeFont: "JetBrains Mono",
       textSize: 16,
+      checkouts: true,
+      mainBranches: ["main", "staging"],
     },
     file: file(),
     status: "read",
@@ -116,6 +122,12 @@ it.each([
   ["text_size = 11", { textSize: 11 }],
   ["text_size = 20", { textSize: 20 }],
   ["text_size = 15.0", { textSize: 15 }],
+  ["checkouts = true", { checkouts: true }],
+  ["checkouts = false", { checkouts: false }],
+  [
+    'main_branches = ["main", "staging"]',
+    { mainBranches: ["main", "staging"] },
+  ],
   ["", {}],
 ])("reads %j, with defaults for the other keys", async (text, config) => {
   await write(text);
@@ -217,6 +229,42 @@ it.each([
     "text_size",
     "config.toml, line 2: text_size is NaN, but must be a whole number from 11 to 20. Verdandi uses 14 instead.",
   ],
+  [
+    "checkouts in quotes",
+    'checkouts = "true"',
+    "checkouts",
+    'config.toml, line 2: checkouts is "true", but must be true or false, without quotes. Verdandi uses false instead.',
+  ],
+  [
+    "checkouts that is not true or false",
+    "checkouts = 1",
+    "checkouts",
+    "config.toml, line 2: checkouts is 1, but must be true or false. Verdandi uses false instead.",
+  ],
+  [
+    "main branches as one name",
+    'main_branches = "main"',
+    "main_branches",
+    'config.toml, line 2: main_branches is "main", but must be a list of branch names in quotes, e.g. ["main", "dev"]. Verdandi uses ["main", "master", "test", "testing", "dev", "develop"] instead.',
+  ],
+  [
+    "main branches without a branch",
+    "main_branches = []",
+    "main_branches",
+    'config.toml, line 2: main_branches is an empty list, but must name at least one branch. Verdandi uses ["main", "master", "test", "testing", "dev", "develop"] instead.',
+  ],
+  [
+    "a main branch that is not in quotes",
+    'main_branches = ["main", 2]',
+    "main_branches",
+    'config.toml, line 2: main_branches holds 2, but must hold only branch names, in quotes. Verdandi uses ["main", "master", "test", "testing", "dev", "develop"] instead.',
+  ],
+  [
+    "a main branch that cannot be a branch's name",
+    'main_branches = ["main", "my branch"]',
+    "main_branches",
+    'config.toml, line 2: main_branches holds "my branch", which cannot be a branch\'s name. Verdandi uses ["main", "master", "test", "testing", "dev", "develop"] instead.',
+  ],
 ])(
   "falls back to the default for %s, and still uses the other values",
   async (_, line, key, message) => {
@@ -240,6 +288,8 @@ it.each([
       font: { interfaceFont: null },
       code_font: { codeFont: null },
       text_size: { textSize: 14 },
+      checkouts: { checkouts: false },
+      main_branches: { mainBranches: defaults.mainBranches },
     }[key];
     expect(state).toMatchObject({
       config: { ...others, ...fallback },
@@ -614,6 +664,38 @@ it("creates no file for the default text size", async () => {
   expect(await readdir(home)).not.toContain("config.toml");
 });
 
+it("writes that Checkouts is on, and removes the key for off, keeping everything else", async () => {
+  await write('appearance = "dark" # at night\n');
+  expect(await core.changeConfig({ checkouts: true })).toEqual({ ok: true });
+  expect(await read()).toBe(
+    'appearance = "dark" # at night\ncheckouts = true\n',
+  );
+  expect(await core.getConfig()).toMatchObject({
+    config: { appearance: "dark", checkouts: true },
+    problems: [],
+  });
+  expect(await core.changeConfig({ checkouts: false })).toEqual({ ok: true });
+  expect(await read()).toBe('appearance = "dark" # at night\n');
+});
+
+it("writes the main branches as a list, and removes the key for the default", async () => {
+  await write("checkouts = true\n");
+  expect(
+    await core.changeConfig({ mainBranches: ["main", "staging"] }),
+  ).toEqual({ ok: true });
+  expect(await read()).toBe(
+    'checkouts = true\nmain_branches = [ "main", "staging" ]\n',
+  );
+  expect(await core.getConfig()).toMatchObject({
+    config: { checkouts: true, mainBranches: ["main", "staging"] },
+    problems: [],
+  });
+  expect(
+    await core.changeConfig({ mainBranches: [...defaults.mainBranches] }),
+  ).toEqual({ ok: true });
+  expect(await read()).toBe("checkouts = true\n");
+});
+
 it("writes nothing while the file is not valid TOML", async () => {
   const text = 'appearance = "dark"\ndark_theme = \n';
   await write(text);
@@ -682,6 +764,18 @@ it.each([
   [
     { textSize: Number.NaN },
     "text_size is NaN, but must be a whole number from 11 to 20. Nothing was written.",
+  ],
+  [
+    { checkouts: "yes" as unknown as boolean },
+    'checkouts is "yes", but must be true or false, without quotes. Nothing was written.',
+  ],
+  [
+    { mainBranches: [] },
+    "main_branches is an empty list, but must name at least one branch. Nothing was written.",
+  ],
+  [
+    { mainBranches: ["main", "my branch"] },
+    'main_branches holds "my branch", which cannot be a branch\'s name. Nothing was written.',
   ],
 ])("writes nothing it could not use itself: %j", async (change, message) => {
   const text = 'appearance = "dark"\n';

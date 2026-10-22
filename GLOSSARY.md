@@ -55,7 +55,7 @@ The column beside the main area that lists the sidebar entries, with the account
 _Avoid_: collapse (an issue's sub-issues collapse), drawer, navigation
 
 **Sidebar entry**:
-One of the places the user opens from the sidebar: All, a tracked repository, or a view. Each has its own list.
+One of the places the user opens from the sidebar: All, Checkouts while it is on, a tracked repository, or a view. Each but Checkouts has its own list.
 _Avoid_: tab, folder, source
 
 **All**:
@@ -97,6 +97,32 @@ _Avoid_: global search, view search
 **Text match**:
 A single occurrence found by Find in an issue row or the open issue page. One issue can contain several text matches.
 _Avoid_: match (without "text"), matching issue
+
+### Checkouts
+
+**Checkouts**:
+The sidebar entry below All, there while the user has turned it on, that shows where each tracked repository's checkouts stand against GitHub, on this machine and on hosts.
+_Avoid_: git status, sync, repositories overview
+
+**Checkout**:
+A clone of a tracked repository, on this machine or on a host, known by a remote that names the repository on GitHub. A worktree is a checkout too.
+_Avoid_: clone, working copy, local repository
+
+**Host**:
+Another machine whose checkouts Verdandi reads over SSH.
+_Avoid_: server, remote
+
+**Machine**:
+This machine or a host: where Checkouts finds checkouts, each in a column of its own.
+_Avoid_: computer, device
+
+**Main branch**:
+A branch whose name is in the user's list of main branches, such as `main`, `test` or `dev`, which Update all keeps level with GitHub in every checkout.
+_Avoid_: default branch, base branch
+
+**Update all**:
+Bringing every checkout's main branches level with GitHub at once: moving forward those that are only behind, and creating those only GitHub has. It never merges, rebases or pushes.
+_Avoid_: pull, sync
 
 ### Tabs
 

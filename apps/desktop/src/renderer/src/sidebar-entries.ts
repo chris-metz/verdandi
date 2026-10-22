@@ -1,4 +1,5 @@
 import type {
+  Checkouts,
   OpenIssueCount,
   RepositoryAddress,
   SidebarEntries,
@@ -13,33 +14,45 @@ import {
 } from "./scope";
 
 /**
- * A sidebar entry: what it selects, and its open-issue count, or a view's
- * match count.
+ * A sidebar entry: what it selects, and its open-issue count, a view's
+ * match count, or Checkouts as it is.
  */
 export type SidebarItem =
   | {
-      scope: Exclude<Scope, { kind: "view" }>;
+      scope: Exclude<Scope, { kind: "view" } | { kind: "checkouts" }>;
       openIssues: OpenIssueCount;
       unavailable?: RepositoryEntry["unavailable"];
     }
-  | { scope: Extract<Scope, { kind: "view" }>; matches: ViewMatchCount };
+  | { scope: Extract<Scope, { kind: "view" }>; matches: ViewMatchCount }
+  | { scope: { kind: "checkouts" }; checkouts: CheckoutsOn };
+
+/** Checkouts while it is on. */
+export type CheckoutsOn = Extract<Checkouts, { status: "on" }>;
 
 /**
  * The sidebar's entries in visual order, which ⌘/Ctrl+1…9 and ↑/↓ follow:
- * All, pinned on top and always there, then the Repositories section, then
- * the Views section.
+ * All, pinned on top and always there, Checkouts below it while it is on,
+ * then the Repositories section, then the Views section.
  */
-export function entryOrder(sidebar: SidebarEntries | undefined): SidebarItem[] {
+export function entryOrder(
+  sidebar: SidebarEntries | undefined,
+  checkouts?: Checkouts,
+): SidebarItem[] {
+  const pinned: SidebarItem[] =
+    checkouts?.status === "on"
+      ? [{ scope: { kind: "checkouts" }, checkouts }]
+      : [];
   if (sidebar?.status !== "read") {
     // All's count is unknown until the tracked repositories are.
     const openIssues: OpenIssueCount =
       sidebar === undefined
         ? { status: "loading" }
         : { status: "failed", message: sidebar.message };
-    return [{ scope: { kind: "all" }, openIssues }];
+    return [{ scope: { kind: "all" }, openIssues }, ...pinned];
   }
   return [
     { scope: { kind: "all" }, openIssues: sidebar.all.openIssues },
+    ...pinned,
     ...sidebar.repositories.map(
       ({ repository, openIssues, unavailable }): SidebarItem => ({
         scope: { kind: "repository", repository },

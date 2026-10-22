@@ -6,7 +6,7 @@ How Verdandi looks, meaning the appearance, the light and dark theme and later t
 - `%APPDATA%\Verdandi` on Windows
 - under `VERDANDI_HOME` when that is set
 
-It is not kept in `settings.json` or in machine-local desktop state. The file is the only place these choices are kept.
+It is not kept in `settings.json` or in machine-local desktop state. The file is the only place these choices are kept. Since [ADR 0013](0013-checkouts-through-the-systems-git-and-ssh.md), it also holds which optional features are on and how they are set, such as Checkouts and its main branches: choices as safe to share as a theme.
 
 - **The settings dialog writes it.** It changes one value at a time and keeps the user's comments, key order and formatting as they are.
 - **Changes by hand apply at once**, while the app runs.

@@ -120,6 +120,7 @@ export function commandForWindowKey(
     focused === "sidebar" &&
     selected !== undefined &&
     selected.kind !== "all" &&
+    selected.kind !== "checkouts" &&
     altKey &&
     modifiersHeld.length === 1 &&
     (key === "ArrowUp" || key === "ArrowDown")
@@ -146,10 +147,20 @@ export function commandForWindowKey(
     };
   }
   if (key === "r") return { kind: "refresh" };
-  if (key === "s" && selected !== undefined && selected.kind !== "view") {
+  if (
+    key === "s" &&
+    selected !== undefined &&
+    selected.kind !== "view" &&
+    selected.kind !== "checkouts"
+  ) {
     return { kind: "switch-state" };
   }
-  if (key === "S" && selected !== undefined && selected.kind !== "view") {
+  if (
+    key === "S" &&
+    selected !== undefined &&
+    selected.kind !== "view" &&
+    selected.kind !== "checkouts"
+  ) {
     return { kind: "open-sort-menu" };
   }
   if (key === "a") return { kind: "add-repository" };

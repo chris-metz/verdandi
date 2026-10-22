@@ -8,6 +8,7 @@ import type {
   SidebarDestination,
   Config,
   ConfigChangeResult,
+  Host,
   ConfigState,
   SettingsChangeResult,
   SettingsStatus,
@@ -68,6 +69,14 @@ export interface SettingsStorage {
   saveView(view: SavedView, after?: string): Promise<SettingsChangeResult>;
   /** Removes the view with this ID; repositories are kept verbatim. */
   removeView(id: string): Promise<SettingsChangeResult>;
+  /**
+   * Saves a host: the one with its ID takes its name, address and folders
+   * where it is; any other goes to the end. Creates the file if there is
+   * none.
+   */
+  saveHost(host: Host): Promise<SettingsChangeResult>;
+  /** Removes the host with this ID. */
+  removeHost(id: string): Promise<SettingsChangeResult>;
   /** Creates the file empty if there is none; an existing one stays as it is. */
   createIfMissing(): Promise<SettingsChangeResult>;
 }
@@ -89,6 +98,8 @@ export interface Settings {
   /** The tracked repositories, in sidebar order. */
   repositories: TrackedRepository[];
   views: SavedView[];
+  /** The hosts whose checkouts Checkouts reads. */
+  hosts: Host[];
 }
 
 export type SettingsResult =
@@ -144,6 +155,8 @@ export interface LocalState {
   sidebarWidth?: number | undefined;
   /** The gh executable the user chose, if any. */
   ghExecutable: string | undefined;
+  /** The folders this machine's checkouts are in, if the user chose them. */
+  checkoutFolders?: string[] | undefined;
 }
 
 /** The tabs over the main area, and the one shown, by position. */
@@ -169,6 +182,7 @@ export type StoredRepository = Extract<
 /** A stable reference, without a view's mutable text or any list state. */
 export type StoredSidebarEntry =
   | { kind: "all" }
+  | { kind: "checkouts" }
   | { kind: "repository"; id: number }
   | { kind: "repository"; name: string }
   | { kind: "view"; id: string };
