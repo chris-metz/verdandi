@@ -47,10 +47,14 @@ function visibleText(text) {
  * matching `selector` shows; whether it did.
  */
 async function start(selector) {
+  // An agent run inside an Electron app, such as T3 Code, may inherit
+  // ELECTRON_RUN_AS_NODE, which would start Electron as plain Node.
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
     executablePath: electronBin,
     args: [appDir],
-    env: { ...process.env, VERDANDI_HOME: home },
+    env: { ...env, VERDANDI_HOME: home },
     timeout,
   });
   // Links the app would open in the browser are recorded instead.
