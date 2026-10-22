@@ -1,6 +1,7 @@
 import path from "node:path";
 import type {
   Checkout,
+  CheckoutSwitchResult,
   MainBranch,
   MachineProblem,
   StuckBranch,
@@ -127,11 +128,12 @@ function reportOf(
   repositories: readonly { owner: string; name: string }[],
   mainBranches: readonly string[],
 ): MachineReport {
-  const groups = new Map<string, ReportedGroup & { own: Set<string> }>();
+  const groups = new Map<string, ReportedGroup>();
   const branches = new Map<string, Map<string, MainBranch["upstream"]>>();
   const stuck = new Map<string, Map<string, StuckBranch>>();
   let moved = 0;
   let created = 0;
+  let switched: CheckoutSwitchResult | undefined;
   for (const line of output.split("\n")) {
     const [kind, ...fields] = line.split("\t");
     switch (kind) {
@@ -148,7 +150,6 @@ function reportOf(
           checkouts: [],
           mainBranches: [],
           fetch: fetch === "ok" ? { ok: true } : { ok: false, message },
-          own: new Set(),
         });
         break;
       }
@@ -168,9 +169,14 @@ function reportOf(
           path,
           branch: branch === "" ? undefined : branch,
           changedFiles: Number(changed) || 0,
+          worktree: own !== "1",
         };
         found?.checkouts.push(checkout);
-        if (own === "1") found?.own.add(path);
+        break;
+      }
+      case "S": {
+        const [outcome, message = ""] = fields;
+        switched = outcome === "ok" ? { ok: true } : { ok: false, message };
         break;
       }
       case "U": {
@@ -194,11 +200,12 @@ function reportOf(
     ok: true,
     moved,
     created,
-    groups: [...groups].map(([key, { own, ...group }]) => ({
+    ...(switched ? { switched } : {}),
+    groups: [...groups].map(([key, group]) => ({
       ...group,
       // The clone's own checkout first, then its worktrees.
       checkouts: group.checkouts.toSorted(
-        (a, b) => Number(own.has(b.path)) - Number(own.has(a.path)),
+        (a, b) => Number(a.worktree) - Number(b.worktree),
       ),
       mainBranches: mainBranches.flatMap((name) => {
         const upstream = branches.get(key)?.get(name);

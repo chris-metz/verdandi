@@ -823,6 +823,9 @@ export function createCore({
       checkouts.updateAll();
       return Promise.resolve();
     },
+    switchCheckout(request) {
+      return checkouts.switchCheckout(request);
+    },
     async saveHost(draft) {
       const name = draft.name.trim();
       const address = draft.address.trim();

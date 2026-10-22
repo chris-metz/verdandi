@@ -1388,7 +1388,28 @@ export interface Checkout {
   branch: string | undefined;
   /** How many files are changed, new ones included. */
   changedFiles: number;
+  /**
+   * Whether it is a worktree rather than the clone's own checkout, which
+   * alone is switched to a main branch.
+   */
+  worktree: boolean;
 }
+
+/** A machine as a request names it: this one, or a host by its ID. */
+export type MachineId = { kind: "this" } | { kind: "host"; hostId: string };
+
+/** A clone to switch to one of its main branches. */
+export interface CheckoutSwitch {
+  machine: MachineId;
+  /** Where the clone's own checkout is on its machine, as `Checkout.path` says. */
+  path: string;
+  /** The main branch to switch to. */
+  branch: string;
+}
+
+/** Whether a clone switched to a main branch, and why not when it did not. */
+export type CheckoutSwitchResult =
+  { ok: true } | { ok: false; message: string };
 
 /** A main branch of a checkout group, against the branch it tracks on GitHub. */
 export interface MainBranch {
@@ -1800,6 +1821,14 @@ export interface CoreRequests {
    */
   updateAllCheckouts: () => Promise<void>;
   /**
+   * Switches a clone's own checkout on a machine to one of its main
+   * branches, as `git switch` does, then reads that machine again. It never
+   * switches a worktree, where an agent may work, nor a checkout with
+   * changed files, which would come along, nor to a branch that is no main
+   * branch. It answers once Checkouts with the machine read again is pushed.
+   */
+  switchCheckout: (request: CheckoutSwitch) => Promise<CheckoutSwitchResult>;
+  /**
    * Saves a host to `settings.json`: a new one at the end, or the one with
    * the draft's ID where it is. Its checkouts are read at once.
    */
@@ -1918,6 +1947,7 @@ const requests: Record<keyof CoreRequests, true> = {
   getCheckouts: true,
   openCheckouts: true,
   updateAllCheckouts: true,
+  switchCheckout: true,
   saveHost: true,
   removeHost: true,
   setCheckoutFolders: true,

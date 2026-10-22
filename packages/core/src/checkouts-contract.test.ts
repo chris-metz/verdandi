@@ -12,6 +12,7 @@ import type {
 import {
   defaultMainBranches,
   type Checkouts,
+  type CheckoutSwitch,
   type RepositoryAddress,
 } from "./contract.ts";
 import { createCore } from "./core.ts";
@@ -79,7 +80,7 @@ function group(
 ): ReportedGroup {
   return {
     repository,
-    checkouts: [{ path, branch: "main", changedFiles: 0 }],
+    checkouts: [{ path, branch: "main", changedFiles: 0, worktree: false }],
     mainBranches: Object.entries(branches).map(([name, [ahead, behind]]) => ({
       name,
       upstream: { status: "tracking", ahead, behind },
@@ -552,6 +553,158 @@ it("updates every machine after any read under way, says so meanwhile, and sums 
     { kind: "this" },
     { kind: "host", address: "nuc" },
   ]);
+});
+
+it("switches a clone on a machine to a main branch, answering once that machine is read again and pushed", async () => {
+  await track(acmeApi);
+  fake.answer("nuc", {
+    ok: true,
+    moved: 0,
+    created: 0,
+    switched: { ok: true },
+    groups: [group(acmeApi, { main: [0, 0] })],
+  });
+  await turnOn();
+  const saved = await core.saveHost({
+    name: "NUC",
+    address: "nuc",
+    folders: ["~/code"],
+  });
+  if (saved.status !== "saved") throw new Error("The host was not saved.");
+  await settled({
+    machines: [
+      { loading: { status: "current" } },
+      { loading: { status: "current" } },
+    ],
+  });
+  const pushed: Checkouts[] = [];
+  core.on("checkoutsChanged", (checkouts) => pushed.push(checkouts));
+  const before = fake.calls.length;
+
+  expect(
+    await core.switchCheckout({
+      machine: { kind: "host", hostId: saved.host.id },
+      path: "~/code/api",
+      branch: "main",
+    }),
+  ).toEqual({ ok: true });
+  expect(fake.calls.slice(before)).toEqual([
+    {
+      machine: { kind: "host", address: "nuc" },
+      job: {
+        folders: ["~/code"],
+        repositories: [acmeApi],
+        mainBranches: [...defaultMainBranches],
+        update: false,
+        switchTo: { path: "~/code/api", branch: "main" },
+        programFolders: [],
+      },
+    },
+  ]);
+  expect(pushed.at(-1)).toMatchObject({
+    repositories: [
+      {
+        cells: [
+          { status: "none" },
+          {
+            status: "found",
+            groups: [{ checkouts: [{ path: "~/code/api", branch: "main" }] }],
+          },
+        ],
+      },
+    ],
+  });
+});
+
+it("says why a clone did not switch: git refused, or the machine could not be read", async () => {
+  await track(acmeApi);
+  const message =
+    "fatal: 'main' is already used by worktree at '~/code/api-main'";
+  fake.answer("this", {
+    ok: true,
+    moved: 0,
+    created: 0,
+    switched: { ok: false, message },
+    groups: [group(acmeApi, { main: [0, 0] })],
+  });
+  await turnOn();
+  await settled({ machines: [{ loading: { status: "current" } }] });
+  const request = {
+    machine: { kind: "this" },
+    path: "~/code/api",
+    branch: "main",
+  } as const;
+  expect(await core.switchCheckout(request)).toEqual({ ok: false, message });
+
+  fake.answer("this", {
+    ok: false,
+    problem: { kind: "cannot-run", message: "git is not installed." },
+  });
+  expect(await core.switchCheckout(request)).toEqual({
+    ok: false,
+    message: "git is not installed.",
+  });
+});
+
+it("switches no worktree and no path it has not found, to no branch but a main branch, on no machine but those it reads, and not while Checkouts is off", async () => {
+  await track(acmeApi);
+  fake.answer("this", {
+    ok: true,
+    moved: 0,
+    created: 0,
+    groups: [
+      {
+        ...group(acmeApi, { main: [0, 0] }),
+        checkouts: [
+          {
+            path: "~/code/api",
+            branch: "dev",
+            changedFiles: 0,
+            worktree: false,
+          },
+          {
+            path: "~/code/api-agent",
+            branch: "agent",
+            changedFiles: 0,
+            worktree: true,
+          },
+        ],
+      },
+    ],
+  });
+  await turnOn();
+  await settled({ machines: [{ loading: { status: "current" } }] });
+  const before = fake.calls.length;
+  const switching = (request: Partial<CheckoutSwitch>) =>
+    core.switchCheckout({
+      machine: { kind: "this" },
+      path: "~/code/api",
+      branch: "main",
+      ...request,
+    });
+
+  expect(await switching({ path: "~/code/api-agent" })).toEqual({
+    ok: false,
+    message:
+      "~/code/api-agent is no clone of a tracked repository in the folders.",
+  });
+  expect(await switching({ path: "~/code/web" })).toEqual({
+    ok: false,
+    message: "~/code/web is no clone of a tracked repository in the folders.",
+  });
+  expect(await switching({ branch: "prototype" })).toEqual({
+    ok: false,
+    message: "prototype is no main branch.",
+  });
+  expect(
+    await switching({ machine: { kind: "host", hostId: "gone" } }),
+  ).toEqual({ ok: false, message: "That host is no longer there." });
+  expect(await core.changeConfig({ checkouts: false })).toEqual({ ok: true });
+  expect(await switching({})).toEqual({
+    ok: false,
+    message: "Checkouts is off.",
+  });
+  expect(fake.calls.slice(before)).toEqual([]);
 });
 
 it("restores a Checkouts tab while it is on, and All in its place while it is off", async () => {

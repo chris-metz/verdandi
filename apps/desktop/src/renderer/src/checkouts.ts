@@ -1,7 +1,10 @@
 import type {
+  Checkout,
+  CheckoutGroup,
   CheckoutRow,
   Checkouts,
   Machine,
+  MachineId,
   MachineProblem,
   MainBranch,
   UpdateSummary,
@@ -44,6 +47,13 @@ export function useCheckouts(): Checkouts | undefined {
 /** What tells machines apart: `this`, or a host's ID. */
 export function machineKey(machine: Machine): string {
   return machine.kind === "host" ? `host:${machine.host.id}` : "this";
+}
+
+/** A machine as a request names it. */
+export function machineId(machine: Machine): MachineId {
+  return machine.kind === "host"
+    ? { kind: "host", hostId: machine.host.id }
+    : { kind: "this" };
 }
 
 /** What Checkouts calls a machine: this one by its kind, a host by its name. */
@@ -174,10 +184,36 @@ export function branchState({ name, upstream }: MainBranch): BranchState {
   };
 }
 
+/** A group's clone, the only checkout that switches, when it is found. */
+export function cloneOf(group: CheckoutGroup): Checkout | undefined {
+  return group.checkouts.find(({ worktree }) => !worktree);
+}
+
+/** Whether a checkout is on one of its group's main branches. */
+export function onMainBranch(
+  checkout: Checkout,
+  group: CheckoutGroup,
+): boolean {
+  return group.mainBranches.some(({ name }) => name === checkout.branch);
+}
+
+/**
+ * Whether a group's clone is on a branch that is no main branch, or on
+ * none, while the group has a main branch to switch it to.
+ */
+export function cloneOffMainBranch(group: CheckoutGroup): boolean {
+  const clone = cloneOf(group);
+  return (
+    clone !== undefined &&
+    group.mainBranches.length > 0 &&
+    !onMainBranch(clone, group)
+  );
+}
+
 /**
  * Whether a tracked repository needs something somewhere: a main branch
- * behind or ahead of GitHub, one Update all left behind, or a fetch that
- * failed.
+ * behind or ahead of GitHub, one Update all left behind, a fetch that
+ * failed, or a clone on no main branch.
  */
 export function needsAttention(row: CheckoutRow): boolean {
   return row.cells.some(
@@ -186,6 +222,7 @@ export function needsAttention(row: CheckoutRow): boolean {
       cell.groups.some(
         (group) =>
           !group.fetch.ok ||
+          cloneOffMainBranch(group) ||
           group.mainBranches.some(
             ({ upstream, stuck }) =>
               stuck !== undefined ||

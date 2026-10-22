@@ -125,6 +125,8 @@ Turn on **Checkouts** under **Settings… → Checkouts**, or with `checkouts = 
 
 **Update all** brings every checkout's main branches up to date: a branch that is only behind GitHub moves forward, and one only GitHub has is created. It never merges, rebases or pushes, keeps changed files, and leaves a branch that is ahead, has gone apart from GitHub, or is checked out in a worktree, where an agent may work, marking it on the page. The main branches are `main`, `master`, `test`, `testing`, `dev` and `develop` unless you set others, in the settings or as `main_branches = ["main", "staging"]`.
 
+The main branch a clone is on is filled. A clone on another branch, say a prototype it was left on, is marked, and its repository moves up. A click on a main branch switches the clone to it, here or on a host. Verdandi switches no worktree, where an agent may work, and no clone with changed files: commit or stash them first.
+
 This machine's folders are `~/code` unless you change them on the page, kept on this machine in `state.json`. **Add host…** adds another machine by the address you would give `ssh`, e.g. `nuc.example.ts.net`, kept in `settings.json`. Verdandi runs the system's `ssh` and never lets it ask for anything, so the host must let you in without a key, as Tailscale SSH does through the host's Tailscale name; it needs bash and git. On Windows, checking this machine needs the bash of Git for Windows. The iOS app has no Checkouts.
 
 ## Choose the look

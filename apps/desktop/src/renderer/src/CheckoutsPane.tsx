@@ -5,17 +5,21 @@ import type {
   Machine,
   MainBranch,
 } from "@verdandi/core/contract";
-import { TriangleAlert } from "lucide-react";
+import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   branchState,
   checkoutsFreshness,
+  cloneOf,
+  cloneOffMainBranch,
+  machineId,
   machineKey,
   machineName,
   machineProblemText,
   needsAttention,
+  onMainBranch,
   updateSummaryText,
   type BranchState,
 } from "./checkouts";
@@ -37,8 +41,9 @@ const tones: Record<BranchState["tone"], string> = {
  * Checkouts: the tracked repositories' checkouts, a row per repository and
  * a column per machine, those that need something first. Each cell shows
  * the main branches of the checkouts there, where they stand against
- * GitHub, and the checkouts themselves. **Update all** brings every main
- * branch up to date; hosts are added and changed here.
+ * GitHub, the one the clone is on, and the checkouts themselves; a click on
+ * another main branch switches the clone to it. **Update all** brings every
+ * main branch up to date; hosts are added and changed here.
  */
 export function CheckoutsPane({ checkouts }: { checkouts: CheckoutsOn }) {
   const [dialog, setDialog] = useState<MachineDialogPurpose>();
@@ -266,7 +271,11 @@ function Cell({
   return (
     <div className="flex flex-col gap-2">
       {cell.groups.map((group, index) => (
-        <Group key={index} group={group} />
+        <Group
+          key={group.checkouts[0]?.path ?? index}
+          group={group}
+          machine={machine}
+        />
       ))}
     </div>
   );
@@ -274,18 +283,63 @@ function Cell({
 
 /**
  * Checkouts that share their branches: the main branches, each where it
- * stands, then each checkout, with the branch checked out when it is no
- * main branch, and its changed files.
+ * stands, the one the clone is on filled, then each checkout, with the
+ * branch checked out when it is no main branch, and its changed files.
+ * A click on another main branch switches the clone to it, unless files
+ * are changed there.
  */
-function Group({ group }: { group: CheckoutGroup }) {
+function Group({
+  group,
+  machine,
+}: {
+  group: CheckoutGroup;
+  machine: Machine | undefined;
+}) {
+  const [switching, setSwitching] = useState<string>();
+  const [failure, setFailure] = useState<{ branch: string; message: string }>();
+  const clone = cloneOf(group);
+
+  async function switchTo(branch: string) {
+    if (!clone || !machine) return;
+    setSwitching(branch);
+    setFailure(undefined);
+    try {
+      const result = await window.verdandi.switchCheckout({
+        machine: machineId(machine),
+        path: clone.path,
+        branch,
+      });
+      if (!result.ok) setFailure({ branch, message: result.message });
+    } catch (error) {
+      setFailure({
+        branch,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSwitching(undefined);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap gap-1">
+      <div
+        role={clone ? "group" : undefined}
+        aria-label={clone ? `Main branches of ${clone.path}` : undefined}
+        className="flex flex-wrap gap-1"
+      >
         {group.mainBranches.length === 0 ? (
           <span className="text-xs text-muted-foreground">No main branch</span>
         ) : (
           group.mainBranches.map((branch) => (
-            <BranchChip key={branch.name} branch={branch} />
+            <BranchChip
+              key={branch.name}
+              branch={branch}
+              clone={machine && clone}
+              busy={switching !== undefined}
+              onSwitch={() => {
+                void switchTo(branch.name);
+              }}
+            />
           ))
         )}
       </div>
@@ -293,11 +347,22 @@ function Group({ group }: { group: CheckoutGroup }) {
         <CheckoutLine
           key={checkout.path}
           checkout={checkout}
-          mainBranch={group.mainBranches.some(
-            ({ name }) => name === checkout.branch,
-          )}
+          group={group}
+          switching={checkout === clone ? switching : undefined}
         />
       ))}
+      {failure && (
+        <span
+          role="alert"
+          title={failure.message}
+          className="flex items-start gap-1 text-xs text-warning"
+        >
+          <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0" />
+          <span className="line-clamp-2">
+            Could not switch to {failure.branch}: {failure.message}
+          </span>
+        </span>
+      )}
       {!group.fetch.ok && (
         <span
           title={group.fetch.message}
@@ -313,8 +378,25 @@ function Group({ group }: { group: CheckoutGroup }) {
   );
 }
 
-/** A main branch, where it stands, and why Update all left it, if it did. */
-function BranchChip({ branch }: { branch: MainBranch }) {
+/**
+ * A main branch, where it stands, and why Update all left it, if it did.
+ * With the group's clone, it is a button: pressed while the clone is on
+ * it, and switching the clone to it otherwise, unless files are changed
+ * there.
+ */
+function BranchChip({
+  branch,
+  clone,
+  busy,
+  onSwitch,
+}: {
+  branch: MainBranch;
+  /** The group's clone, unless none is found or it cannot be reached. */
+  clone: Checkout | undefined;
+  /** Whether the clone is switching now. */
+  busy: boolean;
+  onSwitch: () => void;
+}) {
   const state = branchState(branch);
   const stuck = branch.stuck;
   const why =
@@ -323,56 +405,109 @@ function BranchChip({ branch }: { branch: MainBranch }) {
       : stuck.reason === "checked-out-elsewhere"
         ? `Update all left it: it is checked out in the worktree ${stuck.message}, where an agent may work.`
         : `Update all left it: ${stuck.message}`;
-  return (
-    <span
-      title={[state.title, why].filter(Boolean).join("\n")}
-      className={cn(
-        "inline-flex items-center gap-1 rounded border px-1.5 font-mono text-2xs leading-5 tabular-nums",
-        tones[state.tone],
-      )}
-    >
+  const className = cn(
+    "inline-flex items-center gap-1 rounded border px-1.5 font-mono text-2xs leading-5 tabular-nums",
+    tones[state.tone],
+  );
+  const content = (
+    <>
       {state.text}
       {stuck && (
         <TriangleAlert aria-label={why} className="size-3 text-warning" />
       )}
-    </span>
+    </>
   );
+  if (!clone)
+    return (
+      <span
+        title={[state.title, why].filter(Boolean).join("\n")}
+        className={className}
+      >
+        {content}
+      </span>
+    );
+  const checkedOut = clone.branch === branch.name;
+  const keptBy =
+    clone.changedFiles > 0
+      ? `${clone.path} has ${changedFilesText(clone.changedFiles)}: commit or stash them to switch.`
+      : undefined;
+  const canSwitch = !checkedOut && keptBy === undefined && !busy;
+  const action = checkedOut
+    ? `Checked out in ${clone.path}`
+    : (keptBy ?? `Switch ${clone.path} to ${branch.name}`);
+  return (
+    <button
+      type="button"
+      aria-pressed={checkedOut}
+      aria-disabled={!canSwitch}
+      title={[state.title, why, action].filter(Boolean).join("\n")}
+      onClick={canSwitch ? onSwitch : undefined}
+      className={cn(
+        className,
+        "focus-visible:outline-2 focus-visible:outline-ring",
+        checkedOut && "border-current bg-current/15 font-semibold",
+        canSwitch ? "cursor-pointer hover:bg-muted" : "cursor-default",
+      )}
+    >
+      {content}
+    </button>
+  );
+}
+
+/** How many files are changed, in words. */
+function changedFilesText(count: number): string {
+  return `${String(count)} changed ${count === 1 ? "file" : "files"}`;
 }
 
 /**
  * A checkout: where it is, the branch checked out when it is no main
- * branch, and how many files are changed.
+ * branch, marked when it is the clone, and how many files are changed; or
+ * the branch the clone is switching to.
  */
 function CheckoutLine({
   checkout,
-  mainBranch,
+  group,
+  switching,
 }: {
   checkout: Checkout;
-  /** Whether the branch checked out is a main branch. */
-  mainBranch: boolean;
+  group: CheckoutGroup;
+  /** The main branch it is switching to, while it is. */
+  switching: string | undefined;
 }) {
   const { path, branch, changedFiles } = checkout;
-  const details = [
-    ...(branch === undefined
-      ? ["no branch checked out"]
-      : mainBranch
-        ? []
-        : [`on ${branch}`]),
-    ...(changedFiles > 0
-      ? [
-          `${String(changedFiles)} changed ${changedFiles === 1 ? "file" : "files"}`,
-        ]
-      : []),
-  ];
+  const where =
+    switching !== undefined
+      ? `switching to ${switching}…`
+      : branch === undefined
+        ? "no branch checked out"
+        : onMainBranch(checkout, group)
+          ? undefined
+          : `on ${branch}`;
+  const changed = changedFiles > 0 ? changedFilesText(changedFiles) : undefined;
+  const warn =
+    !checkout.worktree && cloneOffMainBranch(group) && switching === undefined;
   return (
     <span
-      title={[path, ...details].join(" · ")}
+      title={[path, where, changed].filter(Boolean).join(" · ")}
       className="flex min-w-0 gap-1 text-xs text-muted-foreground"
     >
       <span className="truncate font-mono text-2xs leading-4">{path}</span>
-      {details.length > 0 && (
-        <span className="shrink-0 truncate">· {details.join(" · ")}</span>
+      {where !== undefined && (
+        <span
+          className={cn(
+            "flex shrink-0 items-center gap-1",
+            warn && "text-warning",
+          )}
+        >
+          <span>·</span>
+          {switching !== undefined && (
+            <LoaderCircle aria-hidden className="size-3 animate-spin" />
+          )}
+          {warn && <TriangleAlert aria-hidden className="size-3" />}
+          <span>{where}</span>
+        </span>
       )}
+      {changed && <span className="shrink-0">· {changed}</span>}
     </span>
   );
 }

@@ -156,7 +156,12 @@ describe.skipIf(process.platform === "win32")("the checkout reader", () => {
         {
           repository: acmeApi,
           checkouts: [
-            { path: join(code, "api"), branch: "main", changedFiles: 0 },
+            {
+              path: join(code, "api"),
+              branch: "main",
+              changedFiles: 0,
+              worktree: false,
+            },
           ],
           mainBranches: [
             { name: "main", upstream: upToDate },
@@ -206,7 +211,7 @@ describe.skipIf(process.platform === "win32")("the checkout reader", () => {
     });
   });
 
-  it("groups a clone with its worktrees in the folders, the clone first, and fetches it once", async () => {
+  it("groups a clone with its worktrees in the folders, the clone first, tells them apart, and fetches it once", async () => {
     await onGitHub("acme/api", ["main", "testing"]);
     const path = await clone("acme/api", "api", ["main", "testing"]);
     await git(
@@ -249,14 +254,25 @@ describe.skipIf(process.platform === "win32")("the checkout reader", () => {
       path,
       branch: "main",
       changedFiles: 0,
+      worktree: false,
     });
     expect(
       group?.checkouts
         .slice(1)
         .toSorted((a, b) => a.path.localeCompare(b.path)),
     ).toEqual([
-      { path: join(code, "a-feature"), branch: "feature", changedFiles: 1 },
-      { path: join(code, "a-testing"), branch: "testing", changedFiles: 0 },
+      {
+        path: join(code, "a-feature"),
+        branch: "feature",
+        changedFiles: 1,
+        worktree: true,
+      },
+      {
+        path: join(code, "a-testing"),
+        branch: "testing",
+        changedFiles: 0,
+        worktree: true,
+      },
     ]);
     expect(group?.mainBranches).toEqual([
       { name: "main", upstream: upToDate },
@@ -456,6 +472,77 @@ describe.skipIf(process.platform === "win32")("the checkout reader", () => {
     });
   });
 
+  describe("switching a clone to a main branch", () => {
+    const switchTo = (path: string, branch: string) =>
+      check({ switchTo: { path, branch } });
+
+    it("switches the clone's own checkout from another branch, then reads it", async () => {
+      await onGitHub("acme/api", ["main", "testing"]);
+      const path = await clone("acme/api", "api", ["main", "testing"]);
+      await git(path, "switch", "--quiet", "-c", "prototype");
+
+      expect(await switchTo(path, "testing")).toMatchObject({
+        ok: true,
+        switched: { ok: true },
+        groups: [
+          {
+            checkouts: [
+              { path, branch: "testing", changedFiles: 0, worktree: false },
+            ],
+          },
+        ],
+      });
+      expect(await git(path, "branch", "--show-current")).toBe("testing");
+    });
+
+    it("leaves a clone with changed files, new ones included, as they would come along", async () => {
+      await onGitHub("acme/api");
+      const path = await clone("acme/api", "api");
+      await git(path, "switch", "--quiet", "-c", "prototype");
+      await writeFile(join(path, "draft.txt"), "Draft");
+
+      expect(await switchTo(path, "main")).toMatchObject({
+        switched: { ok: false, message: `${path} has changed files.` },
+        groups: [{ checkouts: [{ path, branch: "prototype" }] }],
+      });
+    });
+
+    it("never switches a worktree, where an agent may work, nor to a branch that is no main branch", async () => {
+      await onGitHub("acme/api");
+      const path = await clone("acme/api", "api");
+      const worktree = join(code, "api-agent");
+      await git(path, "worktree", "add", "--quiet", worktree, "-b", "agent");
+      await git(path, "switch", "--quiet", "-c", "prototype");
+
+      expect(await switchTo(worktree, "main")).toMatchObject({
+        switched: {
+          ok: false,
+          message: `${worktree} is no clone of a tracked repository in the folders.`,
+        },
+      });
+      expect(await switchTo(path, "agent")).toMatchObject({
+        switched: { ok: false, message: "agent is no main branch." },
+      });
+      expect(await git(worktree, "branch", "--show-current")).toBe("agent");
+      expect(await git(path, "branch", "--show-current")).toBe("prototype");
+    });
+
+    it("says why git refused, e.g. as the branch is checked out in a worktree", async () => {
+      await onGitHub("acme/api", ["main", "testing"]);
+      const path = await clone("acme/api", "api", ["main", "testing"]);
+      const worktree = join(code, "api-testing");
+      await git(path, "worktree", "add", "--quiet", worktree, "testing");
+
+      expect(await switchTo(path, "testing")).toMatchObject({
+        switched: {
+          ok: false,
+          message: expect.stringContaining(worktree) as unknown,
+        },
+        groups: [{ checkouts: [{ path, branch: "main" }, { path: worktree }] }],
+      });
+    });
+  });
+
   describe("bringing the main branches up to date", () => {
     const update = (job: Partial<CheckoutJob> = {}) =>
       check({ update: true, ...job });
@@ -494,7 +581,9 @@ describe.skipIf(process.platform === "win32")("the checkout reader", () => {
         groups: [
           {
             repository: acmeApi,
-            checkouts: [{ path, branch: "main", changedFiles: 1 }],
+            checkouts: [
+              { path, branch: "main", changedFiles: 1, worktree: false },
+            ],
             mainBranches: [
               { name: "main", upstream: upToDate },
               {

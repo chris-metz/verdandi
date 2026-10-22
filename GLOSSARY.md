@@ -106,7 +106,11 @@ _Avoid_: git status, sync, repositories overview
 
 **Checkout**:
 A clone of a tracked repository, on this machine or on a host, known by a remote that names the repository on GitHub. A worktree is a checkout too.
-_Avoid_: clone, working copy, local repository
+_Avoid_: working copy, local repository
+
+**Clone**:
+The checkout a tracked repository was cloned into, as opposed to its worktrees, which share its branches. Only a clone switches.
+_Avoid_: main checkout, primary worktree
 
 **Host**:
 Another machine whose checkouts Verdandi reads over SSH.
@@ -123,6 +127,10 @@ _Avoid_: default branch, base branch
 **Update all**:
 Bringing every checkout's main branches level with GitHub at once: moving forward those that are only behind, and creating those only GitHub has. It never merges, rebases or pushes.
 _Avoid_: pull, sync
+
+**Switch**:
+Moving a clone to one of its main branches from Checkouts, with a click on the branch. It never switches a worktree, nor a clone with changed files.
+_Avoid_: checkout as a verb (a Checkout is a thing here), reset
 
 ### Tabs
 

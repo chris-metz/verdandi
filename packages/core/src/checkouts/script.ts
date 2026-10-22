@@ -16,6 +16,8 @@ export function checkoutScript(job: CheckoutJob): string {
       .map((repository) => quoted(repositoryKey(repository)))
       .join(" ")})`,
     `branches=(${job.mainBranches.map(quoted).join(" ")})`,
+    `switch_path=${quoted(job.switchTo?.path ?? "")}`,
+    `switch_branch=${quoted(job.switchTo?.branch ?? "")}`,
     ...(job.programFolders?.length
       ? [`PATH=${quoted(job.programFolders.join(":"))}:"$PATH"`]
       : []),
@@ -45,6 +47,7 @@ function bash(text: TemplateStringsArray): string {
  *   tracks, and how far ahead and behind it is, as git puts it.
  * - `C group path branch changed own`: a checkout of the group, the branch
  *   checked out, how many files changed, and 1 for the clone's own.
+ * - `S ok|refused message`: whether the clone switched, as asked.
  * - `E message`: nothing could be read, e.g. as git is missing.
  */
 const body = bash`
@@ -80,6 +83,9 @@ shown() {
 }
 # Text on one line, without tabs.
 flat() { tr '\t\r\n' '   ' | sed 's/  */ /g; s/^ //; s/ $//'; }
+# The files changed in a checkout, new ones included, a line each, taking
+# no lock while an editor or an agent works there.
+changes() { git --no-optional-locks -C "$1" status --porcelain 2>/dev/null; }
 
 # The tracked repository a remote's URL names on github.com, as owner/name
 # in lower case, in any of the forms git accepts.
@@ -101,8 +107,9 @@ tracked() {
 }
 
 # Every checkout of a tracked repository in the folders, each once, with
-# the remote that names it and the git folder its worktrees share.
-dirs=() names=() remotes=() commons=()
+# the remote that names it, the git folder its worktrees share, and 1 for
+# the clone's own.
+dirs=() names=() remotes=() commons=() owns=()
 seen='
 '
 for folder in "$\{folders[@]}"; do
@@ -126,7 +133,9 @@ $dir
     done < <(git -C "$dir" config --get-regexp '^remote\..*\.url$' 2>/dev/null)
     [ -n "$name" ] || continue
     common=$(cd "$dir" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || continue
-    dirs+=("$dir") names+=("$name") remotes+=("$remote") commons+=("$common")
+    own=0
+    [ "$dir/.git" = "$common" ] && own=1
+    dirs+=("$dir") names+=("$name") remotes+=("$remote") commons+=("$common") owns+=("$own")
   done < <(find "$top" -maxdepth 3 -name .git -prune 2>/dev/null)
 done
 
@@ -140,6 +149,46 @@ for i in "$\{!dirs[@]}"; do
   if [ "$g" -lt 0 ]; then g=$\{#groups[@]}; groups+=("$i"); fi
   group_of+=("$g")
 done
+
+# Switches the clone's own checkout at switch_path to the main branch
+# switch_branch, before anything is fetched, printing 'S ok' or
+# 'S refused message'. It never switches a worktree, as an agent may work
+# there, nor a checkout with changed files, which would come along.
+switch_refused() {
+  printf 'S\trefused\t%s\n' "$(printf '%s' "$1" | flat)"
+}
+switch_clone() {
+  local i dir= branch main= message
+  for i in "$\{!dirs[@]}"; do
+    if [ "$\{owns[$i]}" = 1 ] && [ "$(shown "$\{dirs[$i]}")" = "$switch_path" ]; then
+      dir=$\{dirs[$i]}
+      break
+    fi
+  done
+  if [ -z "$dir" ]; then
+    switch_refused "$switch_path is no clone of a tracked repository in the folders."
+    return
+  fi
+  for branch in "$\{branches[@]}"; do
+    [ "$branch" = "$switch_branch" ] && main=1
+  done
+  if [ -z "$main" ]; then
+    switch_refused "$switch_branch is no main branch."
+    return
+  fi
+  if [ -n "$(changes "$dir")" ]; then
+    switch_refused "$switch_path has changed files."
+    return
+  fi
+  if message=$(git -C "$dir" switch --quiet --no-guess "$switch_branch" 2>&1); then
+    printf 'S\tok\t\n'
+  else
+    switch_refused "$message"
+  fi
+}
+if [ -n "$switch_path" ]; then
+  switch_clone
+fi
 
 tmp=$(mktemp -d "$\{TMPDIR:-/tmp}/verdandi.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
@@ -229,9 +278,7 @@ done
 for i in "$\{!dirs[@]}"; do
   dir=$\{dirs[$i]}
   branch=$(git -C "$dir" symbolic-ref --short -q HEAD)
-  changed=$(git --no-optional-locks -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  own=0
-  [ "$dir/.git" = "$\{commons[$i]}" ] && own=1
-  printf 'C\t%s\t%s\t%s\t%s\t%s\n' "$\{group_of[$i]}" "$(shown "$dir")" "$branch" "$changed" "$own"
+  changed=$(changes "$dir" | wc -l | tr -d ' ')
+  printf 'C\t%s\t%s\t%s\t%s\t%s\n' "$\{group_of[$i]}" "$(shown "$dir")" "$branch" "$changed" "$\{owns[$i]}"
 done
 `;

@@ -29,8 +29,8 @@ private struct StepFailed: Error, CustomStringConvertible {
 private let requestsNotOnIOS: Set<String> = [
     "getWindowState", "saveWindowState", "getSidebarHidden", "saveSidebarHidden",
     "getSidebarWidth", "saveSidebarWidth", "chooseGhExecutable", "setInstalledFonts",
-    "getCheckouts", "openCheckouts", "updateAllCheckouts", "saveHost", "removeHost",
-    "setCheckoutFolders",
+    "getCheckouts", "openCheckouts", "updateAllCheckouts", "switchCheckout", "saveHost",
+    "removeHost", "setCheckoutFolders",
 ]
 
 /// The events the core pushed, as the Swift types read them, and those they

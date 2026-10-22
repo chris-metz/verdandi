@@ -1,5 +1,7 @@
 import type {
   CheckoutGroup,
+  CheckoutSwitch,
+  CheckoutSwitchResult,
   MachineProblem,
   RepositoryAddress,
 } from "../contract.ts";
@@ -31,6 +33,12 @@ export interface CheckoutJob {
    */
   update: boolean;
   /**
+   * The clone to switch to a main branch before reading, by its path as
+   * the report names it: only a clone's own checkout without changed
+   * files switches, never a worktree.
+   */
+  switchTo?: Omit<CheckoutSwitch, "machine"> | undefined;
+  /**
    * Folders where programs are looked for first, on this machine only, e.g.
    * the one gh is in, which git's credential helper may run.
    */
@@ -39,10 +47,17 @@ export interface CheckoutJob {
 
 /**
  * The checkouts found on a machine, and what bringing them up to date did:
- * how many main branches it moved forward and how many it created.
+ * how many main branches it moved forward and how many it created; and
+ * whether the clone switched, when one was to.
  */
 export type MachineReport =
-  | { ok: true; groups: ReportedGroup[]; moved: number; created: number }
+  | {
+      ok: true;
+      groups: ReportedGroup[];
+      moved: number;
+      created: number;
+      switched?: CheckoutSwitchResult;
+    }
   | { ok: false; problem: MachineProblem };
 
 /** A checkout group, with the tracked repository it belongs to. */

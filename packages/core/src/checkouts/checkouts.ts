@@ -2,10 +2,13 @@ import {
   defaultCheckoutFolders,
   type CheckoutCell,
   type CheckoutGroup,
+  type CheckoutSwitch,
+  type CheckoutSwitchResult,
   type Checkouts,
   type Config,
   type Host,
   type Machine,
+  type MachineId,
   type MachineLoading,
   type MachineProblem,
   type UpdateSummary,
@@ -19,6 +22,7 @@ import {
 import { repositoryKey } from "../repository-address.ts";
 import type { LocalStateStorage, SettingsStorage } from "../settings/port.ts";
 import type {
+  CheckoutJob,
   CheckoutReader,
   MachineAddress,
   MachineReport,
@@ -45,6 +49,12 @@ export interface CheckoutsModule {
   retry(): void;
   /** Brings every machine's main branches up to date, then sums it up. */
   updateAll(): void;
+  /**
+   * Switches a clone on a machine to a main branch, after any read of the
+   * machine under way, and answers once Checkouts with the machine read
+   * again is pushed.
+   */
+  switchCheckout(request: CheckoutSwitch): Promise<CheckoutSwitchResult>;
   /**
    * Hears that `config.toml`, `settings.json` or this machine's folders
    * changed: pushes Checkouts, and reads the machines that need it.
@@ -123,13 +133,13 @@ export function createCheckouts({
     ]);
     const targets: Target[] = [
       {
-        key: "this",
+        key: keyOf({ kind: "this" }),
         address: { kind: "this" },
         folders: local.checkoutFolders ?? [...defaultCheckoutFolders],
         host: undefined,
       },
       ...value.hosts.map((host) => ({
-        key: `host:${host.id}`,
+        key: keyOf({ kind: "host", hostId: host.id }),
         address: { kind: "host" as const, address: host.address },
         folders: host.folders,
         host,
@@ -170,13 +180,13 @@ export function createCheckouts({
 
   /**
    * Reads a machine, after any read of it under way, bringing its main
-   * branches up to date if asked to, and pushes Checkouts as it starts and
-   * ends.
+   * branches up to date or switching a clone first if asked to, and pushes
+   * Checkouts as it starts and ends.
    */
   function read(
     target: Target,
     plan: Plan,
-    update: boolean,
+    action: Pick<CheckoutJob, "update" | "switchTo">,
   ): Promise<MachineReport> {
     const state = stateOf(target, plan);
     state.busy++;
@@ -189,7 +199,7 @@ export function createCheckouts({
           folders: target.folders,
           repositories,
           mainBranches: plan.mainBranches,
-          update,
+          ...action,
           programFolders: programFolders(),
         });
       } catch (error) {
@@ -227,7 +237,7 @@ export function createCheckouts({
     for (const target of plan.targets) {
       const state = stateOf(target, plan);
       if (state.busy === 0 && needs(state, plan))
-        void read(target, plan, false);
+        void read(target, plan, { update: false });
     }
   }
 
@@ -324,7 +334,7 @@ export function createCheckouts({
         updating = true;
         void pushNow();
         const reports = await Promise.all(
-          plan.targets.map((target) => read(target, plan, true)),
+          plan.targets.map((target) => read(target, plan, { update: true })),
         );
         const summary: UpdateSummary = {
           at: clock().time,
@@ -355,6 +365,34 @@ export function createCheckouts({
         await pushNow();
       })();
     },
+    async switchCheckout({ machine, path, branch }) {
+      const plan = await planned();
+      if (!plan) return { ok: false, message: "Checkouts is off." };
+      const target = plan.targets.find(({ key }) => key === keyOf(machine));
+      if (!target)
+        return { ok: false, message: "That host is no longer there." };
+      if (!plan.mainBranches.includes(branch))
+        return { ok: false, message: `${branch} is no main branch.` };
+      // Only a clone the machine's last read found, as the script checks too.
+      const found = stateOf(target, plan).groups?.some(({ checkouts }) =>
+        checkouts.some((one) => one.path === path && !one.worktree),
+      );
+      if (!found)
+        return {
+          ok: false,
+          message: `${path} is no clone of a tracked repository in the folders.`,
+        };
+      const report = await read(target, plan, {
+        update: false,
+        switchTo: { path, branch },
+      });
+      // The answer never comes before the clone as it is now.
+      await pushNow();
+      if (!report.ok) return { ok: false, message: report.problem.message };
+      return (
+        report.switched ?? { ok: false, message: "The clone did not switch." }
+      );
+    },
     changed() {
       void (async () => {
         const plan = await planned();
@@ -368,6 +406,11 @@ export function createCheckouts({
       })();
     },
   };
+}
+
+/** What tells machines apart: `this`, or `host:` and a host's ID. */
+function keyOf(machine: MachineId): string {
+  return machine.kind === "this" ? "this" : `host:${machine.hostId}`;
 }
 
 /** How far reading a machine has come, as its state says. */
