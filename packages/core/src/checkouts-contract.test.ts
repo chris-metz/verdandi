@@ -250,14 +250,18 @@ it("shows each tracked repository's checkouts on this machine, whatever the case
 });
 
 it("reads a machine again as screens open once it is older than five minutes, at once after it failed, and every machine as Checkouts is opened or refreshed", async () => {
+  // Tracked and turned on while no core runs, as a file watcher may tell
+  // of a write late, and a read more come of it.
+  core.dispose();
   await track(acmeApi);
+  await writeFile(join(home, "config.toml"), "checkouts = true\n");
+  core = createTestCore(fake.reader);
   fake.answer("this", {
     ok: true,
     moved: 0,
     created: 0,
     groups: [group(acmeApi, { main: [0, 0] })],
   });
-  await turnOn();
   await settled({ machines: [{ loading: { status: "current" } }] });
   expect(fake.calls).toHaveLength(1);
 
@@ -548,11 +552,16 @@ it("updates every machine after any read under way, says so meanwhile, and sums 
       },
     ],
   });
+  // Each machine once, in whichever order the reads under way end: the
+  // host's first read may still be under way as Checkouts is refreshed.
   const updates = fake.calls.slice(before).filter(({ job }) => job.update);
-  expect(updates.map(({ machine }) => machine)).toEqual([
-    { kind: "this" },
-    { kind: "host", address: "nuc" },
-  ]);
+  expect(updates.map(({ machine }) => machine)).toHaveLength(2);
+  expect(updates.map(({ machine }) => machine)).toEqual(
+    expect.arrayContaining([
+      { kind: "this" },
+      { kind: "host", address: "nuc" },
+    ]),
+  );
 });
 
 it("switches a clone on a machine to a main branch, answering once that machine is read again and pushed", async () => {
