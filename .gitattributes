@@ -1,0 +1,5 @@
+# Verdandi's files are LF everywhere, whatever a clone's core.autocrlf says:
+# Prettier checks for LF, so CRLF in the working tree fails `pnpm check` on
+# every file. `text=auto` leaves binaries, such as the screenshots and the
+# icon, as they are.
+* text=auto eol=lf

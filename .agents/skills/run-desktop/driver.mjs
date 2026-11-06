@@ -1,6 +1,6 @@
-// Drives the Verdandi desktop app on macOS: builds it, launches it with
-// Playwright against a scratch VERDANDI_HOME, and runs commands read one per
-// line from stdin (a prompt when stdin is a terminal). See SKILL.md.
+// Drives the Verdandi desktop app: builds it, launches it with Playwright
+// against a scratch VERDANDI_HOME, and runs commands read one per line from
+// stdin (a prompt when stdin is a terminal). See SKILL.md.
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -17,9 +17,15 @@ import { _electron as electron } from "playwright-core";
 
 const repo = resolve(import.meta.dirname, "../../..");
 const appDir = join(repo, "apps/desktop");
+// Where the `electron` package keeps the binary differs per operating system.
 const electronBin = join(
   appDir,
-  "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+  "node_modules/electron/dist",
+  process.platform === "darwin"
+    ? "Electron.app/Contents/MacOS/Electron"
+    : process.platform === "win32"
+      ? "electron.exe"
+      : "electron",
 );
 const shots = process.env.SCREENSHOT_DIR ?? join(tmpdir(), "verdandi-shots");
 const timeout = 60_000;

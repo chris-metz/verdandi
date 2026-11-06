@@ -5,7 +5,7 @@ description: Launch and drive the Verdandi desktop app to see a change working, 
 
 # Run the desktop app
 
-`driver.mjs` builds the app, launches the real Electron window through Playwright on macOS, and runs commands, one per line from stdin. Send a whole flow in one call; the app quits when the input ends.
+`driver.mjs` builds the app, launches the real Electron window through Playwright, on macOS, Windows or Linux, and runs commands, one per line from stdin. Send a whole flow in one call; the app quits when the input ends.
 
 ```bash
 node .agents/skills/run-desktop/driver.mjs <<'EOF'
